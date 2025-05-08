@@ -1,11 +1,12 @@
-// src/components/Layout/Sidebar.tsx (actualizado con opciones de ejercicios y rutinas)
+// src/components/Layout/Sidebar.tsx
 import React, { useState } from 'react';
 import { 
-  Home, Users, CreditCard, Calendar, Settings, 
-  ChevronDown, ChevronUp, LogOut, Menu, X, BarChart2, Dumbbell
+  LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
+  Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
+  Activity, LogOut, Calendar, Receipt
 } from 'lucide-react';
-import { auth } from '../../config/firebase';
-
+import { logoutUser } from '../../services/auth.service';
+import { navigateTo } from '../../services/navigation.service';
 
 interface SidebarProps {
   activePage: string;
@@ -13,202 +14,304 @@ interface SidebarProps {
   userRole: 'superadmin' | 'admin' | 'user';
 }
 
+interface NavItemProps {
+  icon: React.ReactNode;
+  text: string;
+  active: boolean;
+  onClick: () => void;
+  badge?: string | number;
+}
+
+const NavItem: React.FC<NavItemProps> = ({ icon, text, active, onClick, badge }) => (
+  <button
+    className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors ${
+      active ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+    }`}
+    onClick={onClick}
+  >
+    <div className="flex items-center">
+      <div className="mr-3">{icon}</div>
+      <span className={`text-sm font-medium ${active ? 'font-semibold' : ''}`}>{text}</span>
+    </div>
+    {badge && (
+      <span className="px-2 py-0.5 ml-auto text-xs font-medium rounded-full bg-blue-100 text-blue-600">
+        {badge}
+      </span>
+    )}
+  </button>
+);
+
+interface DropdownNavProps {
+  icon: React.ReactNode;
+  text: string;
+  active: boolean;
+  children: React.ReactNode;
+}
+
+const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children }) => {
+  const [isOpen, setIsOpen] = useState(active);
+
+  return (
+    <div>
+      <button
+        className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors ${
+          active ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+        }`}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="flex items-center">
+          <div className="mr-3">{icon}</div>
+          <span className={`text-sm font-medium ${active ? 'font-semibold' : ''}`}>{text}</span>
+        </div>
+        <ChevronDown
+          size={16}
+          className={`transform transition-transform ${isOpen ? 'rotate-180' : ''}`}
+        />
+      </button>
+      <div
+        className={`pl-10 mt-1 overflow-hidden transition-all ${
+          isOpen ? 'max-h-96' : 'max-h-0'
+        }`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
 const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
-  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const [trainingOpen, setTrainingOpen] = useState<boolean>(false);
-  
-  // Lista completa de items del menú
-  const allMenuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: <Home size={20} />, roles: ['superadmin', 'admin', 'user'] },
-    { id: 'members', label: 'Socios', icon: <Users size={20} />, roles: ['superadmin', 'admin', 'user'] },
-    { id: 'attendance', label: 'Asistencias', icon: <Calendar size={20} />, roles: ['superadmin', 'admin', 'user'] },
-    { id: 'cashier', label: 'Caja Diaria', icon: <CreditCard size={20} />, roles: ['superadmin', 'admin'] },
-    { id: 'reports', label: 'Informes', icon: <BarChart2 size={20} />, roles: ['superadmin', 'admin'] },
-    { id: 'training', label: 'Entrenamiento', icon: <Dumbbell size={20} />, roles: ['superadmin', 'admin', 'user'] }
-  ];
-  
-  // Lista de items del submenú de entrenamiento
-  const allTrainingItems = [
-    { id: 'exercises', label: 'Ejercicios', roles: ['superadmin', 'admin', 'user'] },
-    { id: 'routines', label: 'Rutinas', roles: ['superadmin', 'admin', 'user'] },
-    { id: 'member-routines', label: 'Rutinas asignadas', roles: ['superadmin', 'admin', 'user'] }
-  ];
-  
-  // Lista completa de items de configuración
-  const allSettingsItems = [
-    { id: 'business', label: 'Perfil de Negocio', roles: ['superadmin', 'admin'] },
-    { id: 'memberships', label: 'Membresías', roles: ['superadmin', 'admin'] },
-    { id: 'activities', label: 'Actividades', roles: ['superadmin', 'admin'] },
-    { id: 'users', label: 'Usuarios', roles: ['superadmin', 'admin'] }
-  ];
-  
-  // Filtrar menú según el rol del usuario
-  const menuItems = allMenuItems.filter(item => item.roles.includes(userRole));
-  const trainingItems = allTrainingItems.filter(item => item.roles.includes(userRole));
-  const settingsItems = allSettingsItems.filter(item => item.roles.includes(userRole));
-  
-  const handleClick = (pageId: string) => {
-    onNavigate(pageId);
-    if (window.innerWidth < 768) {
-      setIsOpen(false);
-    }
+
+  const isActive = (page: string): boolean => {
+    return activePage === page;
   };
-  
+
+  const isSettingsActive = (): boolean => {
+    return ['business', 'memberships', 'activities', 'users'].includes(activePage);
+  };
+
+  const isExercisesActive = (): boolean => {
+    return ['exercises', 'routines', 'member-routines'].includes(activePage);
+  };
+
   const handleLogout = async () => {
     try {
-      await auth.signOut();
-      // La redirección ocurrirá automáticamente gracias al listener en App.tsx
+      await logoutUser();
+      navigateTo('/');
+      window.location.reload(); // Forzar recarga para reiniciar el estado
     } catch (error) {
-      console.error('Error al cerrar sesión:', error);
+      console.error('Error logging out:', error);
     }
   };
-  
-  // Obtener el nombre del rol para mostrar
-  const getRoleName = () => {
-    switch (userRole) {
-      case 'superadmin': return 'Administrador';
-      case 'admin': return 'Dueño';
-      case 'user': return 'Empleado';
-      default: return '';
-    }
-  };
-  
+
   return (
     <>
-      {/* Botón de hamburguesa móvil */}
-      <div className="block md:hidden fixed z-20 top-4 left-4">
+      {/* Overlay for mobile */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-20 md:hidden"
+          onClick={() => setIsOpen(false)}
+        ></div>
+      )}
+
+      {/* Mobile menu button */}
+      <div className="md:hidden fixed top-4 left-4 z-30">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="p-2 rounded-md bg-blue-600 text-white"
+          className="p-2 rounded-md bg-white shadow-md text-gray-600 hover:text-gray-800"
         >
-          {isOpen ? <X size={24} /> : <Menu size={24} />}
+          <Menu size={24} />
         </button>
       </div>
-      
-      {/* Fondo oscuro para móvil */}
-      {isOpen && (
-        <div 
-          className="md:hidden fixed inset-0 bg-black bg-opacity-50 z-10"
-          onClick={() => setIsOpen(false)}
-        />
-      )}
-      
-      {/* Sidebar */}
-      <div className={`
-        fixed top-0 left-0 h-full bg-white shadow-lg z-20 transition-transform duration-300 transform
-        ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-        w-64
-      `}>
-        <div className="flex flex-col h-full">
-          {/* Logo y nombre del gimnasio */}
-          <div className="p-4 border-b">
-            <h2 className="text-xl font-bold text-blue-700">Mi Gimnasio</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Rol: {getRoleName()}
-            </p>
+
+      <div className={`fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
+        <div className="flex justify-between items-center md:hidden px-4 pt-4">
+          <h2 className="text-xl font-bold">GymSystem</h2>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="p-2 rounded-md text-gray-500 hover:text-gray-800"
+          >
+            <X size={24} />
+          </button>
+        </div>
+        
+        <div className="px-4 py-6">
+          <div className="mb-8">
+            <img src="/logo.svg" alt="Logo" className="h-10 mx-auto" />
+            <h1 className="text-xl font-bold text-center mt-2">GymSystem</h1>
           </div>
           
-          {/* Navegación principal */}
-          <nav className="flex-1 overflow-y-auto">
-            <ul className="py-4">
-              {menuItems.map(item => (
-                item.id === 'training' ? (
-                  <li key={item.id}>
-                    <button
-                      onClick={() => setTrainingOpen(!trainingOpen)}
-                      className={`w-full flex items-center justify-between py-3 px-4 hover:bg-gray-100 ${
-                        trainingItems.some(subItem => activePage === subItem.id) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
-                      }`}
-                    >
-                      <div className="flex items-center">
-                        <span className="mr-3">{item.icon}</span>
-                        <span>{item.label}</span>
-                      </div>
-                      <span>
-                        {trainingOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                      </span>
-                    </button>
-                    
-                    {trainingOpen && (
-                      <ul className="bg-gray-50 py-2">
-                        {trainingItems.map(subItem => (
-                          <li key={subItem.id}>
-                            <button
-                              onClick={() => handleClick(subItem.id)}
-                              className={`w-full flex items-center py-2 px-12 hover:bg-gray-100 ${
-                                activePage === subItem.id ? 'text-blue-700 font-medium' : 'text-gray-700'
-                              }`}
-                            >
-                              {subItem.label}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </li>
-                ) : (
-                  <li key={item.id}>
-                    <button
-                      onClick={() => handleClick(item.id)}
-                      className={`w-full flex items-center py-3 px-4 hover:bg-gray-100 ${
-                        activePage === item.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
-                      }`}
-                    >
-                      <span className="mr-3">{item.icon}</span>
-                      <span>{item.label}</span>
-                    </button>
-                  </li>
-                )
-              ))}
-              
-              {/* Configuración con submenú - solo mostrar si hay elementos */}
-              {settingsItems.length > 0 && (
-                <li>
-                  <button
-                    onClick={() => setSettingsOpen(!settingsOpen)}
-                    className={`w-full flex items-center justify-between py-3 px-4 hover:bg-gray-100 ${
-                      settingsItems.some(item => activePage === item.id) ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700'
-                    }`}
-                  >
-                    <div className="flex items-center">
-                      <span className="mr-3"><Settings size={20} /></span>
-                      <span>Configuración</span>
-                    </div>
-                    <span>
-                      {settingsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                    </span>
-                  </button>
+          <nav className="space-y-1">
+            {/* Panel de Superadmin */}
+            {userRole === 'superadmin' && (
+              <>
+                <div className="py-2">
+                  <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                    Panel de Administración
+                  </h3>
                   
-                  {settingsOpen && (
-                    <ul className="bg-gray-50 py-2">
-                      {settingsItems.map(item => (
-                        <li key={item.id}>
-                          <button
-                            onClick={() => handleClick(item.id)}
-                            className={`w-full flex items-center py-2 px-12 hover:bg-gray-100 ${
-                              activePage === item.id ? 'text-blue-700 font-medium' : 'text-gray-700'
-                            }`}
-                          >
-                            {item.label}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              )}
-            </ul>
+                  <NavItem
+                    icon={<LayoutDashboard size={20} />}
+                    text="Dashboard"
+                    active={activePage === 'superadmin-dashboard'}
+                    onClick={() => onNavigate('superadmin-dashboard')}
+                  />
+                  
+                  <NavItem
+                    icon={<Building2 size={20} />}
+                    text="Gimnasios"
+                    active={activePage === 'superadmin-gyms'}
+                    onClick={() => onNavigate('superadmin-gyms')}
+                  />
+                  
+                  <NavItem
+                    icon={<CreditCard size={20} />}
+                    text="Suscripciones"
+                    active={activePage === 'superadmin-subscriptions'}
+                    onClick={() => onNavigate('superadmin-subscriptions')}
+                  />
+                  
+                  <NavItem
+                    icon={<DollarSign size={20} />}
+                    text="Ingresos"
+                    active={activePage === 'superadmin-revenue'}
+                    onClick={() => onNavigate('superadmin-revenue')}
+                  />
+                </div>
+                
+                <div className="border-t border-gray-200 my-2"></div>
+              </>
+            )}
+            
+            {/* Navegación principal */}
+            <div className="py-2">
+              <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                General
+              </h3>
+              
+              <NavItem
+                icon={<LayoutDashboard size={20} />}
+                text="Dashboard"
+                active={isActive('dashboard')}
+                onClick={() => onNavigate('dashboard')}
+              />
+              
+              <NavItem
+                icon={<Users size={20} />}
+                text="Socios"
+                active={isActive('members')}
+                onClick={() => onNavigate('members')}
+              />
+              
+              <NavItem
+                icon={<Calendar size={20} />}
+                text="Asistencias"
+                active={isActive('attendance')}
+                onClick={() => onNavigate('attendance')}
+              />
+              
+              <DropdownNav
+                icon={<Dumbbell size={20} />}
+                text="Ejercicios"
+                active={isExercisesActive()}
+              >
+                <div className="space-y-1 py-2">
+                  <NavItem
+                    icon={<Activity size={16} />}
+                    text="Ejercicios"
+                    active={isActive('exercises')}
+                    onClick={() => onNavigate('exercises')}
+                  />
+                  <NavItem
+                    icon={<ClipboardList size={16} />}
+                    text="Rutinas"
+                    active={isActive('routines')}
+                    onClick={() => onNavigate('routines')}
+                  />
+                  <NavItem
+                    icon={<Users size={16} />}
+                    text="Rutinas de Socios"
+                    active={isActive('member-routines')}
+                    onClick={() => onNavigate('member-routines')}
+                  />
+                </div>
+              </DropdownNav>
+            </div>
+            
+            {/* Sección financiera - Solo para administradores */}
+            {(userRole === 'admin' || userRole === 'superadmin') && (
+              <div className="py-2">
+                <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                  Finanzas
+                </h3>
+                
+                <NavItem
+                  icon={<ShoppingBag size={20} />}
+                  text="Caja Diaria"
+                  active={isActive('cashier')}
+                  onClick={() => onNavigate('cashier')}
+                />
+                
+                <NavItem
+                  icon={<Receipt size={20} />}
+                  text="Reportes"
+                  active={isActive('reports')}
+                  onClick={() => onNavigate('reports')}
+                />
+              </div>
+            )}
+            
+            {/* Configuración - Solo para administradores */}
+            {(userRole === 'admin' || userRole === 'superadmin') && (
+              <div className="py-2">
+                <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                  Configuración
+                </h3>
+                
+                <DropdownNav
+                  icon={<Settings size={20} />}
+                  text="Configuración"
+                  active={isSettingsActive()}
+                >
+                  <div className="space-y-1 py-2">
+                    <NavItem
+                      icon={<Building2 size={16} />}
+                      text="Perfil del Negocio"
+                      active={isActive('business')}
+                      onClick={() => onNavigate('business')}
+                    />
+                    <NavItem
+                      icon={<CreditCard size={16} />}
+                      text="Membresías"
+                      active={isActive('memberships')}
+                      onClick={() => onNavigate('memberships')}
+                    />
+                    <NavItem
+                      icon={<Activity size={16} />}
+                      text="Actividades"
+                      active={isActive('activities')}
+                      onClick={() => onNavigate('activities')}
+                    />
+                    <NavItem
+                      icon={<UserCog size={16} />}
+                      text="Usuarios"
+                      active={isActive('users')}
+                      onClick={() => onNavigate('users')}
+                    />
+                  </div>
+                </DropdownNav>
+              </div>
+            )}
           </nav>
           
-          {/* Footer con cerrar sesión */}
-          <div className="border-t p-4">
+          {/* Botón de Cerrar Sesión */}
+          <div className="border-t border-gray-200 pt-4 mt-6">
             <button
               onClick={handleLogout}
-              className="w-full flex items-center py-2 px-4 text-gray-700 hover:bg-gray-100 rounded-md"
+              className="flex items-center px-3 py-2 w-full text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-colors"
             >
               <LogOut size={20} className="mr-3" />
-              <span>Cerrar Sesión</span>
+              <span className="text-sm font-medium">Cerrar Sesión</span>
             </button>
           </div>
         </div>

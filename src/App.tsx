@@ -25,6 +25,12 @@ import { User as FirebaseUser } from 'firebase/auth';
 import { loginUser } from './services/auth.service';
 import './index.css';
 
+// Importar las páginas del superadmin
+import SuperadminDashboard from './pages/superadmin/Dashboard';
+import GymsManager from './pages/superadmin/Gyms';
+import SubscriptionsManager from './pages/superadmin/Subscriptions';
+import RevenueManager from './pages/superadmin/Revenue';
+
 // Tipo para los datos del usuario autenticado
 type UserData = {
   id: string;
@@ -118,6 +124,16 @@ const App: React.FC = () => {
         return <Activities />;
       case 'users':
         return <Users />;
+
+      case 'superadmin-dashboard':
+        return <SuperadminDashboard />;
+      case 'superadmin-gyms':
+        return <GymsManager />;
+      case 'superadmin-subscriptions':
+        return <SubscriptionsManager />;
+      case 'superadmin-revenue':
+        return <RevenueManager />;
+
       default:
         return <Dashboard />;
     }
@@ -150,14 +166,27 @@ const App: React.FC = () => {
   const canAccessPage = (page: string): boolean => {
     if (!userData) return false;
     
-    // Superadmin y admin tienen acceso a todo
-    if (userData.role === 'superadmin' || userData.role === 'admin') {
+    // Superadmin tiene acceso a todo
+    if (userData.role === 'superadmin') {
       return true;
+    }
+    
+    // Admin de gimnasio tiene acceso a todas las páginas normales
+    if (userData.role === 'admin') {
+      const adminPages = [
+        'dashboard', 'members', 'attendance', 'cashier', 'reports',
+        'exercises', 'routines', 'member-routines',
+        'business', 'memberships', 'activities', 'users'
+      ];
+      return adminPages.includes(page);
     }
     
     // Empleados pueden acceder sólo a ciertas páginas
     if (userData.role === 'user') {
-      const allowedPages = ['dashboard', 'members', 'attendance', 'exercises', 'routines', 'member-routines'];
+      const allowedPages = [
+        'dashboard', 'members', 'attendance', 'exercises', 
+        'routines', 'member-routines'
+      ];
       return allowedPages.includes(page);
     }
     
