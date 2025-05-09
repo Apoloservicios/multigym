@@ -4,8 +4,6 @@ import {
   Users, Calendar, CreditCard, AlertTriangle, TrendingUp, ChevronRight,
   BarChart2, DollarSign, RefreshCw, Filter, User, UserPlus
 } from 'lucide-react';
-// Reemplazar la importación directa de useNavigate por nuestro servicio
-// import { useNavigate } from 'react-router-dom';
 import { navigateTo } from '../../services/navigation.service';
 import useAuth from '../../hooks/useAuth';
 import { getRecentMembers, getMembersWithUpcomingBirthdays, getExpiredMemberships } from '../../services/member.service';
@@ -30,8 +28,6 @@ interface DashboardStats {
 
 const Dashboard: React.FC = () => {
   const { gymData } = useAuth();
-  // Eliminar esta línea que causa el error
-  // const navigate = useNavigate();
   
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -103,9 +99,14 @@ const Dashboard: React.FC = () => {
     setSalesChartPeriod(period);
   };
   
-  // Función de navegación segura
-  const handleNavigate = (path: string) => {
-    navigateTo(path);
+  // Mantener para referencia futura pero no usamos por ahora
+  const navigateToMembers = () => {
+    navigateTo('members');
+  };
+  
+  // Mantener para referencia futura pero no usamos por ahora
+  const navigateToMemberWithFilter = (memberId: string, memberName: string) => {
+    navigateTo('members');
   };
   
   if (loading) {
@@ -302,14 +303,8 @@ const Dashboard: React.FC = () => {
         {/* Miembros recientes */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="bg-blue-50 p-4 border-b border-blue-100">
-            <div className="flex justify-between items-center">
+            <div className="flex items-center">
               <h2 className="text-lg font-semibold">Socios Recientes</h2>
-              <button 
-                onClick={() => handleNavigate('/members')}
-                className="text-blue-600 hover:text-blue-800 flex items-center text-sm"
-              >
-                Ver todos <ChevronRight size={16} />
-              </button>
             </div>
           </div>
           <div className="divide-y">
@@ -319,7 +314,10 @@ const Dashboard: React.FC = () => {
               </div>
             ) : (
               recentMembers.map(member => (
-                <div key={member.id} className="p-4 hover:bg-gray-50">
+                <div
+                  key={member.id}
+                  className="p-4 hover:bg-gray-50"
+                >
                   <div className="flex items-center">
                     {member.photo ? (
                       <img src={member.photo} alt={member.firstName} className="w-10 h-10 rounded-full object-cover mr-3" />
@@ -342,14 +340,8 @@ const Dashboard: React.FC = () => {
         {/* Próximos cumpleaños */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="bg-purple-50 p-4 border-b border-purple-100">
-            <div className="flex justify-between items-center">
+            <div className="flex items-center">
               <h2 className="text-lg font-semibold">Próximos Cumpleaños</h2>
-              <button 
-                onClick={() => handleNavigate('/members?filter=birthdays')}
-                className="text-purple-600 hover:text-purple-800 flex items-center text-sm"
-              >
-                Ver todos <ChevronRight size={16} />
-              </button>
             </div>
           </div>
           <div className="divide-y">
@@ -359,7 +351,10 @@ const Dashboard: React.FC = () => {
               </div>
             ) : (
               upcomingBirthdays.map(member => (
-                <div key={member.id} className="p-4 hover:bg-gray-50">
+                <div
+                  key={member.id}
+                  className="p-4 hover:bg-gray-50"
+                >
                   <div className="flex items-center">
                     <div className="rounded-full bg-purple-100 p-2 mr-3">
                       <Calendar size={16} className="text-purple-600" />
@@ -368,6 +363,15 @@ const Dashboard: React.FC = () => {
                       <div className="font-medium">{member.firstName} {member.lastName}</div>
                       <div className="text-xs text-gray-500">
                         {member.birthDate ? formatDate(member.birthDate) : 'Fecha no disponible'}
+                        {member.daysUntilBirthday !== undefined && (
+                          <span className="ml-2 font-medium">
+                            {member.daysUntilBirthday === 0 
+                              ? ' (¡Hoy!)' 
+                              : member.daysUntilBirthday === 1 
+                                ? ' (¡Mañana!)' 
+                                : ` (En ${member.daysUntilBirthday} días)`}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -380,14 +384,8 @@ const Dashboard: React.FC = () => {
         {/* Membresías por vencer o vencidas */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="bg-yellow-50 p-4 border-b border-yellow-100">
-            <div className="flex justify-between items-center">
+            <div className="flex items-center">
               <h2 className="text-lg font-semibold">Membresías Vencidas</h2>
-              <button 
-                onClick={() => handleNavigate('/members?filter=expired')}
-                className="text-yellow-600 hover:text-yellow-800 flex items-center text-sm"
-              >
-                Ver todas <ChevronRight size={16} />
-              </button>
             </div>
           </div>
           <div className="divide-y">
@@ -397,14 +395,20 @@ const Dashboard: React.FC = () => {
               </div>
             ) : (
               expiringMemberships.map(membership => (
-                <div key={membership.id} className="p-4 hover:bg-gray-50">
+                <div
+                  key={membership.id}
+                  className="p-4 hover:bg-gray-50"
+                >
                   <div className="flex items-center">
                     <div className="rounded-full bg-yellow-100 p-2 mr-3">
                       <AlertTriangle size={16} className="text-yellow-600" />
                     </div>
                     <div>
-                      <div className="font-medium">{membership.activityName}</div>
-                      <div className="text-xs text-gray-500">
+                      <div className="font-medium">{membership.memberName || 'Socio'}</div>
+                      <div className="text-sm text-gray-700">
+                        {membership.activityName}
+                      </div>
+                      <div className="text-xs text-red-500 font-medium">
                         Vencida: {formatDate(membership.endDate)}
                       </div>
                     </div>
