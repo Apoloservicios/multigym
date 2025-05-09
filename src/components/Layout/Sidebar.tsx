@@ -3,10 +3,11 @@ import React, { useState } from 'react';
 import { 
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
-  Activity, LogOut, Calendar, Receipt
+  Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User
 } from 'lucide-react';
 import { logoutUser } from '../../services/auth.service';
 import { navigateTo } from '../../services/navigation.service';
+import useAuth from '../../hooks/useAuth';
 
 interface SidebarProps {
   activePage: string;
@@ -81,6 +82,10 @@ const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children 
 
 const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
+  const { gymData } = useAuth();
+  // The logo URL is coming from Firebase but might have a different property name 
+  // in the GymData type. Access it safely to avoid TypeScript errors
+  const logoUrl = gymData ? (gymData.logo || (gymData as any).logoUrl || '') : '';
 
   const isActive = (page: string): boolean => {
     return activePage === page;
@@ -124,7 +129,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
         </button>
       </div>
 
-      <div className={`fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
+      <div className={`fixed inset-y-0 left-0 z-30 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out flex flex-col ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
         <div className="flex justify-between items-center md:hidden px-4 pt-4">
           <h2 className="text-xl font-bold">GymSystem</h2>
           <button
@@ -135,12 +140,29 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
           </button>
         </div>
         
-        <div className="px-4 py-6">
-          <div className="mb-8">
-            <img src="/logo.svg" alt="Logo" className="h-10 mx-auto" />
-            <h1 className="text-xl font-bold text-center mt-2">GymSystem</h1>
+        <div className="px-4 py-6 flex-shrink-0">
+          <div className="mb-8 flex flex-col items-center">
+            {logoUrl ? (
+              <img 
+                src={logoUrl} 
+                alt={gymData?.name || "Gym Logo"} 
+                className="h-22 w-22 object-contain rounded-md " 
+              />
+            ) : (
+              <>
+                <div className="h-16 w-16 bg-blue-100 rounded-md flex items-center justify-center mb-2">
+                  <Building2 size={32} className="text-blue-600" />
+                </div>
+                <h1 className="text-xl font-bold text-center mt-2">
+                  {gymData?.name || "GymSystem"}
+                </h1>
+              </>
+            )}
           </div>
-          
+        </div>
+        
+        {/* Área scrollable para el menú de navegación */}
+        <div className="flex-1 overflow-y-auto px-4 pb-6">
           <nav className="space-y-1">
             {/* Panel de Superadmin */}
             {userRole === 'superadmin' && (
@@ -183,137 +205,130 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
               </>
             )}
             
-            {/* Navegación principal */}
-            <div className="py-2">
-              <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                General
-              </h3>
-              
-              <NavItem
-                icon={<LayoutDashboard size={20} />}
-                text="Dashboard"
-                active={isActive('dashboard')}
-                onClick={() => onNavigate('dashboard')}
-              />
-              
-              <NavItem
-                icon={<Users size={20} />}
-                text="Socios"
-                active={isActive('members')}
-                onClick={() => onNavigate('members')}
-              />
-              
-              <NavItem
-                icon={<Calendar size={20} />}
-                text="Asistencias"
-                active={isActive('attendance')}
-                onClick={() => onNavigate('attendance')}
-              />
-              
-              <DropdownNav
-                icon={<Dumbbell size={20} />}
-                text="Ejercicios"
-                active={isExercisesActive()}
-              >
-                <div className="space-y-1 py-2">
-                  <NavItem
-                    icon={<Activity size={16} />}
-                    text="Ejercicios"
-                    active={isActive('exercises')}
-                    onClick={() => onNavigate('exercises')}
-                  />
-                  <NavItem
-                    icon={<ClipboardList size={16} />}
-                    text="Rutinas"
-                    active={isActive('routines')}
-                    onClick={() => onNavigate('routines')}
-                  />
-                  <NavItem
-                    icon={<Users size={16} />}
-                    text="Rutinas de Socios"
-                    active={isActive('member-routines')}
-                    onClick={() => onNavigate('member-routines')}
-                  />
-                </div>
-              </DropdownNav>
-            </div>
-            
-            {/* Sección financiera - Solo para administradores */}
-            {(userRole === 'admin' || userRole === 'superadmin') && (
-              <div className="py-2">
-                <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                  Finanzas
-                </h3>
-                
+            {/* Admin y User Navigation */}
+            {(userRole === 'admin' || userRole === 'user') && (
+              <>
+                {/* Dashboard */}
                 <NavItem
-                  icon={<ShoppingBag size={20} />}
-                  text="Caja Diaria"
-                  active={isActive('cashier')}
-                  onClick={() => onNavigate('cashier')}
+                  icon={<LayoutDashboard size={20} />}
+                  text="Dashboard"
+                  active={isActive('dashboard')}
+                  onClick={() => onNavigate('dashboard')}
                 />
                 
+                {/* Socios */}
                 <NavItem
-                  icon={<Receipt size={20} />}
-                  text="Reportes"
-                  active={isActive('reports')}
-                  onClick={() => onNavigate('reports')}
+                  icon={<Users size={20} />}
+                  text="Socios"
+                  active={isActive('members')}
+                  onClick={() => onNavigate('members')}
                 />
-              </div>
-            )}
-            
-            {/* Configuración - Solo para administradores */}
-            {(userRole === 'admin' || userRole === 'superadmin') && (
-              <div className="py-2">
-                <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                  Configuración
-                </h3>
                 
-                <DropdownNav
-                  icon={<Settings size={20} />}
-                  text="Configuración"
-                  active={isSettingsActive()}
+                {/* Asistencias */}
+                <NavItem
+                  icon={<Calendar size={20} />}
+                  text="Asistencias"
+                  active={isActive('attendance')}
+                  onClick={() => onNavigate('attendance')}
+                />
+                
+              
+                
+                {/* Finanzas - Solo para admins */}
+                {userRole === 'admin' && (
+                  <>
+                    <NavItem
+                      icon={<ShoppingBag size={20} />}
+                      text="Caja Diaria"
+                      active={isActive('cashier')}
+                      onClick={() => onNavigate('cashier')}
+                    />
+                    
+                    <NavItem
+                      icon={<Receipt size={20} />}
+                      text="Reportes"
+                      active={isActive('reports')}
+                      onClick={() => onNavigate('reports')}
+                    />
+                  </>
+                )}
+                  {/* Ejercicios y Rutinas */}
+                  <DropdownNav
+                  icon={<Dumbbell size={20} />}
+                  text="Ejercicios"
+                  active={isExercisesActive()}
                 >
                   <div className="space-y-1 py-2">
                     <NavItem
-                      icon={<Building2 size={16} />}
-                      text="Perfil del Negocio"
-                      active={isActive('business')}
-                      onClick={() => onNavigate('business')}
-                    />
-                    <NavItem
-                      icon={<CreditCard size={16} />}
-                      text="Membresías"
-                      active={isActive('memberships')}
-                      onClick={() => onNavigate('memberships')}
-                    />
-                    <NavItem
                       icon={<Activity size={16} />}
-                      text="Actividades"
-                      active={isActive('activities')}
-                      onClick={() => onNavigate('activities')}
+                      text="Ejercicios"
+                      active={isActive('exercises')}
+                      onClick={() => onNavigate('exercises')}
                     />
                     <NavItem
-                      icon={<UserCog size={16} />}
-                      text="Usuarios"
-                      active={isActive('users')}
-                      onClick={() => onNavigate('users')}
+                      icon={<ClipboardList size={16} />}
+                      text="Rutinas"
+                      active={isActive('routines')}
+                      onClick={() => onNavigate('routines')}
+                    />
+                    <NavItem
+                      icon={<Users size={16} />}
+                      text="Rutinas de Socios"
+                      active={isActive('member-routines')}
+                      onClick={() => onNavigate('member-routines')}
                     />
                   </div>
                 </DropdownNav>
-              </div>
+                
+                {/* Configuración - Solo para admins */}
+                {userRole === 'admin' && (
+                  <DropdownNav
+                    icon={<Cog size={20} />}
+                    text="Configuración"
+                    active={isSettingsActive()}
+                  >
+                    <div className="space-y-1 py-2">
+                      <NavItem
+                        icon={<Building2 size={16} />}
+                        text="Perfil del Negocio"
+                        active={isActive('business')}
+                        onClick={() => onNavigate('business')}
+                      />
+                      <NavItem
+                        icon={<CreditCard size={16} />}
+                        text="Membresías"
+                        active={isActive('memberships')}
+                        onClick={() => onNavigate('memberships')}
+                      />
+                      <NavItem
+                        icon={<Activity size={16} />}
+                        text="Actividades"
+                        active={isActive('activities')}
+                        onClick={() => onNavigate('activities')}
+                      />
+                      <NavItem
+                        icon={<User size={16} />}
+                        text="Usuarios"
+                        active={isActive('users')}
+                        onClick={() => onNavigate('users')}
+                      />
+                    </div>
+                  </DropdownNav>
+                )}
+              </>
             )}
           </nav>
-          
-          {/* Botón de Cerrar Sesión */}
-          <div className="border-t border-gray-200 pt-4 mt-6">
-            <button
-              onClick={handleLogout}
-              className="flex items-center px-3 py-2 w-full text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-colors"
-            >
-              <LogOut size={20} className="mr-3" />
-              <span className="text-sm font-medium">Cerrar Sesión</span>
-            </button>
-          </div>
+        </div>
+        
+        {/* Botón de Cerrar Sesión (siempre visible al final) */}
+        <div className="border-t border-gray-200 px-4 py-4 mt-auto">
+          <button
+            onClick={handleLogout}
+            className="flex items-center px-3 py-2 w-full text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-colors"
+          >
+            <LogOut size={20} className="mr-3" />
+            <span className="text-sm font-medium">Cerrar Sesión</span>
+          </button>
         </div>
       </div>
     </>

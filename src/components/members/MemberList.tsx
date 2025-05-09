@@ -222,21 +222,21 @@ const formatDate = (dateString: string | Date | any | null | undefined): string 
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Foto</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Apellido</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Última Asistencia</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Deuda Total</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Foto</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Apellido</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
+                  {/* <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th> */}
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Última Asistencia</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Deuda Total</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredMembers.map((member) => (
                   <tr key={member.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       {member.photo ? (
                         <img src={member.photo} alt={`${member.firstName} ${member.lastName}`} className="h-10 w-10 rounded-full" />
                       ) : (
@@ -245,24 +245,24 @@ const formatDate = (dateString: string | Date | any | null | undefined): string 
                         </div>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">{member.lastName}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">{member.firstName}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">{member.email}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">{member.phone}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">{member.lastName}</td>
+                    <td className="px-4 py-4 whitespace-nowrap">{member.firstName}</td>
+                    {/* <td className="px-6 py-4 whitespace-nowrap">{member.email}</td> */}
+                    <td className="px-4 py-4 whitespace-nowrap">{member.phone}</td>
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                         member.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                       }`}>
                         {member.status === 'active' ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">{formatDate(member.lastAttendance)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-4 whitespace-nowrap">{formatDate(member.lastAttendance)}</td>
+                    <td className="px-4 py-4 whitespace-nowrap">
                       <span className={member.totalDebt > 0 ? 'text-red-600 font-medium' : ''}>
                         {formatCurrency(member.totalDebt)}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap space-x-2">
+                    <td className="px-4 py-4 whitespace-nowrap space-x-2">
                       <button 
                         className="text-blue-600 hover:text-blue-800" 
                         title="Ver detalles"

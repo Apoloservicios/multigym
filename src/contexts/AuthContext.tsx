@@ -27,6 +27,7 @@ export interface GymData {
   status: 'active' | 'trial' | 'suspended';
   registrationDate: any;
   trialEndsAt?: any;
+  logo:string | null;
   subscriptionData?: {
     plan: string;
     startDate: any;
@@ -36,10 +37,6 @@ export interface GymData {
     lastPayment: any;
     renewalRequested: boolean;
   };
-  address?: string;
-  website?: string;
-  socialMedia?: string;
-  logo?: string;
 }
 
 interface AuthContextType {
@@ -74,7 +71,39 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       if (user) {
         try {
-          // Primero verificamos si es un superadmin
+          console.log("Usuario logueado en AuthContext:", user.uid);
+          
+          // MODIFICACIÓN: Primero verificamos si es un superadmin (buscar por email)
+          const adminsRef = collection(db, 'admins');
+          const adminQuery = query(adminsRef, where('email', '==', user.email));
+          const adminSnapshot = await getDocs(adminQuery);
+          
+          if (!adminSnapshot.empty) {
+            const adminDoc = adminSnapshot.docs[0];
+            const adminData = adminDoc.data();
+            console.log("Admin encontrado en AuthContext:", adminData);
+            
+            // Verificar tanto "rol" como "role" (por si acaso)
+            const role = adminData.rol || adminData.role;
+            if (role === "superadmin") {
+              console.log("Usuario confirmado como superadmin en AuthContext");
+              
+              setUserData({ 
+                id: user.uid,
+                email: user.email || '',
+                name: adminData.name || 'SuperAdmin',
+                role: 'superadmin',
+                createdAt: adminData.createdAt || new Date(),
+                isActive: true
+              });
+              setUserRole('superadmin');
+              setGymData(null);
+              setLoading(false);
+              return;
+            }
+          }
+          
+          // Luego verificamos por ID (forma original)
           const adminDoc = await getDoc(doc(db, 'admins', user.uid));
           if (adminDoc.exists()) {
             setUserData({ 
@@ -111,8 +140,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           }
           
           // Si no es propietario, buscamos en qué gimnasio está registrado como empleado
-          // Nota: Esta búsqueda es simplificada. En una app real, deberíamos usar índices o alguna otra estructura
-          // para mapear usuarios a gimnasios sin tener que recorrer todos los gimnasios.
           const gymsRef = collection(db, 'gyms');
           const gymsSnapshot = await getDocs(gymsRef);
           
@@ -137,14 +164,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           
           // Si llegamos aquí, el usuario existe en Firebase Auth pero no en Firestore
           console.warn('Usuario autenticado pero no encontrado en Firestore');
+          
+          // IMPORTANTE: En lugar de simplemente mostrar un warning, cerramos la sesión
+          await auth.signOut();
           setUserData(null);
           setGymData(null);
           setUserRole(null);
           
-          // En un caso real, podríamos cerrar la sesión automáticamente
-          // await auth.signOut();
         } catch (error) {
           console.error('Error al cargar datos de usuario:', error);
+          // En caso de error, cerramos la sesión también
+          await auth.signOut();
+          setUserData(null);
+          setGymData(null);
+          setUserRole(null);
         }
       } else {
         setUserData(null);
