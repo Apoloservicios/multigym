@@ -1,8 +1,10 @@
 // src/pages/settings/BusinessProfile.tsx
 import React, { useState, useEffect } from 'react';
-import { Building2, Phone, Mail, Globe, Instagram, Facebook, Save, Upload, AlertCircle, CheckCircle } from 'lucide-react';
+import { Building2, Phone, Mail, Globe, Instagram, Facebook, Save, Upload, AlertCircle, CheckCircle,Calendar, Clock, AlertTriangle, CreditCard  } from 'lucide-react';
 import { getGymInfo, updateBusinessProfile, BusinessProfile as BusinessProfileType, gymToBusinessProfile, ensureGymFields } from '../../services/gym.service';
 import useAuth from '../../hooks/useAuth';
+
+import { toJsDate } from '../../utils/date.utils';
 
 const BusinessProfile: React.FC = () => {
   const { gymData, currentUser } = useAuth();
@@ -61,6 +63,41 @@ const BusinessProfile: React.FC = () => {
     
     loadGymData();
   }, [gymData?.id]);
+
+  // Funciones para verificar estado de suscripción
+  const isSubscriptionActive = (): boolean => {
+    if (!gymData) return false;
+    
+    if (gymData.status !== 'active') return false;
+    
+    if (!gymData.subscriptionData?.endDate) return false;
+    
+    const endDate = toJsDate(gymData.subscriptionData.endDate);
+    const currentDate = new Date();
+    
+    return endDate ? endDate > currentDate : false;
+  };
+  
+  const isTrialActive = (): boolean => {
+    if (!gymData) return false;
+    
+    if (gymData.status !== 'trial') return false;
+    
+    if (!gymData.trialEndsAt) return false;
+    
+    const trialEndDate = toJsDate(gymData.trialEndsAt);
+    const currentDate = new Date();
+    
+    return trialEndDate ? trialEndDate > currentDate : false;
+  };
+  
+  // Formatear fechas en formato legible
+  const formatDate = (date: any): string => {
+    if (!date) return 'No disponible';
+    
+    const jsDate = toJsDate(date);
+    return jsDate ? jsDate.toLocaleDateString('es-AR') : 'Fecha inválida';
+  };
   
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -163,6 +200,89 @@ const BusinessProfile: React.FC = () => {
       </div>
     );
   }
+
+
+  const renderSubscriptionAction = () => {
+  if (gymData?.status === 'active' && isSubscriptionActive()) {
+    // Si la suscripción está activa pero vencerá pronto (menos de 7 días)
+    const endDate = toJsDate(gymData.subscriptionData?.endDate);
+    const now = new Date();
+    const daysLeft = endDate 
+      ? Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) 
+      : 0;
+    
+    if (daysLeft <= 7 && daysLeft > 0) {
+      return (
+        <div className="mt-4 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+          <p className="text-sm text-yellow-800 mb-2">
+            <AlertTriangle size={16} className="inline mr-2" />
+            Tu suscripción vencerá en {daysLeft} día(s). Para continuar usando el sistema sin interrupciones, 
+            solicita la renovación.
+          </p>
+          <button
+            onClick={() => {
+              // Aquí podríamos implementar una función para solicitar renovación
+              // Por ahora, simplemente mostraremos la información de contacto
+              alert('Para renovar tu suscripción, contacta con soporte en soporte@multigym.com');
+            }}
+            className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded hover:bg-yellow-300 transition-colors text-sm"
+          >
+            Solicitar Renovación
+          </button>
+        </div>
+      );
+    }
+  } else if ((gymData?.status === 'active' && !isSubscriptionActive()) || 
+             (gymData?.status === 'trial' && !isTrialActive()) || 
+             gymData?.status === 'suspended') {
+    return (
+      <div className="mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
+        <p className="text-sm text-red-800 mb-2">
+          <AlertTriangle size={16} className="inline mr-2" />
+          Tu suscripción ha vencido. Para continuar usando todas las funciones del sistema, 
+          es necesario renovar tu plan.
+        </p>
+        <button
+          onClick={() => {
+            // Aquí podríamos implementar una función para solicitar renovación
+            alert('Para renovar tu suscripción, contacta con soporte en soporte@multigym.com');
+          }}
+          className="px-3 py-1 bg-red-200 text-red-800 rounded hover:bg-red-300 transition-colors text-sm"
+        >
+          Contactar Soporte
+        </button>
+      </div>
+    );
+  } else if (gymData?.status === 'trial' && isTrialActive()) {
+    // Si está en período de prueba y aún es válido
+    const trialEndDate = toJsDate(gymData.trialEndsAt);
+    const now = new Date();
+    const daysLeft = trialEndDate 
+      ? Math.ceil((trialEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) 
+      : 0;
+    
+    return (
+      <div className="mt-4 bg-blue-50 p-3 rounded-lg border border-blue-200">
+        <p className="text-sm text-blue-800 mb-2">
+          <Clock size={16} className="inline mr-2" />
+          Tu período de prueba finalizará en {daysLeft} día(s). Para continuar usando el sistema después 
+          de este período, deberás adquirir una suscripción.
+        </p>
+        <button
+          onClick={() => {
+            // Aquí podríamos implementar una función para solicitar suscripción
+            alert('Para adquirir una suscripción, contacta con soporte en soporte@multigym.com');
+          }}
+          className="px-3 py-1 bg-blue-200 text-blue-800 rounded hover:bg-blue-300 transition-colors text-sm"
+        >
+          Adquirir Suscripción
+        </button>
+      </div>
+    );
+  }
+  
+    return null;
+  };
   
   return (
     <div className="p-6">
@@ -387,6 +507,138 @@ const BusinessProfile: React.FC = () => {
           </div>
         </form>
       </div>
+      {/* Nueva sección de información de suscripción */}
+    <div className="bg-white rounded-lg shadow-md p-6 mt-6">
+      {renderSubscriptionAction()}
+      <h2 className="text-xl font-semibold mb-4">Estado de Suscripción</h2>
+      
+      {/* Indicador de estado */}
+      <div className="mb-4">
+        <div className="flex items-center">
+          {gymData?.status === 'active' && isSubscriptionActive() && (
+            <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full flex items-center">
+              <CheckCircle size={16} className="mr-2" />
+              <span className="font-medium">Suscripción Activa</span>
+            </div>
+          )}
+          
+          {gymData?.status === 'trial' && isTrialActive() && (
+            <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full flex items-center">
+              <Clock size={16} className="mr-2" />
+              <span className="font-medium">Período de Prueba</span>
+            </div>
+          )}
+          
+          {((gymData?.status === 'active' && !isSubscriptionActive()) || 
+             (gymData?.status === 'trial' && !isTrialActive()) || 
+             gymData?.status === 'suspended') && (
+            <div className="bg-red-100 text-red-800 px-3 py-1 rounded-full flex items-center">
+              <AlertTriangle size={16} className="mr-2" />
+              <span className="font-medium">Suscripción Vencida</span>
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Detalles de la suscripción */}
+      <div className="border rounded-lg p-4 bg-gray-50">
+        {gymData?.status === 'active' && gymData.subscriptionData && (
+          <div className="space-y-2">
+            <div className="flex items-start">
+              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
+                <CreditCard size={20} />
+              </div>
+              <div>
+                <p className="font-medium">Plan Actual</p>
+                <p className="text-gray-600">{gymData.subscriptionData.plan || 'No especificado'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-start">
+              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
+                <Calendar size={20} />
+              </div>
+              <div>
+                <p className="font-medium">Período</p>
+                <p className="text-gray-600">
+                  {formatDate(gymData.subscriptionData.startDate)} - {formatDate(gymData.subscriptionData.endDate)}
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex items-start">
+              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
+                <CreditCard size={20} />
+              </div>
+              <div>
+                <p className="font-medium">Método de pago</p>
+                <p className="text-gray-600">{gymData.subscriptionData.paymentMethod || 'No especificado'}</p>
+              </div>
+            </div>
+            
+            <div className="flex items-start">
+              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
+                <Calendar size={20} />
+              </div>
+              <div>
+                <p className="font-medium">Último pago</p>
+                <p className="text-gray-600">{formatDate(gymData.subscriptionData.lastPayment)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {gymData?.status === 'trial' && (
+          <div className="space-y-2">
+            <div className="flex items-start">
+              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
+                <Clock size={20} />
+              </div>
+              <div>
+                <p className="font-medium">Período de Prueba</p>
+                <p className="text-gray-600">
+                  {formatDate(gymData.registrationDate)} - {formatDate(gymData.trialEndsAt)}
+                </p>
+              </div>
+            </div>
+            
+            {isTrialActive() && (
+              <div className="mt-4 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+                <p className="text-sm text-yellow-800">
+                  <AlertTriangle size={16} className="inline mr-2" />
+                  Tu período de prueba finalizará el {formatDate(gymData.trialEndsAt)}. Para continuar usando el sistema, deberás adquirir una suscripción.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+        
+        {gymData?.status === 'suspended' && (
+          <div className="mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
+            <p className="text-sm text-red-800">
+              <AlertTriangle size={16} className="inline mr-2" />
+              Tu suscripción ha vencido. Contacta con soporte para renovar tu plan y seguir utilizando el sistema.
+            </p>
+          </div>
+        )}
+      </div>
+      
+      {/* Información de contacto para renovación */}
+      <div className="mt-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
+        <h3 className="font-medium text-blue-800 mb-2">¿Necesitas ayuda con tu suscripción?</h3>
+        <p className="text-blue-700 text-sm">
+          Si deseas renovar tu suscripción o tienes consultas sobre los planes disponibles, 
+          por favor contacta a nuestro equipo de soporte:
+        </p>
+        <p className="text-blue-800 font-medium mt-2">
+          Email: soporte@multigym.com
+          <br />
+          Teléfono: (123) 456-7890
+        </p>
+      </div>
+    </div>
+
+
     </div>
   );
 };

@@ -1,9 +1,9 @@
 // src/App.tsx
-import { BrowserRouter as Router } from 'react-router-dom';
+import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import RouterProvider from './components/common/RouterProvider';
 
-// Nota: importamos desde 'Layout' con L mayúscula para evitar el error de casing
+// Importamos los componentes
 import Sidebar from './components/Layout/Sidebar';
 import Members from './pages/members/Members';
 import Attendance from './pages/attendance/Attendance';
@@ -16,10 +16,11 @@ import Cashier from './pages/cashier/Cashier';
 import Reports from './pages/reports/Reports';
 import Activities from './pages/settings/Activities';
 import Users from './pages/settings/Users';
-// Importamos las nuevas páginas
 import Exercises from './pages/exercises/Exercises';
 import Routines from './pages/routines/Routines';
 import MemberRoutines from './pages/member-routines/MemberRoutines';
+
+// Firebase
 import { auth } from './config/firebase';
 import { User as FirebaseUser } from 'firebase/auth';
 import { loginUser } from './services/auth.service';
@@ -30,6 +31,7 @@ import SuperadminDashboard from './pages/superadmin/Dashboard';
 import GymsManager from './pages/superadmin/Gyms';
 import SubscriptionsManager from './pages/superadmin/Subscriptions';
 import RevenueManager from './pages/superadmin/Revenue';
+import GymAccountDetails from './pages/superadmin/GymAccountDetails';
 
 // Tipo para los datos del usuario autenticado
 type UserData = {
@@ -38,14 +40,32 @@ type UserData = {
   gymId: string | null;
 };
 
-// Definición del componente principal
-const App: React.FC = () => {
+// Componente interno que usa useLocation
+const AppContent: React.FC = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [currentPage, setCurrentPage] = useState<string>('dashboard');
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [authPage, setAuthPage] = useState<'login' | 'register'>('login');
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  
+  // Actualizar la página actual basada en la ruta
+  useEffect(() => {
+    const path = location.pathname;
+    if (path.includes('/superadmin/gym-account')) {
+      setCurrentPage('superadmin-gym-account');
+    } else if (path.includes('/superadmin/gyms')) {
+      setCurrentPage('superadmin-gyms');
+    } else if (path.includes('/superadmin/dashboard')) {
+      setCurrentPage('superadmin-dashboard');
+    } else if (path.includes('/superadmin/subscriptions')) {
+      setCurrentPage('superadmin-subscriptions');
+    } else if (path.includes('/superadmin/revenue')) {
+      setCurrentPage('superadmin-revenue');
+    }
+  }, [location]);
   
   // Verificar estado de autenticación al cargar la aplicación
   useEffect(() => {
@@ -54,9 +74,7 @@ const App: React.FC = () => {
       
       if (user) {
         try {
-          // En una implementación real, aquí obtendrías los datos del usuario desde Firestore
-          // Para simplificar, usamos loginUser que ya tienes implementado
-          const userInfo = await loginUser(user.email || '', ''); // Password vacío porque ya estamos autenticados
+          const userInfo = await loginUser(user.email || '', '');
           
           if (userInfo.success) {
             setUserData({
@@ -66,7 +84,6 @@ const App: React.FC = () => {
             });
             setIsLoggedIn(true);
           } else {
-            // Si hay un problema con los datos del usuario, cerramos sesión
             auth.signOut();
             setIsLoggedIn(false);
           }
@@ -108,14 +125,12 @@ const App: React.FC = () => {
         return <Cashier />;
       case 'reports':
         return <Reports />;
-      // Nuevas páginas de ejercicios y rutinas
       case 'exercises':
         return <Exercises />;
       case 'routines':
         return <Routines />;
       case 'member-routines':
         return <MemberRoutines />;
-      // Páginas de configuración
       case 'business':
         return <BusinessProfile />;
       case 'memberships':
@@ -124,7 +139,6 @@ const App: React.FC = () => {
         return <Activities />;
       case 'users':
         return <Users />;
-
       case 'superadmin-dashboard':
         return <SuperadminDashboard />;
       case 'superadmin-gyms':
@@ -133,7 +147,8 @@ const App: React.FC = () => {
         return <SubscriptionsManager />;
       case 'superadmin-revenue':
         return <RevenueManager />;
-
+      case 'superadmin-gym-account':
+        return <GymAccountDetails />;
       default:
         return <Dashboard />;
     }
@@ -166,12 +181,10 @@ const App: React.FC = () => {
   const canAccessPage = (page: string): boolean => {
     if (!userData) return false;
     
-    // Superadmin tiene acceso a todo
     if (userData.role === 'superadmin') {
       return true;
     }
     
-    // Admin de gimnasio tiene acceso a todas las páginas normales
     if (userData.role === 'admin') {
       const adminPages = [
         'dashboard', 'members', 'attendance', 'cashier', 'reports',
@@ -181,7 +194,6 @@ const App: React.FC = () => {
       return adminPages.includes(page);
     }
     
-    // Empleados pueden acceder sólo a ciertas páginas
     if (userData.role === 'user') {
       const allowedPages = [
         'dashboard', 'members', 'attendance', 'exercises', 
@@ -198,21 +210,37 @@ const App: React.FC = () => {
     setCurrentPage('dashboard');
   }
   
-  // Envolvemos la aplicación autenticada con Router y RouterProvider
+  const handleNavigate = (page: string) => {
+    setCurrentPage(page);
+    
+    // Si es una navegación especial, usar el router
+    if (page === 'superadmin-gym-account') {
+      // No hacer nada, la navegación se maneja con el botón
+      return;
+    }
+  };
+  
+  return (
+    <div className="flex h-screen bg-gray-100">
+      <Sidebar 
+        activePage={currentPage} 
+        onNavigate={handleNavigate} 
+        userRole={userData?.role || 'user'} 
+      />
+      
+      <div className="flex-1 md:ml-64 overflow-y-auto">
+        {renderPage()}
+      </div>
+    </div>
+  );
+};
+
+// Componente principal App que envuelve todo con Router
+const App: React.FC = () => {
   return (
     <Router>
       <RouterProvider>
-        <div className="flex h-screen bg-gray-100">
-          <Sidebar 
-            activePage={currentPage} 
-            onNavigate={setCurrentPage} 
-            userRole={userData?.role || 'user'} 
-          />
-          
-          <div className="flex-1 md:ml-64 overflow-y-auto">
-            {renderPage()}
-          </div>
-        </div>
+        <AppContent />
       </RouterProvider>
     </Router>
   );

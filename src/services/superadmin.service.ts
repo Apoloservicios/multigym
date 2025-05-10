@@ -14,6 +14,7 @@ import {
     orderBy,
     limit as limitQuery,
     Timestamp,
+    deleteField,
     serverTimestamp
   } from 'firebase/firestore';
   import { db } from '../config/firebase';
@@ -72,29 +73,41 @@ import {
     }
   };
   
-  // Crear un nuevo plan de suscripción
-  export const createSubscriptionPlan = async (plan: Omit<SubscriptionPlan, 'id'>): Promise<SubscriptionPlan> => {
-    try {
-      const plansRef = collection(db, 'subscriptionPlans');
-      
-      const newPlan = {
-        ...plan,
-        isActive: plan.isActive !== undefined ? plan.isActive : true,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      };
-      
-      const docRef = await addDoc(plansRef, newPlan);
-      
-      return {
-        id: docRef.id,
-        ...plan
-      } as SubscriptionPlan;
-    } catch (error) {
-      console.error('Error creating subscription plan:', error);
-      throw error;
-    }
-  };
+
+
+
+
+
+
+// Función para crear un nuevo plan
+// src/services/superadmin.service.ts
+
+export const createSubscriptionPlan = async (plan: Omit<SubscriptionPlan, 'id'>): Promise<SubscriptionPlan> => {
+  try {
+    // Crear el documento en Firestore
+    const docRef = await addDoc(collection(db, 'subscriptionPlans'), {
+      ...plan,
+      createdAt: serverTimestamp(),
+    });
+    
+    // Actualizar el documento con su propio ID
+    await updateDoc(docRef, {
+      id: docRef.id
+    });
+    
+    // Retornar el plan con el ID generado
+    return {
+      ...plan,
+      id: docRef.id,
+    };
+  } catch (error) {
+    console.error('Error creating subscription plan:', error);
+    throw error;
+  }
+};
+
+
+
   
   // Actualizar un plan de suscripción
   export const updateSubscriptionPlan = async (planId: string, plan: Partial<SubscriptionPlan>): Promise<boolean> => {
@@ -227,102 +240,103 @@ import {
   };
   
   // Asignar una suscripción a un gimnasio
-  export const assignSubscription = async (
-    gymId: string,
-    planId: string,
-    startDate: Date,
-    paymentMethod: string,
-    notes?: string
-  ): Promise<GymSubscription> => {
-    try {
-      // Obtener los datos del gimnasio
-      const gymRef = doc(db, 'gyms', gymId);
-      const gymSnap = await getDoc(gymRef);
-      
-      if (!gymSnap.exists()) {
-        throw new Error('El gimnasio no existe');
-      }
-      
-      const gymData = { 
-        ...gymSnap.data(),
-        id: gymSnap.id 
-      } as Gym;
-      
-      // Obtener el plan seleccionado
-      const planRef = doc(db, 'subscriptionPlans', planId);
-      const planSnap = await getDoc(planRef);
-      
-      if (!planSnap.exists()) {
-        throw new Error('El plan seleccionado no existe');
-      }
-      
-      const plan = { id: planSnap.id, ...planSnap.data() } as SubscriptionPlan;
-      
-      // Calcular fecha de finalización
-      const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + plan.duration);
-      
-      // Crear registro de suscripción
-      const subscriptionData = {
-        gymId,
-        gymName: gymData.name,
-        planId,
-        planName: plan.name,
-        startDate: Timestamp.fromDate(startDate),
-        endDate: Timestamp.fromDate(endDate),
-        price: plan.price,
-        status: 'active',
-        paymentMethod,
-        paymentDate: Timestamp.fromDate(new Date()),
-        renewalRequested: false,
-        autoRenewal: false,
-        notes,
-        createdAt: serverTimestamp()
-      };
-      
-      const docRef = await addDoc(collection(db, 'subscriptions'), subscriptionData);
-      
-      // Actualizar el gimnasio
-      await updateDoc(gymRef, {
-        status: 'active',
-        'subscriptionData.plan': plan.name,
-        'subscriptionData.startDate': Timestamp.fromDate(startDate),
-        'subscriptionData.endDate': Timestamp.fromDate(endDate),
-        'subscriptionData.price': plan.price,
-        'subscriptionData.paymentMethod': paymentMethod,
-        'subscriptionData.lastPayment': Timestamp.fromDate(new Date()),
-        'subscriptionData.renewalRequested': false,
-        updatedAt: serverTimestamp()
-      });
-      
-      // Crear registro de pago
-      const paymentData = {
-        subscriptionId: docRef.id,
-        gymId,
-        gymName: gymData.name,
-        amount: plan.price,
-        date: Timestamp.fromDate(new Date()),
-        method: paymentMethod,
-        status: 'completed',
-        notes,
-        createdAt: serverTimestamp()
-      };
-      
-      await addDoc(collection(db, 'subscriptionPayments'), paymentData);
-      
-      // Convertir createdAt a Date para compatibilidad con FirebaseDate
-      const finalSubscriptionData = {
-        ...subscriptionData,
-        id: docRef.id,
-        createdAt: new Date()
-      } as unknown as GymSubscription;
-      
-      return finalSubscriptionData;
-    } catch (error) {
-      console.error('Error assigning subscription:', error);
-      throw error;
+export const assignSubscription = async (
+  gymId: string,
+  planId: string,
+  startDate: Date,
+  paymentMethod: string,
+  notes?: string
+): Promise<GymSubscription> => {
+  try {
+    // Obtener los datos del gimnasio
+    const gymRef = doc(db, 'gyms', gymId);
+    const gymSnap = await getDoc(gymRef);
+    
+    if (!gymSnap.exists()) {
+      throw new Error('El gimnasio no existe');
     }
-  };
+    
+    const gymData = { 
+      ...gymSnap.data(),
+      id: gymSnap.id 
+    } as Gym;
+    
+    // Obtener el plan seleccionado
+    const planRef = doc(db, 'subscriptionPlans', planId);
+    const planSnap = await getDoc(planRef);
+    
+    if (!planSnap.exists()) {
+      console.error('Plan no encontrado con ID:', planId);
+      throw new Error(`El plan seleccionado no existe. ID: ${planId}`);
+    }
+    
+    const plan = { id: planSnap.id, ...planSnap.data() } as SubscriptionPlan;
+    
+    console.log('Plan encontrado:', plan);
+    
+    // Calcular fecha de finalización
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + plan.duration);
+    
+    // Crear registro de suscripción
+    const subscriptionData = {
+      gymId,
+      gymName: gymData.name,
+      planId,
+      planName: plan.name,
+      startDate: Timestamp.fromDate(startDate),
+      endDate: Timestamp.fromDate(endDate),
+      price: plan.price,
+      status: 'active',
+      paymentMethod,
+      paymentDate: Timestamp.fromDate(new Date()),
+      renewalRequested: false,
+      autoRenewal: false,
+      notes,
+      createdAt: serverTimestamp()
+    };
+    
+    const docRef = await addDoc(collection(db, 'subscriptions'), subscriptionData);
+    
+    // Actualizar el gimnasio con el nuevo estado y datos de suscripción
+    await updateDoc(gymRef, {
+      status: 'active',
+      'subscriptionData.plan': plan.name,
+      'subscriptionData.startDate': Timestamp.fromDate(startDate),
+      'subscriptionData.endDate': Timestamp.fromDate(endDate),
+      'subscriptionData.price': plan.price,
+      'subscriptionData.paymentMethod': paymentMethod,
+      'subscriptionData.lastPayment': Timestamp.fromDate(new Date()),
+      'subscriptionData.renewalRequested': false,
+      updatedAt: serverTimestamp()
+    });
+    
+    // Crear registro de pago
+    const paymentData = {
+      subscriptionId: docRef.id,
+      gymId,
+      gymName: gymData.name,
+      amount: plan.price,
+      date: Timestamp.fromDate(new Date()),
+      method: paymentMethod,
+      status: 'completed',
+      notes,
+      createdAt: serverTimestamp()
+    };
+    
+    await addDoc(collection(db, 'subscriptionPayments'), paymentData);
+    
+    // Retornar la suscripción creada
+    return {
+      ...subscriptionData,
+      id: docRef.id,
+      createdAt: new Date()
+    } as unknown as GymSubscription;
+  } catch (error: any) {
+    console.error('Error assigning subscription:', error);
+    throw new Error(error.message || 'Error al asignar la suscripción');
+  }
+};
   
   // Renovar una suscripción
   export const renewSubscription = async (
@@ -663,33 +677,44 @@ import {
   };
   
   // Actualizar el estado de un gimnasio
-  export const updateGymStatus = async (
-    gymId: string, 
-    status: 'active' | 'trial' | 'suspended',
-    notes?: string
-  ): Promise<boolean> => {
-    try {
-      const gymRef = doc(db, 'gyms', gymId);
-      
-      await updateDoc(gymRef, {
-        status,
-        statusNotes: notes,
-        updatedAt: serverTimestamp()
-      });
-      
-      // Si el estado es 'trial', actualizar la fecha de fin de prueba
-      if (status === 'trial') {
-        await updateDoc(gymRef, {
-          trialEndsAt: Timestamp.fromDate(new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)) // 10 días de prueba
-        });
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('Error updating gym status:', error);
-      throw error;
+export const updateGymStatus = async (
+  gymId: string,
+  newStatus: 'active' | 'trial' | 'suspended'
+): Promise<void> => {
+  try {
+    const gymRef = doc(db, 'gyms', gymId);
+    
+    // Primero verificamos que el gimnasio existe
+    const gymSnap = await getDoc(gymRef);
+    if (!gymSnap.exists()) {
+      throw new Error('El gimnasio no existe');
     }
-  };
+    
+    // Crear el objeto de actualización con solo los campos necesarios
+    const updateData: Record<string, any> = {
+      status: newStatus,
+      updatedAt: serverTimestamp()
+    };
+    
+    // Si el estado es 'suspended', podemos agregar información adicional
+    if (newStatus === 'suspended') {
+      updateData.suspendedAt = serverTimestamp();
+    }
+    
+    // Si el estado vuelve a ser 'active' desde 'suspended', limpiamos la fecha de suspensión
+    if (newStatus === 'active' && gymSnap.data().status === 'suspended') {
+      updateData.suspendedAt = deleteField();
+    }
+    
+    // Actualizar el documento
+    await updateDoc(gymRef, updateData);
+    
+    console.log(`Gimnasio ${gymId} actualizado a estado: ${newStatus}`);
+  } catch (error) {
+    console.error('Error updating gym status:', error);
+    throw error;
+  }
+};
   
   // ============= ESTADÍSTICAS =============
   
@@ -1118,6 +1143,9 @@ import {
         throw error;
       }
     };
+
+
+    
     
     // ============= EXPORTACIÓN =============
     const superadminService = {

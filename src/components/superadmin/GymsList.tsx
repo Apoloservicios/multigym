@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Edit, Trash, MoreHorizontal, AlertTriangle, CheckCircle, XCircle, 
-  Clock, AlertCircle, RefreshCw
+  Clock, AlertCircle, RefreshCw, FileText, CreditCard
 } from 'lucide-react';
 import { Gym } from '../../types/superadmin.types';
 import { formatDate } from '../../utils/date.utils';
@@ -16,6 +16,8 @@ interface GymsListProps {
   onGymUpdated?: (gym: Gym) => void;
   limit?: number;
   sortBy?: 'recent' | 'name' | 'status';
+  onViewAccount?: (gym: Gym) => void;
+  onAssignSubscription?: (gym: Gym) => void;
 }
 
 const GymsList: React.FC<GymsListProps> = ({ 
@@ -24,7 +26,9 @@ const GymsList: React.FC<GymsListProps> = ({
   showActions = false,
   onGymUpdated,
   limit,
-  sortBy = 'recent'
+  sortBy = 'recent',
+  onViewAccount,
+  onAssignSubscription
 }) => {
   const [selectedGym, setSelectedGym] = useState<Gym | null>(null);
   const [showDeleteConfirmation, setShowDeleteConfirmation] = useState<boolean>(false);
@@ -235,6 +239,24 @@ const GymsList: React.FC<GymsListProps> = ({
                           title="Editar gimnasio"
                         >
                           <Edit size={18} />
+                        </button>
+                      )}
+                      {onViewAccount && (
+                        <button
+                          onClick={() => onViewAccount(gym)}
+                          className="text-green-600 hover:text-green-900 p-1"
+                          title="Ver estado de cuenta"
+                        >
+                          <FileText size={18} />
+                        </button>
+                      )}
+                      {onAssignSubscription && (
+                        <button
+                          onClick={() => onAssignSubscription(gym)}
+                          className="text-purple-600 hover:text-purple-900 p-1"
+                          title="Asignar suscripción"
+                        >
+                          <CreditCard size={18} />
                         </button>
                       )}
                       <div className="relative">

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { getDoc, doc, updateDoc, serverTimestamp, collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { toJsDate } from '../utils/date.utils';
 
 // Tipos para nuestro contexto
 interface UserData {
@@ -27,7 +28,7 @@ export interface GymData {
   status: 'active' | 'trial' | 'suspended';
   registrationDate: any;
   trialEndsAt?: any;
-  logo:string | null;
+  logo: string | null;
   subscriptionData?: {
     plan: string;
     startDate: any;
@@ -52,6 +53,12 @@ interface AuthContextType {
   isSubscriptionActive: boolean;
   checkTrialStatus: () => boolean;
   checkSubscriptionStatus: () => boolean;
+  // Nuevas propiedades
+  subscriptionEndDate: Date | null;
+  trialEndDate: Date | null;
+  subscriptionDaysLeft: number;
+  subscriptionPlan: string | null;
+  subscriptionStatus: 'active' | 'expired' | 'trial' | 'suspended';
 }
 
 // Crear el contexto
@@ -221,6 +228,65 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return endDate > currentDate;
   };
 
+  // Funciones adicionales para información de suscripción
+  // Obtener fecha de finalización de suscripción
+  const getSubscriptionEndDate = (): Date | null => {
+    if (!gymData?.subscriptionData?.endDate) return null;
+    return toJsDate(gymData.subscriptionData.endDate);
+  };
+  
+  // Obtener fecha de finalización de período de prueba
+  const getTrialEndDate = (): Date | null => {
+    if (!gymData?.trialEndsAt) return null;
+    return toJsDate(gymData.trialEndsAt);
+  };
+  
+  // Calcular días restantes de suscripción o período de prueba
+  const getSubscriptionDaysLeft = (): number => {
+    const now = new Date();
+    
+    if (gymData?.status === 'active' && gymData.subscriptionData?.endDate) {
+      const endDate = toJsDate(gymData.subscriptionData.endDate);
+      if (!endDate) return 0;
+      
+      const timeDiff = endDate.getTime() - now.getTime();
+      const daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
+      return daysLeft > 0 ? daysLeft : 0;
+    } else if (gymData?.status === 'trial' && gymData.trialEndsAt) {
+      const endDate = toJsDate(gymData.trialEndsAt);
+      if (!endDate) return 0;
+      
+      const timeDiff = endDate.getTime() - now.getTime();
+      const daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
+      return daysLeft > 0 ? daysLeft : 0;
+    }
+    
+    return 0;
+  };
+  
+  // Determinar estado actual de suscripción
+  const getSubscriptionStatus = (): 'active' | 'expired' | 'trial' | 'suspended' => {
+    if (!gymData) return 'expired';
+    
+    if (gymData.status === 'suspended') return 'suspended';
+    
+    if (gymData.status === 'trial') {
+      const trialEndDate = getTrialEndDate();
+      if (!trialEndDate) return 'expired';
+      
+      return trialEndDate > new Date() ? 'trial' : 'expired';
+    }
+    
+    if (gymData.status === 'active') {
+      const subscriptionEndDate = getSubscriptionEndDate();
+      if (!subscriptionEndDate) return 'expired';
+      
+      return subscriptionEndDate > new Date() ? 'active' : 'expired';
+    }
+    
+    return 'expired';
+  };
+
   const value = {
     currentUser,
     userData,
@@ -233,7 +299,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isTrialActive: checkTrialStatus(),
     isSubscriptionActive: checkSubscriptionStatus(),
     checkTrialStatus,
-    checkSubscriptionStatus
+    checkSubscriptionStatus,
+    // Nuevas propiedades
+    subscriptionEndDate: getSubscriptionEndDate(),
+    trialEndDate: getTrialEndDate(),
+    subscriptionDaysLeft: getSubscriptionDaysLeft(),
+    subscriptionPlan: gymData?.subscriptionData?.plan || null,
+    subscriptionStatus: getSubscriptionStatus(),
   };
 
   return (
