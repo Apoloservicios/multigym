@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, Edit, Trash, Filter, Grid, List, Plus, 
-  Eye, Copy, CheckCircle, XCircle, AlertCircle, Calendar, Users
+  Eye, Copy, CheckCircle, XCircle, AlertCircle, Calendar,Globe, Users
 } from 'lucide-react';
 import { getRoutines, duplicateRoutine, deleteRoutine } from '../../services/routine.service';
 import { Routine, DifficultyLevel } from '../../types/exercise.types';
@@ -259,6 +259,34 @@ const RoutineList: React.FC<RoutineListProps> = ({
           {/* Información */}
           <div className="p-4">
             <h3 className="font-semibold text-lg mb-1">{routine.name}</h3>
+
+
+            <div className="mb-4">
+                {/* Estadísticas de ejercicios */}
+                <div className="text-xs text-gray-500">
+                  {(() => {
+                    let totalExercises = 0;
+                    let globalExercises = 0;
+                    Object.values(routine.exercises).forEach(dayExercises => {
+                      dayExercises.forEach(exercise => {
+                        totalExercises++;
+                        if (exercise.isGlobal) globalExercises++;
+                      });
+                    });
+                    return (
+                      <span>
+                        Total: {totalExercises} ejercicios
+                        {globalExercises > 0 && (
+                          <span className="block text-purple-600">
+                            <Globe size={10} className="inline mr-1" />
+                            {globalExercises} global{globalExercises !== 1 ? 'es' : ''}
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
             
             <div className="flex items-center space-x-3 text-sm text-gray-600 mb-2">
               <div className="flex items-center">
@@ -352,6 +380,9 @@ const RoutineList: React.FC<RoutineListProps> = ({
               Objetivo
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Ejercicios
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Estado
             </th>
             <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -389,6 +420,32 @@ const RoutineList: React.FC<RoutineListProps> = ({
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 {routine.goal}
+              </td>
+
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="text-sm text-gray-900">
+                  {(() => {
+                    let totalExercises = 0;
+                    let globalExercises = 0;
+                    Object.values(routine.exercises).forEach(dayExercises => {
+                      dayExercises.forEach(exercise => {
+                        totalExercises++;
+                        if (exercise.isGlobal) globalExercises++;
+                      });
+                    });
+                    return (
+                      <div>
+                        <div>{totalExercises} total</div>
+                        {globalExercises > 0 && (
+                          <div className="text-xs text-purple-600 flex items-center">
+                            <Globe size={10} className="mr-1" />
+                            {globalExercises} global{globalExercises !== 1 ? 'es' : ''}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${

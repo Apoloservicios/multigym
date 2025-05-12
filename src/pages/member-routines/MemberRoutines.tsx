@@ -15,6 +15,8 @@ import {
 import useFirestore from '../../hooks/useFirestore';
 import MemberRoutineForm from '../../components/routines/MemberRoutineForm';
 import useAuth from '../../hooks/useAuth';
+import MemberRoutineDetail from '../../components/routines/MemberRoutineDetail';
+
 
 type ViewType = 'list' | 'form' | 'detail';
 
@@ -29,6 +31,9 @@ const MemberRoutines: React.FC = () => {
   const [filteredRoutines, setFilteredRoutines] = useState<MemberRoutine[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [selectedMemberRoutine, setSelectedMemberRoutine] = useState<MemberRoutine | null>(null);
+  
+
   const [selectedRoutine, setSelectedRoutine] = useState<MemberRoutine | null>(null);
   const [routineDetails, setRoutineDetails] = useState<{[key: string]: any}>({});
   
@@ -54,6 +59,12 @@ const MemberRoutines: React.FC = () => {
   useEffect(() => {
     applyFilters();
   }, [memberRoutines, searchTerm, statusFilter, memberFilter]);
+
+  // Agregar función para manejar la vista de detalles
+    const handleViewDetails = (memberRoutine: MemberRoutine) => {
+      setSelectedMemberRoutine(memberRoutine);
+      setView('detail');
+    };
   
   const loadData = async () => {
     if (!gymData?.id) {
@@ -412,14 +423,14 @@ const MemberRoutines: React.FC = () => {
           </div>
           
           <div className="p-4 bg-gray-50 border-t flex justify-end space-x-2">
-            <button
-              onClick={() => {/* TODO: implementar vista detalle */}}
-              className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 flex items-center text-sm"
-              title="Ver detalles"
-            >
-              <Eye size={16} className="mr-1" />
-              Detalles
-            </button>
+              <button
+                  onClick={() => handleViewDetails(routine)}
+                  className="px-3 py-1 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 flex items-center text-sm"
+                  title="Ver detalles"
+                >
+                  <Eye size={16} className="mr-1" />
+                  Detalles
+              </button>
             
             {routine.status === 'active' && (
               <>
@@ -534,63 +545,73 @@ const MemberRoutines: React.FC = () => {
   );
   
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Rutinas Asignadas</h1>
-      
-      {/* Mensajes de error y éxito */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
-          <AlertCircle size={18} className="mr-2" />
-          {error}
-        </div>
-      )}
-      
-      {success && (
-        <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md">
-          {success}
-        </div>
-      )}
-      
-      {/* Contenido principal */}
-      {loading && memberRoutines.length === 0 ? (
-        <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
-          <span className="ml-3 text-gray-500">Cargando rutinas...</span>
-        </div>
-      ) : (
-        <>
-          {view === 'list' && (
-            <>
-              {renderFilters()}
-              
-              {filteredRoutines.length === 0 ? (
-                renderEmptyState()
-              ) : (
-                renderRoutinesList()
-              )}
-            </>
-          )}
-          
-          {view === 'form' && selectedMember ? (
-            <MemberRoutineForm
-              memberId={selectedMember.id}
-              memberName={`${selectedMember.firstName} ${selectedMember.lastName}`}
-              onSave={() => {
-                loadData();
-                setView('list');
-              }}
-              onCancel={() => setView('list')}
-            />
-          ) : view === 'form' && (
-            renderMemberSelectionView()
-          )}
-        </>
-      )}
-      
-      {/* Modal de cambio de estado */}
-      {isStatusModalOpen && renderStatusChangeModal()}
-    </div>
-  );
+  <div className="p-6">
+    <h1 className="text-2xl font-bold mb-6">Rutinas Asignadas</h1>
+    
+    {/* Mensajes de error y éxito */}
+    {error && (
+      <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
+        <AlertCircle size={18} className="mr-2" />
+        {error}
+      </div>
+    )}
+    
+    {success && (
+      <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md">
+        {success}
+      </div>
+    )}
+    
+    {/* Contenido principal basado en la vista actual */}
+    {view === 'detail' && selectedMemberRoutine ? (
+      <MemberRoutineDetail
+        memberRoutine={selectedMemberRoutine}
+        onBack={() => setView('list')}
+        onUpdateStatus={(status, notes) => {
+          // Aquí podrías implementar la lógica para actualizar el estado de la rutina
+          console.log('Updating status:', status, notes);
+          setView('list');
+        }}
+      />
+    ) : loading && memberRoutines.length === 0 ? (
+      <div className="flex justify-center items-center py-12">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
+        <span className="ml-3 text-gray-500">Cargando rutinas...</span>
+      </div>
+    ) : (
+      <>
+        {view === 'list' && (
+          <>
+            {renderFilters()}
+            
+            {filteredRoutines.length === 0 ? (
+              renderEmptyState()
+            ) : (
+              renderRoutinesList()
+            )}
+          </>
+        )}
+        
+        {view === 'form' && selectedMember ? (
+          <MemberRoutineForm
+            memberId={selectedMember.id}
+            memberName={`${selectedMember.firstName} ${selectedMember.lastName}`}
+            onSave={() => {
+              loadData();
+              setView('list');
+            }}
+            onCancel={() => setView('list')}
+          />
+        ) : view === 'form' && (
+          renderMemberSelectionView()
+        )}
+      </>
+    )}
+    
+    {/* Modal de cambio de estado */}
+    {isStatusModalOpen && renderStatusChangeModal()}
+  </div>
+);
 };
 
 export default MemberRoutines;

@@ -1,12 +1,13 @@
-// src/components/routines/RoutineForm.tsx
+// src/components/routines/RoutineForm.tsx - Parte 1: Imports, estado e inicialización
 import React, { useState, useEffect } from 'react';
 import { 
   Save, X, AlertCircle, Check, ToggleLeft, ToggleRight, Plus, Trash, 
-  Calendar, Activity, Target, BarChart, ArrowUpDown
+  Calendar, Activity, Target, BarChart, ArrowUpDown, Globe, Building2, Filter
 } from 'lucide-react';
 import { Routine, RoutineExercise, DifficultyLevel } from '../../types/exercise.types';
 import exerciseTypes from '../../types/exercise.types';
-import { getExercises,getAllExercises } from '../../services/exercise.service';
+// Importamos la función correcta para obtener todos los ejercicios (propios + globales)
+import { getAllExercises } from '../../services/exercise.service';
 import useAuth from '../../hooks/useAuth';
 
 interface RoutineFormProps {
@@ -24,6 +25,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
 }) => {
   const { gymData } = useAuth();
   
+  // Estado del formulario
   const [formData, setFormData] = useState<Omit<Routine, 'id'>>({
     name: '',
     description: '',
@@ -36,15 +38,67 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     isTemplate: false
   });
   
-  const [exercises, setExercises] = useState<any[]>([]);
+  // Estados para la gestión de ejercicios
+  const [availableExercises, setAvailableExercises] = useState<any[]>([]);
+  const [filteredExercises, setFilteredExercises] = useState<any[]>([]);
+  const [exerciseFilter, setExerciseFilter] = useState<'all' | 'gym' | 'global'>('all');
+  const [muscleGroupFilter, setMuscleGroupFilter] = useState<string>('all');
+  
+  // Estados para UI
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
-  
-  // Estado para manejar la pestaña activa (el día seleccionado)
   const [activeDay, setActiveDay] = useState<string>('day1');
+  const [loadingExercises, setLoadingExercises] = useState<boolean>(false);
+  
+  // Cargar ejercicios disponibles (propios + globales)
+  const loadExercises = async () => {
+    if (!gymData?.id) return;
+    
+    setLoadingExercises(true);
+    try {
+      // Usamos la función que incluye ejercicios globales y propios
+      const allExercises = await getAllExercises(gymData.id);
+      // Filtrar solo ejercicios activos
+      const activeExercises = allExercises.filter(ex => ex.isActive);
+      setAvailableExercises(activeExercises);
+    } catch (err) {
+      console.error('Error loading exercises:', err);
+      setError('Error al cargar los ejercicios. Por favor, intenta de nuevo.');
+    } finally {
+      setLoadingExercises(false);
+    }
+  };
+  
+  // Aplicar filtros a los ejercicios
+  const applyExerciseFilters = () => {
+    let filtered = [...availableExercises];
+    
+    // Filtro por origen (gimnasio o global)
+    if (exerciseFilter !== 'all') {
+      if (exerciseFilter === 'global') {
+        filtered = filtered.filter(ex => ex.isGlobal === true);
+      } else if (exerciseFilter === 'gym') {
+        filtered = filtered.filter(ex => !ex.isGlobal);
+      }
+    }
+    
+    // Filtro por grupo muscular
+    if (muscleGroupFilter !== 'all') {
+      filtered = filtered.filter(ex => ex.muscleGroup === muscleGroupFilter);
+    }
+    
+    // Ordenar alfabéticamente
+    filtered.sort((a, b) => a.name.localeCompare(b.name));
+    
+    setFilteredExercises(filtered);
+  };
   
   // Cargar datos iniciales si estamos en modo de edición
+  useEffect(() => {
+    loadExercises();
+  }, [gymData?.id]);
+  
   useEffect(() => {
     if (isEdit && initialData) {
       setFormData({
@@ -62,65 +116,12 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
       // Para un nuevo registro, inicializar la estructura de exercises para los días
       initializeExercisesStructure(3); // Por defecto, 3 días a la semana
     }
-    
-    // Cargar ejercicios
-    loadExercises();
   }, [isEdit, initialData]);
   
-  // Cargar lista de ejercicios desde Firestore
-  const loadExercises = async () => {
-    if (!gymData?.id) return;
-    
-    setLoading(true);
-    try {
-      // Usamos la nueva función que incluye ejercicios globales
-      const data = await getAllExercises(gymData.id);
-      // Filtrar solo ejercicios activos
-      setExercises(data.filter(ex => ex.isActive));
-    } catch (err) {
-      console.error('Error loading exercises:', err);
-      setError('Error al cargar los ejercicios. Por favor, intenta de nuevo.');
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  // También actualizar la función handleExerciseChange para manejar ejercicios globales
-  const handleExerciseChange = (exerciseId: string, field: string, value: any) => {
-    setFormData(prev => {
-      const updatedExercises = prev.exercises[activeDay].map(ex => {
-        if (ex.id === exerciseId) {
-          if (field === 'exerciseId') {
-            // Si cambia el ejercicio, actualizar también el nombre, grupo muscular y si es global
-            const selectedExercise = exercises.find(e => e.id === value);
-            if (selectedExercise) {
-              return {
-                ...ex,
-                exerciseId: value,
-                exerciseName: selectedExercise.name,
-                muscleGroup: selectedExercise.muscleGroup,
-                isGlobal: selectedExercise.isGlobal || false
-              };
-            }
-          }
-          
-          return {
-            ...ex,
-            [field]: field === 'sets' || field === 'rest' ? parseInt(value, 10) : value
-          };
-        }
-        return ex;
-      });
-      
-      return {
-        ...prev,
-        exercises: {
-          ...prev.exercises,
-          [activeDay]: updatedExercises
-        }
-      };
-    });
-  };
+  // Filtrar ejercicios cuando cambian los filtros
+  useEffect(() => {
+    applyExerciseFilters();
+  }, [availableExercises, exerciseFilter, muscleGroupFilter]);
   
   // Inicializar estructura de ejercicios para los días de la semana
   const initializeExercisesStructure = (daysCount: number) => {
@@ -183,7 +184,44 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     }
   };
   
-  // Manejar cambios en toggles
+  // Manejar cambios en ejercicios individuales
+  const handleExerciseChange = (exerciseId: string, field: string, value: any) => {
+    setFormData(prev => {
+      const updatedExercises = prev.exercises[activeDay].map(ex => {
+        if (ex.id === exerciseId) {
+          if (field === 'exerciseId') {
+            // Si cambia el ejercicio, actualizar también el nombre, grupo muscular y si es global
+            const selectedExercise = availableExercises.find(e => e.id === value);
+            if (selectedExercise) {
+              return {
+                ...ex,
+                exerciseId: value,
+                exerciseName: selectedExercise.name,
+                muscleGroup: selectedExercise.muscleGroup,
+                isGlobal: selectedExercise.isGlobal || false
+              };
+            }
+          }
+          
+          return {
+            ...ex,
+            [field]: field === 'sets' || field === 'rest' ? parseInt(value, 10) : value
+          };
+        }
+        return ex;
+      });
+      
+      return {
+        ...prev,
+        exercises: {
+          ...prev.exercises,
+          [activeDay]: updatedExercises
+        }
+      };
+    });
+  };
+  
+  // Manejar toggles
   const handleToggle = (field: string) => {
     setFormData(prev => ({
       ...prev,
@@ -202,7 +240,8 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
       reps: '12',
       rest: 60,
       order: formData.exercises[activeDay]?.length + 1 || 1,
-      notes: ''
+      notes: '',
+      isGlobal: false
     };
     
     setFormData(prev => ({
@@ -234,8 +273,6 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
       };
     });
   };
-  
- 
   
   // Mover un ejercicio hacia arriba o abajo (cambiar orden)
   const handleMoveExercise = (exerciseId: string, direction: 'up' | 'down') => {
@@ -269,6 +306,11 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     }));
   };
   
+  // Función auxiliar para obtener la etiqueta de grupo muscular
+  const getMuscleGroupLabel = (muscleGroup: string): string => {
+    const group = exerciseTypes.muscleGroups.find(g => g.value === muscleGroup);
+    return group ? group.label : muscleGroup;
+  };
   // Validar formulario
   const validateForm = (): boolean => {
     if (!formData.name.trim()) {
@@ -292,7 +334,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     );
     
     if (emptyDays.length > 0) {
-      setError(`Los siguientes días no tienen ejercicios: ${emptyDays.join(', ')}`);
+      setError(`Los siguientes días no tienen ejercicios: ${emptyDays.map(d => d.replace('day', 'Día ')).join(', ')}`);
       return false;
     }
     
@@ -347,6 +389,8 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     
     for (let i = 1; i <= formData.daysPerWeek; i++) {
       const dayKey = `day${i}`;
+      const exerciseCount = formData.exercises[dayKey]?.length || 0;
+      
       tabs.push(
         <button
           key={dayKey}
@@ -354,9 +398,14 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
           className={`px-4 py-2 ${activeDay === dayKey 
             ? 'bg-blue-600 text-white' 
             : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} 
-            rounded-t-lg transition-colors`}
+            rounded-t-lg transition-colors relative`}
         >
           Día {i}
+          {exerciseCount > 0 && (
+            <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+              {exerciseCount}
+            </span>
+          )}
         </button>
       );
     }
@@ -368,6 +417,45 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     );
   };
   
+  // Renderizar filtros de ejercicios
+  const renderExerciseFilters = () => (
+    <div className="bg-gray-50 p-3 rounded-lg mb-4">
+      <div className="flex flex-wrap gap-3 items-center">
+        <div className="flex items-center">
+          <Filter size={16} className="text-gray-500 mr-1" />
+          <span className="text-sm font-medium text-gray-700">Filtros:</span>
+        </div>
+        
+        <select
+          value={exerciseFilter}
+          onChange={(e) => setExerciseFilter(e.target.value as 'all' | 'gym' | 'global')}
+          className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">Todos los ejercicios</option>
+          <option value="gym">Ejercicios propios</option>
+          <option value="global">Ejercicios globales</option>
+        </select>
+        
+        <select
+          value={muscleGroupFilter}
+          onChange={(e) => setMuscleGroupFilter(e.target.value)}
+          className="px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          <option value="all">Todos los grupos</option>
+          {exerciseTypes.muscleGroups.map(group => (
+            <option key={group.value} value={group.value}>
+              {group.label}
+            </option>
+          ))}
+        </select>
+        
+        <div className="text-sm text-gray-600">
+          Mostrando {filteredExercises.length} de {availableExercises.length} ejercicios
+        </div>
+      </div>
+    </div>
+  );
+  
   // Renderizar contenido de día activo
   const renderDayContent = () => {
     const exercises = formData.exercises[activeDay] || [];
@@ -375,7 +463,12 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     return (
       <div className="border rounded-lg p-4 bg-gray-50">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="font-medium">Ejercicios para Día {activeDay.replace('day', '')}</h3>
+          <h3 className="font-medium text-lg">
+            Ejercicios para Día {activeDay.replace('day', '')}
+            <span className="ml-2 text-sm text-gray-600">
+              ({exercises.length} ejercicio{exercises.length !== 1 ? 's' : ''})
+            </span>
+          </h3>
           <button
             type="button"
             onClick={handleAddExercise}
@@ -386,7 +479,14 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
           </button>
         </div>
         
-        {exercises.length === 0 ? (
+        {loadingExercises && (
+          <div className="text-center py-4">
+            <div className="inline-block h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-sm text-gray-500 mt-2">Cargando ejercicios...</p>
+          </div>
+        )}
+        
+        {!loadingExercises && exercises.length === 0 ? (
           <div className="text-center py-8 bg-white rounded border border-dashed border-gray-300">
             <p className="text-gray-500">No hay ejercicios añadidos para este día</p>
             <button
@@ -409,6 +509,12 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                     <h4 className="ml-2 font-medium">
                       {exercise.exerciseName || 'Selecciona un ejercicio'}
                     </h4>
+                    {exercise.isGlobal && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                        <Globe size={10} className="mr-1" />
+                        Global
+                      </span>
+                    )}
                   </div>
                   
                   <div className="flex space-x-1">
@@ -417,6 +523,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                       onClick={() => handleMoveExercise(exercise.id, 'up')}
                       disabled={index === 0}
                       className={`p-1 rounded ${index === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+                      title="Mover arriba"
                     >
                       <ArrowUpDown size={16} />
                     </button>
@@ -424,11 +531,14 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                       type="button"
                       onClick={() => handleRemoveExercise(exercise.id)}
                       className="p-1 text-red-600 hover:bg-red-50 rounded"
+                      title="Eliminar ejercicio"
                     >
                       <Trash size={16} />
                     </button>
                   </div>
                 </div>
+                
+                {renderExerciseFilters()}
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
@@ -441,10 +551,10 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Seleccionar ejercicio</option>
-                      {exercises.map((ex:any) => (
+                      {filteredExercises.map((ex: any) => (
                         <option key={ex.id} value={ex.id}>
-                          {ex.name} ({getMuscleGroupLabel(ex.muscleGroup)})
-                          {ex.isGlobal && ' - Global'}
+                          {ex.name} - {getMuscleGroupLabel(ex.muscleGroup)}
+                          {ex.isGlobal && ' (Global)'}
                         </option>
                       ))}
                     </select>
@@ -461,6 +571,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                         onChange={(e) => handleExerciseChange(exercise.id, 'sets', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                         min="1"
+                        max="10"
                       />
                     </div>
                     
@@ -487,6 +598,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                         onChange={(e) => handleExerciseChange(exercise.id, 'rest', e.target.value)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                         min="0"
+                        max="300"
                         step="10"
                       />
                     </div>
@@ -511,12 +623,6 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
         )}
       </div>
     );
-  };
-  
-  // Función auxiliar para obtener la etiqueta de grupo muscular
-  const getMuscleGroupLabel = (muscleGroup: string): string => {
-    const group = exerciseTypes.muscleGroups.find(g => g.value === muscleGroup);
-    return group ? group.label : muscleGroup;
   };
   
   return (
@@ -702,6 +808,30 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                   ? 'Esta rutina puede usarse como plantilla para crear otras rutinas' 
                   : 'Esta rutina es específica y no se usará como plantilla'}
               </p>
+            </div>
+          </div>
+          
+          {/* Resumen de ejercicios */}
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <h3 className="text-lg font-medium mb-2">Resumen de Ejercicios</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {Object.keys(formData.exercises).map((day, index) => {
+                const exerciseCount = formData.exercises[day].length;
+                const globalExercises = formData.exercises[day].filter(ex => ex.isGlobal).length;
+                return (
+                  <div key={day} className="text-center">
+                    <div className="font-medium">Día {index + 1}</div>
+                    <div className="text-sm text-gray-600">
+                      {exerciseCount} ejercicio{exerciseCount !== 1 ? 's' : ''}
+                      {globalExercises > 0 && (
+                        <span className="block text-purple-600">
+                          ({globalExercises} global{globalExercises !== 1 ? 'es' : ''})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
           

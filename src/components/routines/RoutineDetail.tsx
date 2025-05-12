@@ -1,8 +1,8 @@
-// src/components/routines/RoutineDetail.tsx (continuación)
+// src/components/routines/RoutineDetail.tsx - Parte 1
 import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, Edit, Trash, Copy, Calendar, Activity, Target, 
-  Clock, User, Dumbbell, ChevronDown, ChevronUp, Info 
+  Clock, User, Dumbbell, ChevronDown, ChevronUp, Info, Globe, Building2 
 } from 'lucide-react';
 import { Routine, DifficultyLevel, MuscleGroup } from '../../types/exercise.types';
 import exerciseTypes from '../../types/exercise.types';
@@ -30,12 +30,14 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
   const [expandedExercises, setExpandedExercises] = useState<Set<string>>(new Set());
   const [exerciseDetails, setExerciseDetails] = useState<{[key: string]: any}>({});
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingExerciseDetails, setLoadingExerciseDetails] = useState<Set<string>>(new Set());
   
   // Cargar detalles de ejercicios cuando se expande un día
   const loadExerciseDetails = async (exerciseId: string) => {
-    if (!gymData?.id || exerciseDetails[exerciseId]) return;
+    if (!gymData?.id || exerciseDetails[exerciseId] || loadingExerciseDetails.has(exerciseId)) return;
     
-    setLoading(true);
+    setLoadingExerciseDetails(prev => new Set(prev).add(exerciseId));
+    
     try {
       const exerciseData = await getExerciseById(gymData.id, exerciseId);
       if (exerciseData) {
@@ -47,7 +49,11 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
     } catch (error) {
       console.error('Error loading exercise details:', error);
     } finally {
-      setLoading(false);
+      setLoadingExerciseDetails(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(exerciseId);
+        return newSet;
+      });
     }
   };
   
@@ -75,12 +81,41 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
     return found ? found.label : group;
   };
   
+  // Calcular estadísticas de la rutina
+  const calculateRoutineStats = () => {
+    let totalExercises = 0;
+    let totalGlobalExercises = 0;
+    const muscleGroups = new Set<string>();
+    
+    Object.values(routine.exercises).forEach(dayExercises => {
+      dayExercises.forEach(exercise => {
+        totalExercises++;
+        if (exercise.isGlobal) {
+          totalGlobalExercises++;
+        }
+        muscleGroups.add(exercise.muscleGroup);
+      });
+    });
+    
+    return {
+      totalExercises,
+      totalGlobalExercises,
+      totalGymExercises: totalExercises - totalGlobalExercises,
+      uniqueMuscleGroups: Array.from(muscleGroups)
+    };
+  };
+  
+  const stats = calculateRoutineStats();
+  
   // Renderizar pestañas de días
   const renderDayTabs = () => {
     const tabs = [];
     
     for (let i = 1; i <= routine.daysPerWeek; i++) {
       const dayKey = `day${i}`;
+      const dayExercises = routine.exercises[dayKey] || [];
+      const globalCount = dayExercises.filter(ex => ex.isGlobal).length;
+      
       tabs.push(
         <button
           key={dayKey}
@@ -88,9 +123,19 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
           className={`px-4 py-2 ${activeDay === dayKey 
             ? 'bg-blue-600 text-white' 
             : 'bg-gray-100 hover:bg-gray-200 text-gray-700'} 
-            rounded-t-lg transition-colors`}
+            rounded-t-lg transition-colors relative`}
         >
-          Día {i}
+          <div>
+            <div>Día {i}</div>
+            <div className="text-xs">
+              {dayExercises.length} ejercicio{dayExercises.length !== 1 ? 's' : ''}
+              {globalCount > 0 && (
+                <span className="text-purple-200 block">
+                  {globalCount} global{globalCount !== 1 ? 'es' : ''}
+                </span>
+              )}
+            </div>
+          </div>
         </button>
       );
     }
@@ -123,29 +168,41 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
               className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50"
               onClick={() => toggleExerciseExpansion(exercise.id)}
             >
-              <div className="flex items-center">
-                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-medium">
+              <div className="flex items-center flex-1">
+                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-medium mr-3">
                   {exercise.order}
                 </div>
-                <div className="ml-3">
-                  <h4 className="font-medium">{exercise.exerciseName}</h4>
+                <div className="flex-1">
+                  <div className="flex items-center">
+                    <h4 className="font-medium">{exercise.exerciseName}</h4>
+                    {exercise.isGlobal && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        <Globe size={10} className="mr-1" />
+                        Global
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center text-sm text-gray-600 mt-1">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-2">
                       {getMuscleGroupLabel(exercise.muscleGroup)}
                     </span>
-                    <span>{exercise.sets} series x {exercise.reps} reps</span>
+                    <span>{exercise.sets} series × {exercise.reps} reps</span>
                   </div>
                 </div>
               </div>
               
               <div className="flex items-center">
-                <span className="text-sm text-gray-500 mr-2">
+                <span className="text-sm text-gray-500 mr-3">
                   {exercise.rest}s descanso
                 </span>
-                {expandedExercises.has(exercise.id) ? (
-                  <ChevronUp size={20} className="text-gray-400" />
+                {loadingExerciseDetails.has(exercise.exerciseId) ? (
+                  <div className="h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                 ) : (
-                  <ChevronDown size={20} className="text-gray-400" />
+                  expandedExercises.has(exercise.id) ? (
+                    <ChevronUp size={20} className="text-gray-400" />
+                  ) : (
+                    <ChevronDown size={20} className="text-gray-400" />
+                  )
                 )}
               </div>
             </div>
@@ -165,10 +222,23 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
                           <Dumbbell size={14} className="mr-1 text-blue-500" />
                           Dificultad: {getDifficultyLabel(exerciseDetails[exercise.exerciseId].difficulty)}
                         </li>
+                        <li className="flex items-center">
+                          {exercise.isGlobal ? (
+                            <>
+                              <Globe size={14} className="mr-1 text-purple-500" />
+                              <span className="text-purple-700">Ejercicio Global</span>
+                            </>
+                          ) : (
+                            <>
+                              <Building2 size={14} className="mr-1 text-blue-500" />
+                              <span className="text-blue-700">Ejercicio Propio</span>
+                            </>
+                          )}
+                        </li>
                         {exercise.notes && (
                           <li className="flex items-start">
                             <Info size={14} className="mr-1 mt-0.5 text-blue-500" />
-                            Notas: {exercise.notes}
+                            <span>Notas: {exercise.notes}</span>
                           </li>
                         )}
                       </ul>
@@ -183,11 +253,21 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
                         />
                       </div>
                     )}
+                    
+                    {exerciseDetails[exercise.exerciseId].instructions && (
+                      <div className="md:col-span-2">
+                        <h5 className="font-medium text-sm text-gray-700 mb-1">Instrucciones:</h5>
+                        <p className="text-sm text-gray-600 whitespace-pre-line">
+                          {exerciseDetails[exercise.exerciseId].instructions}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-center py-4">
-                    <div className="inline-block h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="text-sm text-gray-500 mt-2">Cargando detalles...</p>
+                    <div className="text-sm text-gray-500">
+                      Error al cargar los detalles del ejercicio
+                    </div>
                   </div>
                 )}
               </div>
@@ -197,7 +277,6 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
       </div>
     );
   };
-  
   return (
     <div className="bg-white rounded-lg shadow-md">
       {/* Cabecera con acciones */}
@@ -303,34 +382,34 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
           </div>
           
           <div>
-            <h3 className="text-lg font-medium mb-4">Resumen de Ejercicios</h3>
+            <h3 className="text-lg font-medium mb-4">Estadísticas de Ejercicios</h3>
             <div className="bg-gray-50 p-4 rounded-lg">
-              <div className="grid grid-cols-2 gap-4">
-                {Object.keys(routine.exercises).map((day, index) => {
-                  const dayExercises = routine.exercises[day];
-                  return (
-                    <div key={day} className="flex items-center">
-                      <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-medium">
-                        {index + 1}
-                      </div>
-                      <div className="ml-2">
-                        <div className="text-sm font-medium text-gray-700">Día {day.replace('day', '')}</div>
-                        <div className="text-gray-600">{dayExercises.length} ejercicios</div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{stats.totalExercises}</div>
+                  <div className="text-sm text-gray-600">Total Ejercicios</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600">{stats.totalGlobalExercises}</div>
+                  <div className="text-sm text-gray-600">Ejercicios Globales</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600">{stats.totalGymExercises}</div>
+                  <div className="text-sm text-gray-600">Ejercicios Propios</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-orange-600">{routine.daysPerWeek}</div>
+                  <div className="text-sm text-gray-600">Días de Entrenamiento</div>
+                </div>
               </div>
               
-              <div className="mt-4 p-3 bg-blue-50 rounded-md">
-                <h4 className="text-sm font-medium text-blue-800 mb-1">Grupos Musculares</h4>
+              <div className="p-3 bg-blue-50 rounded-md">
+                <h4 className="text-sm font-medium text-blue-800 mb-2">Grupos Musculares</h4>
                 <div className="flex flex-wrap gap-1">
-                  {/* Mostrar los grupos musculares únicos trabajados en esta rutina */}
-                  {Array.from(new Set(
-                    Object.values(routine.exercises)
-                      .flat()
-                      .map(ex => ex.muscleGroup)
-                  )).map(group => (
+                  {stats.uniqueMuscleGroups.map(group => (
                     <span 
                       key={group} 
                       className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
@@ -339,6 +418,30 @@ const RoutineDetail: React.FC<RoutineDetailProps> = ({
                     </span>
                   ))}
                 </div>
+              </div>
+            </div>
+            
+            {/* Resumen por días */}
+            <div className="mt-4 bg-purple-50 p-4 rounded-lg">
+              <h4 className="text-sm font-medium text-purple-800 mb-2">Resumen por Días</h4>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.keys(routine.exercises).map((day, index) => {
+                  const dayExercises = routine.exercises[day];
+                  const globalCount = dayExercises.filter(ex => ex.isGlobal).length;
+                  return (
+                    <div key={day} className="text-center">
+                      <div className="font-medium text-purple-700">Día {index + 1}</div>
+                      <div className="text-xs text-gray-600">
+                        {dayExercises.length} total
+                        {globalCount > 0 && (
+                          <span className="block text-purple-600">
+                            {globalCount} global{globalCount !== 1 ? 'es' : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
