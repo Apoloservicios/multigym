@@ -1,8 +1,9 @@
 // src/components/exercises/ExerciseDetail.tsx
 import React from 'react';
-import { ArrowLeft, Edit, Trash, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Edit, Trash, ExternalLink, Globe, Building2 } from 'lucide-react';
 import { Exercise, MuscleGroup, DifficultyLevel } from '../../types/exercise.types';
 import exerciseTypes from '../../types/exercise.types';
+
 
 interface ExerciseDetailProps {
   exercise: Exercise;
@@ -84,30 +85,67 @@ const ExerciseDetail: React.FC<ExerciseDetailProps> = ({
               <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
                 {getDifficultyLabel(exercise.difficulty)}
               </span>
+              {/* Nuevo badge para mostrar si es ejercicio global */}
+              {exercise.isGlobal ? (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                  <Globe size={12} className="mr-1" />
+                  Global
+                </span>
+              ) : (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                  <Building2 size={12} className="mr-1" />
+                  Propio
+                </span>
+              )}
             </div>
           </div>
         </div>
         
         <div className="flex space-x-2">
-          <button
-            onClick={() => onEdit(exercise)}
-            className="px-3 py-1 border border-gray-300 rounded-md flex items-center hover:bg-gray-50"
-          >
-            <Edit size={18} className="mr-1" />
-            Editar
-          </button>
-          <button
-            onClick={() => onDelete(exercise)}
-            className="px-3 py-1 border border-red-300 text-red-700 rounded-md flex items-center hover:bg-red-50"
-          >
-            <Trash size={18} className="mr-1" />
-            Eliminar
-          </button>
+          {/* Solo mostrar acciones para ejercicios no globales */}
+          {!exercise.isGlobal ? (
+            <>
+              <button
+                onClick={() => onEdit(exercise)}
+                className="px-3 py-1 border border-gray-300 rounded-md flex items-center hover:bg-gray-50"
+              >
+                <Edit size={18} className="mr-1" />
+                Editar
+              </button>
+              <button
+                onClick={() => onDelete(exercise)}
+                className="px-3 py-1 border border-red-300 text-red-700 rounded-md flex items-center hover:bg-red-50"
+              >
+                <Trash size={18} className="mr-1" />
+                Eliminar
+              </button>
+            </>
+          ) : (
+            <div className="bg-gray-50 px-4 py-2 rounded-md flex items-center text-gray-600">
+              <Globe size={18} className="mr-2" />
+              <span className="text-sm">Ejercicio global (solo lectura)</span>
+ 	    </div>)}
         </div>
       </div>
       
       {/* Contenido */}
       <div className="p-6">
+        {/* Mensaje informativo para ejercicios globales */}
+        {exercise.isGlobal && (
+          <div className="bg-purple-50 border border-purple-200 text-purple-800 px-4 py-3 rounded-md mb-6">
+            <div className="flex items-center">
+              <Globe size={18} className="mr-2" />
+              <div>
+                <p className="text-sm font-medium">Ejercicio Global</p>
+                <p className="text-xs mt-1">
+                  Este ejercicio está disponible para todos los gimnasios. 
+                  Solo puede ser editado desde el panel de administración global.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Imagen y detalles básicos */}
           <div>
@@ -131,13 +169,50 @@ const ExerciseDetail: React.FC<ExerciseDetailProps> = ({
               <h3 className="text-lg font-medium mb-2">Descripción</h3>
               <p className="text-gray-600">{exercise.description}</p>
             </div>
+            
+            {/* Información adicional */}
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h3 className="text-lg font-medium mb-3">Información del Ejercicio</h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Grupo Muscular:</span>
+                  <span className="font-medium">{getMuscleGroupLabel(exercise.muscleGroup)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Dificultad:</span>
+                  <span className="font-medium">{getDifficultyLabel(exercise.difficulty)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Estado:</span>
+                  <span className={`font-medium ${exercise.isActive ? 'text-green-600' : 'text-red-600'}`}>
+                    {exercise.isActive ? 'Activo' : 'Inactivo'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Tipo:</span>
+                  <span className="font-medium flex items-center">
+                    {exercise.isGlobal ? (
+                      <>
+                        <Globe size={16} className="mr-1 text-purple-600" />
+                        Global
+                      </>
+                    ) : (
+                      <>
+                        <Building2 size={16} className="mr-1 text-blue-600" />
+                        Propio del gimnasio
+                      </>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
           
           {/* Instrucciones y Video */}
           <div>
             {/* Instrucciones */}
             <div className="mb-6">
-              <h3 className="text-lg font-medium mb-2">Instrucciones</h3>
+              <h3 className="text-lg font-medium mb-2">Instrucciones Detalladas</h3>
               <div className="bg-gray-50 p-4 rounded-lg">
                 <p className="text-gray-600 whitespace-pre-line">{exercise.instructions}</p>
               </div>

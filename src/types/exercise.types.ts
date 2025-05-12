@@ -1,4 +1,4 @@
-// src/types/exercise.types.ts
+// src/types/exercise.types.ts - Actualización para incluir campos de ejercicios globales
 
 // Tipos de grupos musculares
 export type MuscleGroup = 
@@ -17,7 +17,6 @@ export type MuscleGroup =
 // Nivel de dificultad
 export type DifficultyLevel = 'principiante' | 'intermedio' | 'avanzado';
 
-
 export interface Exercise {
   id: string;
   name: string;
@@ -31,9 +30,14 @@ export interface Exercise {
   video?: string | null;
   createdAt?: any;
   updatedAt?: any;
+  
+  // Nuevos campos para manejar ejercicios globales
+  isGlobal?: boolean; // True si es un ejercicio global del superadmin
+  canEdit?: boolean;  // True si el gimnasio puede editar este ejercicio
+  globalCreatedBy?: string; // ID del superadmin que creó el ejercicio global
 }
 
-// Ejercicio dentro de una rutina, con series, repeticiones, etc.
+// Resto de interfaces permanecen igual...
 export interface RoutineExercise {
   id: string;
   exerciseId: string;
@@ -44,6 +48,8 @@ export interface RoutineExercise {
   rest: number; // Descanso en segundos
   order: number;
   notes?: string;
+  // Nuevo campo para identificar si es un ejercicio global
+  isGlobal?: boolean;
 }
 
 export interface Routine {
@@ -89,7 +95,9 @@ const exerciseTypes = {
     muscleGroup: 'espalda',
     difficulty: 'principiante',
     instructions: '',
-    isActive: true
+    isActive: true,
+    isGlobal: false,
+    canEdit: true
   }),
   
   createEmptyRoutineExercise: (): RoutineExercise => ({
@@ -100,7 +108,8 @@ const exerciseTypes = {
     sets: 3,
     reps: '12',
     rest: 60,
-    order: 1
+    order: 1,
+    isGlobal: false
   }),
   
   createEmptyRoutine: (): Routine => ({

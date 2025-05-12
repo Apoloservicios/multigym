@@ -1,22 +1,18 @@
-// src/pages/exercises/Exercises.tsx
+// src/pages/superadmin/GlobalExercises.tsx
 import React, { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
-import ExerciseList from '../../components/exercises/ExerciseList';
-import ExerciseForm from '../../components/exercises/ExerciseForm';
-import ExerciseDetail from '../../components/exercises/ExerciseDetail';
-import { Exercise } from '../../types/exercise.types';
-import { createExercise, updateExercise, deleteExercise , getAllExercises} from '../../services/exercise.service';
-import useAuth from '../../hooks/useAuth';
+import GlobalExerciseList from '../../components/superadmin/GlobalExerciseList';
+import GlobalExerciseForm from '../../components/superadmin/GlobalExerciseForm';
+import GlobalExerciseDetail from '../../components/superadmin/GlobalExerciseDetail';
+import { GlobalExercise } from '../../types/global-exercise.types';
+import { createGlobalExercise, updateGlobalExercise, deleteGlobalExercise } from '../../services/global-exercise.service';
 import { uploadToCloudinary } from '../../utils/cloudinary.utils';
-
 
 type ViewType = 'list' | 'form' | 'detail';
 
-const Exercises: React.FC = () => {
-  const { gymData } = useAuth();
-  
+const GlobalExercises: React.FC = () => {
   const [view, setView] = useState<ViewType>('list');
-  const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
+  const [selectedExercise, setSelectedExercise] = useState<GlobalExercise | null>(null);
   const [isEdit, setIsEdit] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,122 +24,101 @@ const Exercises: React.FC = () => {
     setView('form');
   };
   
- const handleEditExercise = (exercise: Exercise) => {
-  if (exercise.isGlobal) {
-    setError('No puedes editar ejercicios globales');
-    return;
-  }
-  setSelectedExercise(exercise);
-  setIsEdit(true);
-  setView('form');
-};
-
+  const handleEditExercise = (exercise: GlobalExercise) => {
+    setSelectedExercise(exercise);
+    setIsEdit(true);
+    setView('form');
+  };
   
-  const handleViewExercise = (exercise: Exercise) => {
+  const handleViewExercise = (exercise: GlobalExercise) => {
     setSelectedExercise(exercise);
     setView('detail');
   };
   
-  const handleDeleteExercise = async (exercise: Exercise) => {
-  if (!gymData?.id) return;
-  
-  // Verificar si es un ejercicio global
-  if (exercise.isGlobal) {
-    setError('No puedes eliminar ejercicios globales');
-    return;
-  }
-  
-  setLoading(true);
-  setError(null);
-  
-  try {
-    await deleteExercise(gymData.id, exercise.id);
-    setView('list');
-    setSelectedExercise(null);
-    setSuccess('Ejercicio eliminado correctamente');
+  const handleDeleteExercise = async (exercise: GlobalExercise) => {
+    if (!window.confirm(`¿Estás seguro de que deseas eliminar el ejercicio "${exercise.name}"? Esta acción no se puede deshacer.`)) {
+      return;
+    }
     
-    // Reset success message after a few seconds
-    setTimeout(() => setSuccess(null), 3000);
-  } catch (err: any) {
-    console.error('Error deleting exercise:', err);
-    setError(err.message || 'Error al eliminar el ejercicio');
-  } finally {
-    setLoading(false);
-  }
-};
+    setLoading(true);
+    setError(null);
+    
+    try {
+      await deleteGlobalExercise(exercise.id);
+      setView('list');
+      setSelectedExercise(null);
+      setSuccess('Ejercicio eliminado correctamente');
+      
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      console.error('Error deleting global exercise:', err);
+      setError(err.message || 'Error al eliminar el ejercicio');
+    } finally {
+      setLoading(false);
+    }
+  };
   
-
-// En la página Exercises.tsx, modifica la función handleSaveExercise
-
-const handleSaveExercise = async (exerciseData: any, imageFile?: File) => {
-  if (!gymData?.id) {
-    setError('No se pudo obtener la información del gimnasio');
-    return;
-  }
-  
+const handleSaveExercise = async (exerciseData: Omit<GlobalExercise, 'id'>, imageFile?: File) => {
   setLoading(true);
   setError(null);
   
   try {
     // Procesar la imagen si hay una nueva
-    let imageUrl = exerciseData.image || null;
+    let imageUrl = exerciseData.image;
     
     if (imageFile) {
       try {
-        imageUrl = await uploadToCloudinary(imageFile, `gyms/${gymData.id}/exercises`);
-      } catch (err) {
-        console.error('Error uploading image:', err);
-        imageUrl = null;
+        imageUrl = await uploadToCloudinary(imageFile, 'global-exercises');
+      } catch (uploadError) {
+        console.error('Error uploading image:', uploadError);
+        imageUrl = undefined; // Usar undefined en lugar de null
       }
     }
     
-    // Crear un objeto limpio con solo los campos necesarios y sin undefined
-    const cleanData = {
-      name: exerciseData.name,
-      description: exerciseData.description,
-      muscleGroup: exerciseData.muscleGroup,
-      difficulty: exerciseData.difficulty,
-      instructions: exerciseData.instructions,
-      isActive: exerciseData.isActive !== undefined ? exerciseData.isActive : true,
-      // Usar null explícitamente para campos opcionales
+    // Preparar datos para guardar
+    const dataToSave = {
+      ...exerciseData,
       image: imageUrl,
-      video: exerciseData.video || null
+      // No necesitamos forzar conversiones aquí ya que los datos vienen limpios del form
     };
     
     if (isEdit && selectedExercise) {
-      await updateExercise(gymData.id, selectedExercise.id, cleanData);
+      // Actualizar ejercicio existente
+      await updateGlobalExercise(selectedExercise.id, dataToSave);
       setSuccess('Ejercicio actualizado correctamente');
       
-      const updatedExercise: Exercise = {
+      // Actualizar el ejercicio seleccionado
+      const updatedExercise: GlobalExercise = {
         ...selectedExercise,
-        ...cleanData,
+        ...dataToSave,
         id: selectedExercise.id
       };
       
       setSelectedExercise(updatedExercise);
       setView('detail');
     } else {
-      const newExercise = await createExercise(gymData.id, cleanData);
+      // Crear nuevo ejercicio
+      const newExercise = await createGlobalExercise(dataToSave);
       setSuccess('Ejercicio creado correctamente');
+      
       setSelectedExercise(newExercise);
       setView('detail');
     }
     
     setTimeout(() => setSuccess(null), 3000);
   } catch (err: any) {
-    console.error('Error saving exercise:', err);
+    console.error('Error saving global exercise:', err);
     setError(err.message || 'Error al guardar el ejercicio');
   } finally {
     setLoading(false);
   }
 };
-
-
+  
   const renderView = () => {
     switch (view) {
       case 'form':
         return (
-          <ExerciseForm
+          <GlobalExerciseForm
             initialData={selectedExercise || undefined}
             isEdit={isEdit}
             onSave={handleSaveExercise}
@@ -153,7 +128,7 @@ const handleSaveExercise = async (exerciseData: any, imageFile?: File) => {
       case 'detail':
         if (!selectedExercise) return null;
         return (
-          <ExerciseDetail
+          <GlobalExerciseDetail
             exercise={selectedExercise}
             onBack={() => setView('list')}
             onEdit={handleEditExercise}
@@ -163,7 +138,7 @@ const handleSaveExercise = async (exerciseData: any, imageFile?: File) => {
       case 'list':
       default:
         return (
-          <ExerciseList
+          <GlobalExerciseList
             onNewExercise={handleNewExercise}
             onEditExercise={handleEditExercise}
             onViewExercise={handleViewExercise}
@@ -174,15 +149,15 @@ const handleSaveExercise = async (exerciseData: any, imageFile?: File) => {
   
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Gestión de Ejercicios</h1>
+      <h1 className="text-2xl font-bold mb-6">Gestión de Ejercicios Globales</h1>
       
-      {/* Migas de pan (breadcrumbs) */}
+      {/* Breadcrumbs */}
       <div className="mb-6 flex items-center text-sm text-gray-600">
         <span 
           className={`${view === 'list' ? 'font-medium text-blue-600' : 'cursor-pointer hover:text-blue-600'}`}
           onClick={() => setView('list')}
         >
-          Ejercicios
+          Ejercicios Globales
         </span>
         
         {view !== 'list' && (
@@ -234,4 +209,4 @@ const handleSaveExercise = async (exerciseData: any, imageFile?: File) => {
   );
 };
 
-export default Exercises;
+export default GlobalExercises;

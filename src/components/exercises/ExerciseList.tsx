@@ -1,10 +1,16 @@
-// src/components/exercises/ExerciseList.tsx
+// src/components/exercises/ExerciseList.tsx - Parte 1: Imports y estructura inicial
+
 import React, { useState, useEffect } from 'react';
 import { 
   Search, Edit, Trash, Filter, Grid, List, Plus, 
-  Eye, CheckCircle, XCircle, AlertCircle, ArrowUpDown
+  Eye, CheckCircle, XCircle, AlertCircle, ArrowUpDown, Globe, Building2
 } from 'lucide-react';
-import { getExercises, toggleExerciseStatus, deleteExercise } from '../../services/exercise.service';
+import { 
+  getAllExercises, 
+  toggleExerciseStatus, 
+  deleteExercise,
+  getExercises
+} from '../../services/exercise.service';
 import { Exercise, MuscleGroup, DifficultyLevel } from '../../types/exercise.types';
 import exerciseTypes from '../../types/exercise.types';
 import useAuth from '../../hooks/useAuth';
@@ -38,6 +44,7 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
   const [muscleGroupFilter, setMuscleGroupFilter] = useState<MuscleGroup | 'all'>('all');
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyLevel | 'all'>('all');
   const [activeFilter, setActiveFilter] = useState<boolean | 'all'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'global' | 'gym'>('all'); // Nuevo filtro
   const [sortBy, setSortBy] = useState<'name' | 'muscleGroup'>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
@@ -49,7 +56,7 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
   // Aplicar filtros cuando cambian
   useEffect(() => {
     applyFilters();
-  }, [exercises, searchTerm, muscleGroupFilter, difficultyFilter, activeFilter, sortBy, sortDirection]);
+  }, [exercises, searchTerm, muscleGroupFilter, difficultyFilter, activeFilter, sourceFilter, sortBy, sortDirection]);
   
   const loadExercises = async () => {
     if (!gymData?.id) {
@@ -61,7 +68,8 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
     setError(null);
     
     try {
-      const data = await getExercises(gymData.id);
+      // Cargar todos los ejercicios (propios + globales)
+      const data = await getAllExercises(gymData.id);
       setExercises(data);
     } catch (err: any) {
       console.error('Error loading exercises:', err);
@@ -97,6 +105,15 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
       result = result.filter(ex => ex.isActive === activeFilter);
     }
     
+    // Nuevo filtro por origen (global/gimnasio)
+    if (sourceFilter !== 'all') {
+      if (sourceFilter === 'global') {
+        result = result.filter(ex => ex.isGlobal === true);
+      } else if (sourceFilter === 'gym') {
+        result = result.filter(ex => ex.isGlobal !== true);
+      }
+    }
+    
     // Ordenamiento
     result.sort((a, b) => {
       if (sortBy === 'name') {
@@ -113,20 +130,29 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
     
     setFilteredExercises(result);
   };
-  
-  const handleDeleteClick = (exercise: Exercise) => {
+   const handleDeleteClick = (exercise: Exercise) => {
+    // Solo permite eliminar ejercicios del gimnasio
+    if (exercise.isGlobal) {
+      setError('No puedes eliminar ejercicios globales');
+      return;
+    }
     setExerciseToDelete(exercise);
     setIsDeleteModalOpen(true);
   };
   
   const handleToggleStatus = (exercise: Exercise) => {
+    // Solo permite cambiar estado de ejercicios del gimnasio
+    if (exercise.isGlobal) {
+      setError('No puedes modificar el estado de ejercicios globales');
+      return;
+    }
     setExerciseToToggle(exercise);
     setNewStatus(!exercise.isActive);
     setIsStatusModalOpen(true);
   };
   
   const confirmDelete = async () => {
-    if (!gymData?.id || !exerciseToDelete) return;
+    if (!gymData?.id || !exerciseToDelete || exerciseToDelete.isGlobal) return;
     
     setLoading(true);
     
@@ -149,7 +175,7 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
   };
   
   const confirmToggleStatus = async () => {
-    if (!gymData?.id || !exerciseToToggle) return;
+    if (!gymData?.id || !exerciseToToggle || exerciseToToggle.isGlobal) return;
     
     setLoading(true);
     
@@ -213,7 +239,7 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
         <div className="flex flex-wrap gap-2">
           <select
             value={muscleGroupFilter}
-            onChange={(e) => setMuscleGroupFilter(e.target.value as MuscleGroup | 'all')}
+              onChange={(e) => setMuscleGroupFilter(e.target.value as MuscleGroup | 'all')}
             className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="all">Todos los grupos</option>
@@ -241,6 +267,17 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
             <option value="all">Activos e inactivos</option>
             <option value="true">Solo activos</option>
             <option value="false">Solo inactivos</option>
+          </select>
+          
+          {/* Nuevo filtro para origen de ejercicios */}
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value as 'all' | 'global' | 'gym')}
+            className="border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Todos los ejercicios</option>
+            <option value="gym">Ejercicios propios</option>
+            <option value="global">Ejercicios globales</option>
           </select>
           
           <button
@@ -315,6 +352,16 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
                 {exercise.isActive ? 'Activo' : 'Inactivo'}
               </span>
             </div>
+            
+            {/* Badge para ejercicios globales */}
+            {exercise.isGlobal && (
+              <div className="absolute top-2 left-2">
+                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                  <Globe size={12} className="mr-1" />
+                  Global
+                </span>
+              </div>
+            )}
           </div>
           
           {/* Información */}
@@ -347,29 +394,40 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
               </button>
               
               <div className="flex space-x-2">
-                <button
-                  onClick={() => handleToggleStatus(exercise)}
-                  className={exercise.isActive ? "text-orange-600 hover:text-orange-800" : "text-green-600 hover:text-green-800"}
-                  title={exercise.isActive ? "Desactivar" : "Activar"}
-                >
-                  {exercise.isActive ? <XCircle size={18} /> : <CheckCircle size={18} />}
-                </button>
+                {!exercise.isGlobal && (
+                  <>
+                    <button
+                      onClick={() => handleToggleStatus(exercise)}
+                      className={exercise.isActive ? "text-orange-600 hover:text-orange-800" : "text-green-600 hover:text-green-800"}
+                      title={exercise.isActive ? "Desactivar" : "Activar"}
+                    >
+                      {exercise.isActive ? <XCircle size={18} /> : <CheckCircle size={18} />}
+                    </button>
+                    
+                    <button
+                      onClick={() => onEditExercise(exercise)}
+                      className="text-blue-600 hover:text-blue-800"
+                      title="Editar"
+                    >
+                      <Edit size={18} />
+                    </button>
+                    
+                    <button
+                      onClick={() => handleDeleteClick(exercise)}
+                      className="text-red-600 hover:text-red-800"
+                      title="Eliminar"
+                    >
+                      <Trash size={18} />
+                    </button>
+                  </>
+                )}
                 
-                <button
-                  onClick={() => onEditExercise(exercise)}
-                  className="text-blue-600 hover:text-blue-800"
-                  title="Editar"
-                >
-                  <Edit size={18} />
-                </button>
-                
-                <button
-                  onClick={() => handleDeleteClick(exercise)}
-                  className="text-red-600 hover:text-red-800"
-                  title="Eliminar"
-                >
-                  <Trash size={18} />
-                </button>
+                {exercise.isGlobal && (
+                  <div className="flex items-center space-x-1 text-gray-400">
+                    <Building2 size={16} />
+                    <span className="text-xs">Solo lectura</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -377,8 +435,7 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
       ))}
     </div>
   );
-  
-  const renderListView = () => (
+    const renderListView = () => (
     <div className="bg-white rounded-lg shadow overflow-hidden">
       <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
@@ -394,6 +451,9 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
             </th>
             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
               Estado
+            </th>
+            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Origen
             </th>
             <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
               Acciones
@@ -429,6 +489,21 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
                   {exercise.isActive ? 'Activo' : 'Inactivo'}
                 </span>
               </td>
+              <td className="px-6 py-4 whitespace-nowrap">
+                <div className="flex items-center">
+                  {exercise.isGlobal ? (
+                    <>
+                      <Globe size={16} className="text-purple-500 mr-1" />
+                      <span className="text-sm text-purple-700">Global</span>
+                    </>
+                  ) : (
+                    <>
+                      <Building2 size={16} className="text-blue-500 mr-1" />
+                      <span className="text-sm text-blue-700">Propio</span>
+                    </>
+                  )}
+                </div>
+              </td>
               <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div className="flex justify-end space-x-2">
                   <button
@@ -439,29 +514,39 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
                     <Eye size={18} />
                   </button>
                   
-                  <button
-                    onClick={() => handleToggleStatus(exercise)}
-                    className={exercise.isActive ? "text-orange-600 hover:text-orange-800" : "text-green-600 hover:text-green-800"}
-                    title={exercise.isActive ? "Desactivar" : "Activar"}
-                  >
-                    {exercise.isActive ? <XCircle size={18} /> : <CheckCircle size={18} />}
-                  </button>
+                  {!exercise.isGlobal && (
+                    <>
+                      <button
+                        onClick={() => handleToggleStatus(exercise)}
+                        className={exercise.isActive ? "text-orange-600 hover:text-orange-800" : "text-green-600 hover:text-green-800"}
+                        title={exercise.isActive ? "Desactivar" : "Activar"}
+                      >
+                        {exercise.isActive ? <XCircle size={18} /> : <CheckCircle size={18} />}
+                      </button>
+                      
+                      <button
+                        onClick={() => onEditExercise(exercise)}
+                        className="text-blue-600 hover:text-blue-800"
+                        title="Editar"
+                      >
+                        <Edit size={18} />
+                      </button>
+                      
+                      <button
+                        onClick={() => handleDeleteClick(exercise)}
+                        className="text-red-600 hover:text-red-800"
+                        title="Eliminar"
+                      >
+                        <Trash size={18} />
+                      </button>
+                    </>
+                  )}
                   
-                  <button
-                    onClick={() => onEditExercise(exercise)}
-                    className="text-blue-600 hover:text-blue-800"
-                    title="Editar"
-                  >
-                    <Edit size={18} />
-                  </button>
-                  
-                  <button
-                    onClick={() => handleDeleteClick(exercise)}
-                    className="text-red-600 hover:text-red-800"
-                    title="Eliminar"
-                  >
-                    <Trash size={18} />
-                  </button>
+                  {exercise.isGlobal && (
+                    <div className="flex items-center space-x-1 text-gray-400">
+                      <span className="text-xs">Solo lectura</span>
+                    </div>
+                  )}
                 </div>
               </td>
             </tr>
@@ -483,6 +568,17 @@ const ExerciseList: React.FC<ExerciseListProps> = ({
           <Plus size={18} className="mr-2" />
           Nuevo Ejercicio
         </button>
+      </div>
+      
+      {/* Mensaje informativo sobre ejercicios globales */}
+      <div className="bg-purple-50 border border-purple-200 text-purple-800 px-4 py-3 rounded-md mb-4">
+        <div className="flex items-center">
+          <Globe size={18} className="mr-2" />
+          <span className="text-sm">
+            Los ejercicios marcados como "Global" son ejercicios precargados disponibles para todos los gimnasios. 
+            Solo puedes editarlos desde el panel de administración.
+          </span>
+        </div>
       </div>
       
       {/* Mensaje de error */}

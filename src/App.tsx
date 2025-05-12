@@ -32,6 +32,7 @@ import GymsManager from './pages/superadmin/Gyms';
 import SubscriptionsManager from './pages/superadmin/Subscriptions';
 import RevenueManager from './pages/superadmin/Revenue';
 import GymAccountDetails from './pages/superadmin/GymAccountDetails';
+import GlobalExercises from './pages/superadmin/GlobalExercises';
 
 // Tipo para los datos del usuario autenticado
 type UserData = {
@@ -64,6 +65,8 @@ const AppContent: React.FC = () => {
       setCurrentPage('superadmin-subscriptions');
     } else if (path.includes('/superadmin/revenue')) {
       setCurrentPage('superadmin-revenue');
+    } else if (path.includes('/superadmin/exercises')) {
+      setCurrentPage('superadmin-exercises');
     }
   }, [location]);
   
@@ -151,6 +154,8 @@ const AppContent: React.FC = () => {
         return <GymAccountDetails />;
       default:
         return <Dashboard />;
+      case 'superadmin-exercises':
+        return <GlobalExercises />;
     }
   };
   

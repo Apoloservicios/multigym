@@ -199,6 +199,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                     active={activePage === 'superadmin-revenue'}
                     onClick={() => onNavigate('superadmin-revenue')}
                   />
+                  <NavItem
+                    icon={<Dumbbell size={20} />}
+                    text="Ejercicios Globales"
+                    active={activePage === 'superadmin-exercises'}
+                    onClick={() => onNavigate('superadmin-exercises')}
+                  />
                 </div>
                 
                 <div className="border-t border-gray-200 my-2"></div>

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { Routine, RoutineExercise, DifficultyLevel } from '../../types/exercise.types';
 import exerciseTypes from '../../types/exercise.types';
-import { getExercises } from '../../services/exercise.service';
+import { getExercises,getAllExercises } from '../../services/exercise.service';
 import useAuth from '../../hooks/useAuth';
 
 interface RoutineFormProps {
@@ -73,7 +73,8 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     
     setLoading(true);
     try {
-      const data = await getExercises(gymData.id);
+      // Usamos la nueva función que incluye ejercicios globales
+      const data = await getAllExercises(gymData.id);
       // Filtrar solo ejercicios activos
       setExercises(data.filter(ex => ex.isActive));
     } catch (err) {
@@ -82,6 +83,43 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+  
+  // También actualizar la función handleExerciseChange para manejar ejercicios globales
+  const handleExerciseChange = (exerciseId: string, field: string, value: any) => {
+    setFormData(prev => {
+      const updatedExercises = prev.exercises[activeDay].map(ex => {
+        if (ex.id === exerciseId) {
+          if (field === 'exerciseId') {
+            // Si cambia el ejercicio, actualizar también el nombre, grupo muscular y si es global
+            const selectedExercise = exercises.find(e => e.id === value);
+            if (selectedExercise) {
+              return {
+                ...ex,
+                exerciseId: value,
+                exerciseName: selectedExercise.name,
+                muscleGroup: selectedExercise.muscleGroup,
+                isGlobal: selectedExercise.isGlobal || false
+              };
+            }
+          }
+          
+          return {
+            ...ex,
+            [field]: field === 'sets' || field === 'rest' ? parseInt(value, 10) : value
+          };
+        }
+        return ex;
+      });
+      
+      return {
+        ...prev,
+        exercises: {
+          ...prev.exercises,
+          [activeDay]: updatedExercises
+        }
+      };
+    });
   };
   
   // Inicializar estructura de ejercicios para los días de la semana
@@ -197,41 +235,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
     });
   };
   
-  // Actualizar un ejercicio
-  const handleExerciseChange = (exerciseId: string, field: string, value: any) => {
-    setFormData(prev => {
-      const updatedExercises = prev.exercises[activeDay].map(ex => {
-        if (ex.id === exerciseId) {
-          if (field === 'exerciseId') {
-            // Si cambia el ejercicio, actualizar también el nombre y grupo muscular
-            const selectedExercise = exercises.find(e => e.id === value);
-            if (selectedExercise) {
-              return {
-                ...ex,
-                exerciseId: value,
-                exerciseName: selectedExercise.name,
-                muscleGroup: selectedExercise.muscleGroup
-              };
-            }
-          }
-          
-          return {
-            ...ex,
-            [field]: field === 'sets' || field === 'rest' ? parseInt(value, 10) : value
-          };
-        }
-        return ex;
-      });
-      
-      return {
-        ...prev,
-        exercises: {
-          ...prev.exercises,
-          [activeDay]: updatedExercises
-        }
-      };
-    });
-  };
+ 
   
   // Mover un ejercicio hacia arriba o abajo (cambiar orden)
   const handleMoveExercise = (exerciseId: string, direction: 'up' | 'down') => {
@@ -440,6 +444,7 @@ const RoutineForm: React.FC<RoutineFormProps> = ({
                       {exercises.map((ex:any) => (
                         <option key={ex.id} value={ex.id}>
                           {ex.name} ({getMuscleGroupLabel(ex.muscleGroup)})
+                          {ex.isGlobal && ' - Global'}
                         </option>
                       ))}
                     </select>
