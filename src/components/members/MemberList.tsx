@@ -1,7 +1,7 @@
-// src/components/members/MemberList.tsx
+// src/components/members/MemberList.tsx - VERSIÓN CON PAGINACIÓN
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, User, Edit, Trash, Eye, CreditCard, BanknoteIcon, RefreshCw, Filter, UserPlus, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
+import { Search, User, Edit, Trash, Eye, CreditCard, BanknoteIcon, RefreshCw, Filter, UserPlus, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Member } from '../../types/member.types';
 import { formatCurrency } from '../../utils/formatting.utils';
 import useAuth from '../../hooks/useAuth';
@@ -29,7 +29,9 @@ const MemberList: React.FC<MemberListProps> = ({
   const membersFirestore = useFirestore<Member>('members');
   
   // Estados principales
-  const [members, setMembers] = useState<Member[]>([]);
+  const [allMembers, setAllMembers] = useState<Member[]>([]); // Todos los miembros
+  const [filteredMembers, setFilteredMembers] = useState<Member[]>([]); // Después de filtros
+  const [displayedMembers, setDisplayedMembers] = useState<Member[]>([]); // Los que se muestran en la página actual
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [debtFilter, setDebtFilter] = useState<string>('all');
@@ -38,26 +40,24 @@ const MemberList: React.FC<MemberListProps> = ({
   const [searching, setSearching] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   
-  // Estados para paginación
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const [totalMembers, setTotalMembers] = useState<number>(0);
-  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
-  
   // Estados para ordenamiento
   const [sortField, setSortField] = useState<string>('lastName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
-  // Configuración de paginación
-  const ITEMS_PER_PAGE = 20;
-  const totalPages = Math.ceil(totalMembers / ITEMS_PER_PAGE);
+  // Estados para paginación
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(10); // Cambia este número si quieres más/menos items por página
+  
+  // Calcular datos de paginación
+  const totalItems = filteredMembers.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
 
   // Función debounced para búsqueda
   const debouncedSearch = useMemo(
     () => debounce(async (term: string) => {
       if (!term.trim()) {
-        if (gymData?.id) {
-          loadMembers(true);
-        }
         return;
       }
       
@@ -65,146 +65,128 @@ const MemberList: React.FC<MemberListProps> = ({
       setError('');
       
       try {
-        console.log('Iniciando búsqueda para:', term);
-        
-        // Usar la búsqueda simple del hook
         const searchResults = await membersFirestore.search(
           term.trim(), 
           ['firstName', 'lastName', 'email', 'phone'],
-          100 // Límite de resultados de búsqueda
+          100
         );
         
-        console.log('Resultados de búsqueda obtenidos:', searchResults.length);
-        
-        // Aplicar filtros adicionales en el frontend
-        let filteredResults = searchResults;
-        
-        if (statusFilter !== 'all') {
-          filteredResults = filteredResults.filter(m => m.status === statusFilter);
-        }
-        
-        if (debtFilter === 'with_debt') {
-          filteredResults = filteredResults.filter(m => (m.totalDebt || 0) > 0);
-        } else if (debtFilter === 'no_debt') {
-          filteredResults = filteredResults.filter(m => (m.totalDebt || 0) === 0);
-        }
-        
-        setMembers(filteredResults);
-        setCurrentPage(1);
-        setTotalMembers(filteredResults.length);
-        console.log('Búsqueda completada, resultados filtrados:', filteredResults.length);
-        
+        setAllMembers(searchResults);
       } catch (error) {
         console.error('Error en búsqueda:', error);
         setError('Error al buscar miembros. Inténtalo de nuevo.');
+        setAllMembers([]);
       } finally {
         setSearching(false);
       }
     }, 300),
-    [membersFirestore, statusFilter, debtFilter, gymData?.id]
+    [membersFirestore]
   );
 
-  // Cargar miembros con paginación y filtros
- const loadMembers = useCallback(async (reset: boolean = false) => {
-  if (!gymData?.id) {
-    setLoading(false);
-    return;
-  }
-  
-  console.log('Cargando miembros - Reset:', reset);
-  
-  setLoading(true);
-  setError('');
-  
-  try {
-    // USAR SOLO getAll - sin paginación por ahora
-    const allMembers = await membersFirestore.getAll();
+  // Cargar todos los miembros
+  const loadMembers = useCallback(async () => {
+    if (!gymData?.id) {
+      setLoading(false);
+      return;
+    }
     
-    console.log('Todos los miembros obtenidos:', allMembers.length);
+    setLoading(true);
+    setError('');
     
-    // Aplicar TODOS los filtros en el frontend
-    let filteredMembers = allMembers;
+    try {
+      const allMembersData = await membersFirestore.getAll(1000);
+      setAllMembers(allMembersData);
+    } catch (error) {
+      console.error('Error cargando miembros:', error);
+      setError('Error al cargar los miembros. Inténtalo de nuevo.');
+      setAllMembers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [gymData?.id, membersFirestore]);
+
+  // Aplicar filtros y ordenamiento
+  useEffect(() => {
+    let result = [...allMembers];
     
-    // Filtro de estado
+    // Aplicar filtros
     if (statusFilter !== 'all') {
-      filteredMembers = filteredMembers.filter(m => m.status === statusFilter);
+      result = result.filter(m => m.status === statusFilter);
     }
     
-    // Filtro de deuda
     if (debtFilter === 'with_debt') {
-      filteredMembers = filteredMembers.filter(m => (m.totalDebt || 0) > 0);
+      result = result.filter(m => (m.totalDebt || 0) > 0);
     } else if (debtFilter === 'no_debt') {
-      filteredMembers = filteredMembers.filter(m => (m.totalDebt || 0) === 0);
+      result = result.filter(m => (m.totalDebt || 0) === 0);
     }
     
-    // Ordenamiento en el frontend
-    filteredMembers.sort((a, b) => {
+    // Aplicar ordenamiento
+    result.sort((a, b) => {
       const aValue = (a as any)[sortField] || '';
       const bValue = (b as any)[sortField] || '';
       
+      const aStr = String(aValue).toLowerCase();
+      const bStr = String(bValue).toLowerCase();
+      
       if (sortDirection === 'asc') {
-        return aValue > bValue ? 1 : -1;
+        return aStr > bStr ? 1 : -1;
       } else {
-        return aValue < bValue ? 1 : -1;
+        return aStr < bStr ? 1 : -1;
       }
     });
     
-    setMembers(filteredMembers);
-    setTotalMembers(filteredMembers.length);
-    setCurrentPage(1);
-    
-    console.log('Miembros filtrados y ordenados:', filteredMembers.length);
-    
-  } catch (error) {
-    console.error('Error cargando miembros:', error);
-    setError('Error al cargar los miembros. Inténtalo de nuevo.');
-  } finally {
-    setLoading(false);
-    setIsLoadingMore(false);
-  }
-}, [
-  gymData?.id,
-  membersFirestore,
-  statusFilter,
-  debtFilter,
-  sortField,
-  sortDirection
-]);
+    setFilteredMembers(result);
+    setCurrentPage(1); // Reset a la primera página cuando cambian los filtros
+  }, [allMembers, statusFilter, debtFilter, sortField, sortDirection]);
+
+  // Actualizar miembros mostrados basado en la paginación
+  useEffect(() => {
+    const paginatedMembers = filteredMembers.slice(startIndex, endIndex);
+    setDisplayedMembers(paginatedMembers);
+  }, [filteredMembers, startIndex, endIndex]);
+
+  // Efectos para cargar datos
+  useEffect(() => {
+    if (gymData?.id) {
+      loadMembers();
+    }
+  }, [gymData?.id, statusFilter, debtFilter, sortField, sortDirection]);
 
   useEffect(() => {
-  if (gymData?.id) {
-    console.log('Efecto de carga activado');
-    loadMembers(true);
-  }
-}, [
-  gymData?.id,
-  statusFilter,
-  debtFilter,
-  sortField,
-  sortDirection
-]);
-
-// MANTENER solo el useEffect de búsqueda:
-useEffect(() => {
-  if (searchTerm.trim()) {
-    console.log('Término de búsqueda cambió:', searchTerm);
-    debouncedSearch(searchTerm);
-  } else {
-    // Recargar datos normales cuando se limpia la búsqueda
-    if (gymData?.id) {
-      console.log('Búsqueda limpiada, recargando datos normales...');
-      loadMembers(true);
+    if (searchTerm.trim()) {
+      debouncedSearch(searchTerm);
+    } else {
+      if (gymData?.id && allMembers.length === 0) {
+        loadMembers();
+      }
     }
-  }
-  
-  return () => {
-    debouncedSearch.cancel();
+    
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [searchTerm]);
+
+  // Funciones de paginación
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
   };
-}, [searchTerm]);
+
+  const goToPreviousPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
+  const goToNextPage = () => {
+    if (currentPage < totalPages) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
 
   // Función para manejar ordenamiento
   const handleSort = (field: string) => {
-    console.log('Cambiando ordenamiento a:', field);
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -215,12 +197,11 @@ useEffect(() => {
 
   // Refrescar datos
   const handleRefresh = async () => {
-    console.log('Refrescando datos...');
     setRefreshing(true);
     setError('');
     
     try {
-      await loadMembers(true);
+      await loadMembers();
     } catch (error) {
       console.error('Error al refrescar:', error);
       setError('Error al actualizar los datos.');
@@ -229,30 +210,24 @@ useEffect(() => {
     }
   };
 
-
-
   // Función robusta para formatear fechas
   const formatDate = useCallback((dateString: string | Date | any | null | undefined): string => {
     if (!dateString) return 'No disponible';
     
     try {
-      // Si es un objeto Date directamente
       if (typeof dateString.getMonth === 'function') {
         return dateString.toLocaleDateString('es-AR');
       }
       
-      // Si es un objeto Timestamp de Firebase con un método toDate()
       if (dateString.toDate && typeof dateString.toDate === 'function') {
         return dateString.toDate().toLocaleDateString('es-AR');
       }
       
-      // Si es un string o cualquier otro formato, intentar convertirlo a Date
       const date = new Date(dateString);
       if (!isNaN(date.getTime())) {
         return date.toLocaleDateString('es-AR');
       }
       
-      // Si no es convertible a fecha, devolver el string original
       return String(dateString);
     } catch (error) {
       console.error('Error formateando fecha:', error);
@@ -269,23 +244,13 @@ useEffect(() => {
 
   // Limpiar filtros
   const clearFilters = () => {
-    console.log('Limpiando filtros...');
     setSearchTerm('');
     setStatusFilter('all');
     setDebtFilter('all');
     setCurrentPage(1);
   };
 
-  // Memoizar los miembros mostrados para evitar re-renderizados
-  const displayedMembers = useMemo(() => {
-  // Mostrar todos los miembros sin paginación
-  return members;
-}, [members]);
-
-  // Cambiar página
-
-
-  // Componentes para estados de carga
+  // Componente para estados de carga
   const LoadingMembers = () => (
     <div className="flex justify-center items-center py-12">
       <div className="text-center">
@@ -293,12 +258,6 @@ useEffect(() => {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mr-3"></div>
           <div>
             <p className="text-gray-600 font-medium">Cargando socios...</p>
-            <div className="w-48 bg-gray-200 rounded-full h-2 mt-2">
-              <div 
-                className="bg-blue-500 h-2 rounded-full transition-all duration-300" 
-                style={{ width: '45%' }}
-              ></div>
-            </div>
             <p className="text-xs text-gray-500 mt-1">
               {searchTerm ? `Buscando "${searchTerm}"...` : 'Obteniendo datos del servidor...'}
             </p>
@@ -367,6 +326,73 @@ useEffect(() => {
     );
   };
 
+  // Componente de paginación
+  const PaginationControls = () => {
+    if (totalPages <= 1) return null;
+
+    const getPageNumbers = () => {
+      const pages = [];
+      const maxVisiblePages = 5;
+      
+      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+      
+      if (endPage - startPage + 1 < maxVisiblePages) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+      }
+      
+      for (let i = startPage; i <= endPage; i++) {
+        pages.push(i);
+      }
+      
+      return pages;
+    };
+
+    return (
+      <div className="flex items-center justify-between border-t bg-gray-50 px-4 py-3">
+        <div className="flex items-center text-sm text-gray-700">
+          <span>
+            Mostrando {startIndex + 1} a {Math.min(endIndex, totalItems)} de {totalItems} socios
+          </span>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={goToPreviousPage}
+            disabled={currentPage === 1}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          
+          <div className="flex space-x-1">
+            {getPageNumbers().map(page => (
+              <button
+                key={page}
+                onClick={() => goToPage(page)}
+                className={`px-3 py-2 border rounded-md text-sm font-medium ${
+                  page === currentPage
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'text-gray-700 bg-white border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                {page}
+              </button>
+            ))}
+          </div>
+          
+          <button
+            onClick={goToNextPage}
+            disabled={currentPage === totalPages}
+            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="p-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
@@ -390,7 +416,7 @@ useEffect(() => {
                 placeholder="Buscar socio por nombre, apellido, email o teléfono..."
                 className="w-full pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e: any) => setSearchTerm(e.target.value)}
               />
               <Search className="absolute left-3 top-3 text-gray-400" size={18} />
               {(searching || loading) && (
@@ -403,7 +429,7 @@ useEffect(() => {
             <select 
               className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e: any) => setStatusFilter(e.target.value)}
               disabled={loading || searching}
             >
               <option value="all">Todos los estados</option>
@@ -414,7 +440,7 @@ useEffect(() => {
             <select 
               className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               value={debtFilter}
-              onChange={(e) => setDebtFilter(e.target.value)}
+              onChange={(e: any) => setDebtFilter(e.target.value)}
               disabled={loading || searching}
             >
               <option value="all">Estado de deuda</option>
@@ -446,12 +472,12 @@ useEffect(() => {
           <div className="mt-3 text-sm text-gray-600">
             {searchTerm.trim() ? (
               <span>
-                Mostrando {members.length} resultado(s) para "{searchTerm}"
+                Mostrando {filteredMembers.length} resultado(s) para "{searchTerm}"
               </span>
             ) : (
               <span>
-                Mostrando {Math.min(displayedMembers.length, ITEMS_PER_PAGE)} de {totalMembers} socios
-                {statusFilter !== 'all' || debtFilter !== 'all' ? ' (filtrados)' : ''}
+                Mostrando página {currentPage} de {totalPages} ({totalItems} socios en total
+                {statusFilter !== 'all' || debtFilter !== 'all' ? ' filtrados' : ''})
               </span>
             )}
           </div>
@@ -476,10 +502,10 @@ useEffect(() => {
           </div>
         )}
 
-        {/* Tabla de socios SIN paginación */}
-        {loading && members.length === 0 ? (
+        {/* Tabla de socios */}
+        {loading && allMembers.length === 0 ? (
           <LoadingMembers />
-        ) : members.length === 0 && !loading ? (
+        ) : displayedMembers.length === 0 && !loading ? (
           <div className="text-center py-12 bg-gray-50">
             <User size={48} className="mx-auto text-gray-300 mb-4" />
             {searchTerm.trim() ? (
@@ -644,34 +670,14 @@ useEffect(() => {
           </div>
         )}
 
-        {/* Información simple sin paginación */}
-        {members.length > 0 && (
-          <div className="px-6 py-3 flex items-center justify-between border-t bg-gray-50">
-            <div className="text-sm text-gray-700">
-              <span>
-                Mostrando {members.length} {members.length === 1 ? 'socio' : 'socios'}
-                {(statusFilter !== 'all' || debtFilter !== 'all') && (
-                  <span className="text-gray-500 ml-1">(filtrados)</span>
-                )}
-              </span>
-            </div>
-            
-            {(statusFilter !== 'all' || debtFilter !== 'all' || searchTerm.trim()) && (
-              <button
-                onClick={clearFilters}
-                className="text-sm text-blue-600 hover:text-blue-800"
-              >
-                Limpiar filtros
-              </button>
-            )}
-          </div>
-        )}
-        </div>
+        {/* Controles de paginación */}
+        <PaginationControls />
+      </div>
     </div>
   );
 };
 
-// Componente MemberRow memoizado para mejor rendimiento
+// Componente MemberRow (sin cambios)
 const MemberRow = React.memo<{
   member: Member;
   onView: (member: Member) => void;
@@ -681,7 +687,6 @@ const MemberRow = React.memo<{
   onRegisterPayment: (member: Member) => void;
   formatDate: (date: any) => string;
 }>(({ member, onView, onEdit, onDelete, onGenerateQr, onRegisterPayment, formatDate }) => {
-  // Estado para manejar error de imagen
   const [imageError, setImageError] = useState(false);
 
   return (
@@ -771,7 +776,6 @@ const MemberRow = React.memo<{
   );
 });
 
-// Asignar displayName para mejor debugging
 MemberRow.displayName = 'MemberRow';
 
 export default MemberList;

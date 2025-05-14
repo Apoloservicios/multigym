@@ -1,4 +1,4 @@
-// src/hooks/useFirestore.ts - VERSIÓN SIMPLE SIN AGREGACIONES
+// src/hooks/useFirestore.ts - VERSIÓN SIN ÍNDICES COMPLEJOS
 
 import { useState, useCallback } from 'react';
 import { 
@@ -11,10 +11,8 @@ import {
   deleteDoc, 
   addDoc, 
   query,
-  where,
   orderBy,
   limit,
-  startAfter,
   onSnapshot,
   Timestamp,
   QueryDocumentSnapshot,
@@ -27,12 +25,6 @@ interface PaginationOptions {
   pageSize?: number;
   orderByField?: string;
   orderDirection?: 'asc' | 'desc';
-}
-
-interface SearchOptions {
-  field: string;
-  value: string | number;
-  operator?: '==' | '>=' | '<=' | '>' | '<';
 }
 
 const useFirestore = <T>(collectionName: string) => {
@@ -54,9 +46,12 @@ const useFirestore = <T>(collectionName: string) => {
     }
   }, [collectionName, gymData?.id]);
 
-  // Obtener todos los documentos - SIMPLE
-  const getAll = useCallback(async () => {
+  // Obtener todos los documentos - MUY SIMPLE
+  const getAll = useCallback(async (maxRecords: number = 1000) => {
+    // console.log('🔄 getAll iniciado para:', collectionName);
+    
     if (!gymData?.id && collectionName !== 'gyms' && collectionName !== 'admins' && collectionName !== 'subscriptionPlans') {
+      // console.log('❌ No gym ID disponible');
       setLoading(false);
       return [];
     }
@@ -65,30 +60,42 @@ const useFirestore = <T>(collectionName: string) => {
     setError(null);
     
     try {
-      const collectionRef = collection(db, getCollectionPath());
-      const querySnapshot = await getDocs(collectionRef);
+      const collectionPath = getCollectionPath();
+      // console.log('📂 Accediendo a colección:', collectionPath);
+      
+      const collectionRef = collection(db, collectionPath);
+      
+      // Query MUY SIMPLE - solo obtener documentos con límite
+      const q = query(collectionRef, limit(maxRecords));
+      
+      // console.log('🔍 Ejecutando query simple...');
+      const querySnapshot = await getDocs(q);
+      
       const documents = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as T[];
       
+      // console.log('✅ Documentos obtenidos:', documents.length);
       setData(documents);
       setLoading(false);
       return documents;
     } catch (err: any) {
-      console.error('Error in getAll:', err);
-      setError(err.message);
+      // console.error('❌ Error in getAll:', err);
+      setError(`Error al cargar datos: ${err.message}`);
       setLoading(false);
       return [] as T[];
     }
   }, [getCollectionPath, gymData?.id, collectionName]);
 
-  // Búsqueda simple - SIN AGREGACIONES
+  // Búsqueda SUPER SIMPLE - todo en frontend
   const search = useCallback(async (
     searchTerm: string,
-    searchFields: string[] = ['firstName', 'lastName'],
+    searchFields: string[] = ['firstName', 'lastName', 'email'],
     limitResults: number = 50
   ) => {
+    // console.log('🔍 Búsqueda iniciada para:', searchTerm);
+    
     if (!gymData?.id) {
       setLoading(false);
       return [];
@@ -98,115 +105,46 @@ const useFirestore = <T>(collectionName: string) => {
     setError(null);
     
     try {
-      const collectionRef = collection(db, getCollectionPath());
+      const collectionPath = getCollectionPath();
+      const collectionRef = collection(db, collectionPath);
       
-      // UNA SOLA QUERY SIMPLE
-      const q = query(
-        collectionRef,
-        orderBy('firstName'),
-        limit(limitResults)
-      );
+      // Query SUPER SIMPLE - solo limit
+      const q = query(collectionRef, limit(500));
       
+      // console.log('🔍 Obteniendo todos los documentos para búsqueda...');
       const querySnapshot = await getDocs(q);
-      const documents = querySnapshot.docs.map(doc => ({
+      
+      const allDocuments = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       })) as T[];
       
-      // Filtrar en el frontend
-      const filtered = documents.filter(doc => {
+      console.log('📋 Documentos obtenidos:', allDocuments.length);
+      
+      // Filtrar COMPLETAMENTE en el frontend
+      const searchTermLower = searchTerm.toLowerCase();
+      const filtered = allDocuments.filter(doc => {
         const data = doc as any;
+        
         return searchFields.some(field => {
           const fieldValue = String(data[field] || '').toLowerCase();
-          return fieldValue.includes(searchTerm.toLowerCase());
+          return fieldValue.includes(searchTermLower);
         });
-      });
+      }).slice(0, limitResults);
       
+      // console.log('✅ Resultados filtrados:', filtered.length);
       setData(filtered);
       setLoading(false);
       return filtered;
     } catch (err: any) {
-      console.error('Error in search:', err);
-      setError(err.message);
+      // console.error('❌ Error in search:', err);
+      setError(`Error en búsqueda: ${err.message}`);
       setLoading(false);
       return [] as T[];
     }
   }, [getCollectionPath, gymData?.id]);
 
-  // Paginación SIMPLE - SIN AGREGACIONES
-  const getPaginated = useCallback(async (
-    options: PaginationOptions = {},
-    filters: SearchOptions[] = [],
-    resetPagination: boolean = false
-  ) => {
-    if (!gymData?.id) {
-      setLoading(false);
-      return [];
-    }
-
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const {
-        pageSize = 20,
-        orderByField = 'createdAt',
-        orderDirection = 'desc'
-      } = options;
-
-      const collectionRef = collection(db, getCollectionPath());
-      
-      // Query SIMPLE sin agregaciones
-      let q = query(collectionRef, orderBy(orderByField, orderDirection));
-      
-      // Solo filtros básicos (NO totalDebt)
-      filters.forEach(filter => {
-        if (filter.field !== 'totalDebt') {
-          q = query(q, where(filter.field, filter.operator || '==', filter.value));
-        }
-      });
-      
-      q = query(q, limit(pageSize));
-      
-      if (!resetPagination && lastVisible) {
-        q = query(q, startAfter(lastVisible));
-      }
-      
-      const querySnapshot = await getDocs(q);
-      const documents = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as T[];
-      
-      // Actualizar estado
-      const newLastVisible = querySnapshot.docs[querySnapshot.docs.length - 1];
-      setLastVisible(newLastVisible);
-      setHasMore(querySnapshot.docs.length === pageSize);
-      
-      if (resetPagination) {
-        setData(documents);
-      } else {
-        setData(prev => [...prev, ...documents]);
-      }
-      
-      setLoading(false);
-      return documents;
-    } catch (err: any) {
-      console.error('Error in getPaginated:', err);
-      setError(err.message);
-      setLoading(false);
-      return [] as T[];
-    }
-  }, [getCollectionPath, lastVisible, gymData?.id]);
-
-  // Reset pagination
-  const resetPagination = useCallback(() => {
-    setLastVisible(null);
-    setHasMore(true);
-    setData([]);
-  }, []);
-
-  // CRUD básico sin agregaciones
+  // CRUD básico
   const getById = useCallback(async (id: string) => {
     setLoading(true);
     setError(null);
@@ -224,7 +162,7 @@ const useFirestore = <T>(collectionName: string) => {
         return null;
       }
     } catch (err: any) {
-      console.error('Error in getById:', err);
+      // console.error('Error in getById:', err);
       setError(err.message);
       setLoading(false);
       return null;
@@ -246,7 +184,7 @@ const useFirestore = <T>(collectionName: string) => {
       setLoading(false);
       return result;
     } catch (err: any) {
-      console.error('Error in add:', err);
+      // console.error('Error in add:', err);
       setError(err.message);
       setLoading(false);
       return null;
@@ -266,7 +204,7 @@ const useFirestore = <T>(collectionName: string) => {
       setLoading(false);
       return true;
     } catch (err: any) {
-      console.error('Error in update:', err);
+      // console.error('Error in update:', err);
       setError(err.message);
       setLoading(false);
       return false;
@@ -283,7 +221,7 @@ const useFirestore = <T>(collectionName: string) => {
       setLoading(false);
       return true;
     } catch (err: any) {
-      console.error('Error in remove:', err);
+      // console.error('Error in remove:', err);
       setError(err.message);
       setLoading(false);
       return false;
@@ -300,18 +238,10 @@ const useFirestore = <T>(collectionName: string) => {
     }
 
     try {
-      const {
-        pageSize = 50,
-        orderByField = 'createdAt',
-        orderDirection = 'desc'
-      } = options;
-
       const collectionRef = collection(db, getCollectionPath());
-      const q = query(
-        collectionRef, 
-        orderBy(orderByField, orderDirection), 
-        limit(pageSize)
-      );
+      
+      // Query SUPER SIMPLE - solo limit
+      const q = query(collectionRef, limit(100));
       
       const unsubscribe = onSnapshot(q, 
         (snapshot) => {
@@ -324,18 +254,29 @@ const useFirestore = <T>(collectionName: string) => {
           callback(documents);
         },
         (err) => {
-          console.error('Error in subscription:', err);
+          // console.error('Error in subscription:', err);
           setError(err.message);
         }
       );
       
       return unsubscribe;
     } catch (err: any) {
-      console.error('Error setting up subscription:', err);
+      // console.error('Error setting up subscription:', err);
       setError(err.message);
       return () => {};
     }
   }, [getCollectionPath, gymData?.id]);
+
+  // Funciones vacías para mantener compatibilidad
+  const getPaginated = useCallback(async () => {
+    return getAll();
+  }, [getAll]);
+
+  const resetPagination = useCallback(() => {
+    setLastVisible(null);
+    setHasMore(true);
+    setData([]);
+  }, []);
 
   return {
     data,

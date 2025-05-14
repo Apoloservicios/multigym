@@ -1,4 +1,4 @@
-// src/pages/members/Members.tsx
+// src/pages/members/Members.tsx - VERSIÓN CORREGIDA
 
 import React, { useState, useEffect } from 'react';
 import MemberList from '../../components/members/MemberList';
@@ -8,9 +8,10 @@ import MemberQR from '../../components/members/MemberQR';
 import MemberPayment from '../../components/members/MemberPayment';
 import MembershipForm from '../../components/memberships/MembershipForm';
 import { Member } from '../../types/member.types';
+import { addMember, updateMember } from '../../services/member.service';
 import useFirestore from '../../hooks/useFirestore';
 import useAuth from '../../hooks/useAuth';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, CheckCircle } from 'lucide-react';
 
 type ViewType = 'list' | 'form' | 'detail' | 'qr' | 'membership' | 'payment';
 
@@ -23,37 +24,65 @@ const Members: React.FC = () => {
   const [isEdit, setIsEdit] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [success, setSuccess] = useState<string>('');
   
+  // Limpiar mensajes después de un tiempo
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(''), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(''), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
   // Funciones para manejar navegación entre componentes
   const handleNewMember = () => {
     setIsEdit(false);
     setSelectedMember(null);
+    setError('');
+    setSuccess('');
     setView('form');
   };
   
   const handleEditMember = (member: Member) => {
     setSelectedMember(member);
     setIsEdit(true);
+    setError('');
+    setSuccess('');
     setView('form');
   };
   
   const handleViewMember = (member: Member) => {
     setSelectedMember(member);
+    setError('');
+    setSuccess('');
     setView('detail');
   };
   
   const handleGenerateQR = (member: Member) => {
     setSelectedMember(member);
+    setError('');
+    setSuccess('');
     setView('qr');
   };
   
   const handleAssignMembership = (member: Member) => {
     setSelectedMember(member);
+    setError('');
+    setSuccess('');
     setView('membership');
   };
   
   const handleRegisterPayment = (member: Member) => {
     setSelectedMember(member);
+    setError('');
+    setSuccess('');
     setView('payment');
   };
   
@@ -68,6 +97,8 @@ const Members: React.FC = () => {
       const result = await membersFirestore.remove(memberId);
       
       if (result) {
+        setSuccess('Socio eliminado correctamente');
+        
         // Si eliminamos el socio que estamos viendo, volver a la lista
         if (selectedMember?.id === memberId) {
           setSelectedMember(null);
@@ -84,165 +115,70 @@ const Members: React.FC = () => {
     }
   };
   
-  // Manejar guardado de socio (nuevo o editado)
-  // Reemplaza la función handleSaveMember:
-const handleSaveMember = async (formData: any) => {
-  if (!gymData?.id) return;
-  
-  setLoading(true);
-  setError('');
-  
-  try {
-    console.log("Recibidos datos para guardar:", formData);
+  // Manejar guardado de socio (nuevo o editado) - USANDO LOS SERVICIOS ORIGINALES
+  const handleSaveMember = async (formData: any) => {
+    if (!gymData?.id) return;
     
-    if (isEdit && selectedMember) {
-      // Actualizar socio existente
-      console.log("Actualizando socio existente ID:", selectedMember.id);
+    setLoading(true);
+    setError('');
+    
+    try {
+      console.log("Guardando socio:", formData);
       
-      // Llamar directamente al servicio
-      const result = await updateMemberDirectly(gymData.id, selectedMember.id, formData);
-      
-      if (result) {
-        console.log("Socio actualizado correctamente");
-        // Actualizar selectedMember con los nuevos datos
-        const updatedMember = await membersFirestore.getById(selectedMember.id);
-        if (updatedMember) {
-          setSelectedMember(updatedMember);
+      if (isEdit && selectedMember) {
+        // Actualizar socio existente usando el servicio original
+        console.log("Actualizando socio existente ID:", selectedMember.id);
+        
+        const result = await updateMember(gymData.id, selectedMember.id, formData);
+        
+        if (result) {
+          console.log("Socio actualizado correctamente");
+          setSuccess('Socio actualizado correctamente');
+          
+          // Recargar los datos del socio
+          const updatedMember = await membersFirestore.getById(selectedMember.id);
+          if (updatedMember) {
+            setSelectedMember(updatedMember);
+            setView('detail');
+          } else {
+            setSelectedMember(null);
+            setView('list');
+          }
+        }
+      } else {
+        // Crear nuevo socio usando el servicio original
+        console.log("Creando nuevo socio");
+        
+        const newMember = await addMember(gymData.id, formData);
+        
+        if (newMember) {
+          console.log("Nuevo socio creado con ID:", newMember.id);
+          setSuccess('Socio creado correctamente');
+          setSelectedMember(newMember);
           setView('detail');
-        } else {
-          setSelectedMember(null);
-          setView('list');
         }
       }
-    } else {
-      // Crear nuevo socio
-      console.log("Creando nuevo socio");
-      
-      // Llamar directamente al servicio
-      const newMember = await addMemberDirectly(gymData.id, formData);
-      
-      if (newMember) {
-        console.log("Nuevo socio creado con ID:", newMember.id);
-        setSelectedMember(newMember);
-        setView('detail');
-      }
+    } catch (err: any) {
+      console.error('Error saving member:', err);
+      setError(err.message || 'Error al guardar el socio');
+    } finally {
+      setLoading(false);
     }
-  } catch (err: any) {
-    console.error('Error saving member:', err);
-    setError(err.message || 'Error al guardar el socio');
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
-// Añade estas funciones auxiliares:
-const addMemberDirectly = async (gymId: string, memberData: any) => {
-  try {
-    // Si hay foto, subir a Cloudinary primero
-    let photoUrl = null;
-    if (memberData.photo) {
-      try {
-        console.log("Subiendo foto a Cloudinary...");
-        const formData = new FormData();
-        formData.append('file', memberData.photo);
-        formData.append('upload_preset', 'sis_gimnasio'); // Tu preset de Cloudinary
-        
-        const cloudinaryResponse = await fetch(
-          'https://api.cloudinary.com/v1_1/dqadslasl/image/upload', // Tu cloud_name de Cloudinary
-          {
-            method: 'POST',
-            body: formData
-          }
-        );
-        
-        if (!cloudinaryResponse.ok) {
-          throw new Error(`Error de Cloudinary: ${cloudinaryResponse.statusText}`);
-        }
-        
-        const cloudinaryData = await cloudinaryResponse.json();
-        photoUrl = cloudinaryData.secure_url;
-        console.log("Foto subida exitosamente:", photoUrl);
-      } catch (uploadError) {
-        console.error("Error al subir foto:", uploadError);
-        // Continuamos sin la foto
+  // Función para recargar datos del socio seleccionado
+  const reloadSelectedMember = async () => {
+    if (!selectedMember?.id || !gymData?.id) return;
+    
+    try {
+      const updatedMember = await membersFirestore.getById(selectedMember.id);
+      if (updatedMember) {
+        setSelectedMember(updatedMember);
       }
+    } catch (err) {
+      console.error('Error reloading member:', err);
     }
-    
-    // Preparar datos para Firestore (sin la foto original, usando la URL)
-    const memberForFirestore = {
-      ...memberData,
-      photo: photoUrl,
-      totalDebt: 0
-    };
-    
-    // Eliminar el archivo de foto del objeto
-    delete memberForFirestore.photo;
-    
-    // Ahora guardamos en Firestore
-    const newMember = await membersFirestore.add({
-      ...memberForFirestore,
-      photo: photoUrl
-    });
-    
-    return newMember;
-  } catch (error) {
-    console.error("Error en addMemberDirectly:", error);
-    throw error;
-  }
-};
-
-const updateMemberDirectly = async (gymId: string, memberId: string, memberData: any) => {
-  try {
-    // Si hay una nueva foto, subir a Cloudinary primero
-    let photoUrl = undefined; // undefined significa que no se actualiza
-    if (memberData.photo instanceof File) {
-      try {
-        console.log("Subiendo foto a Cloudinary...");
-        const formData = new FormData();
-        formData.append('file', memberData.photo);
-        formData.append('upload_preset', 'sis_gimnasio'); // Tu preset de Cloudinary
-        
-        const cloudinaryResponse = await fetch(
-          'https://api.cloudinary.com/v1_1/dqadslasl/image/upload', // Tu cloud_name de Cloudinary
-          {
-            method: 'POST',
-            body: formData
-          }
-        );
-        
-        if (!cloudinaryResponse.ok) {
-          throw new Error(`Error de Cloudinary: ${cloudinaryResponse.statusText}`);
-        }
-        
-        const cloudinaryData = await cloudinaryResponse.json();
-        photoUrl = cloudinaryData.secure_url;
-        console.log("Foto subida exitosamente:", photoUrl);
-      } catch (uploadError) {
-        console.error("Error al subir foto:", uploadError);
-        // Continuamos sin actualizar la foto
-      }
-    }
-    
-    // Preparar datos para actualizar (sin la foto original, usando la URL)
-    const memberForUpdate: any = { ...memberData };
-    
-    // Eliminar el archivo de foto del objeto
-    delete memberForUpdate.photo;
-    
-    // Solo incluir la foto si se subió con éxito
-    if (photoUrl !== undefined) {
-      memberForUpdate.photo = photoUrl;
-    }
-    
-    // Ahora actualizamos en Firestore
-    const result = await membersFirestore.update(memberId, memberForUpdate);
-    
-    return result;
-  } catch (error) {
-    console.error("Error en updateMemberDirectly:", error);
-    throw error;
-  }
-};
+  };
   
   // Renderizado condicional según la vista actual
   const renderView = () => {
@@ -266,17 +202,7 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
               onDelete={handleDeleteMember}
               onGenerateQr={handleGenerateQR}
               onAssignMembership={handleAssignMembership}
-              onRefreshMember={async () => {
-                // Recargar los datos del socio después de cualquier cambio
-                try {
-                  const updatedMember = await membersFirestore.getById(selectedMember.id);
-                  if (updatedMember) {
-                    setSelectedMember(updatedMember);
-                  }
-                } catch (err) {
-                  console.error('Error recargando datos del socio:', err);
-                }
-              }}
+              onRefreshMember={reloadSelectedMember}
             />
           </div>
         );
@@ -293,21 +219,8 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
           <MemberPayment 
             member={selectedMember}
             onSuccess={() => {
-              // Recargar los datos del socio después del pago
-              const reloadMember = async () => {
-                if (!gymData?.id) return;
-                
-                try {
-                  const updatedMember = await membersFirestore.getById(selectedMember.id);
-                  if (updatedMember) {
-                    setSelectedMember(updatedMember);
-                  }
-                } catch (err) {
-                  console.error('Error reloading member:', err);
-                }
-              };
-              
-              reloadMember();
+              setSuccess('Pago registrado correctamente');
+              reloadSelectedMember();
               setView('detail');
             }}
             onCancel={() => setView('detail')}
@@ -320,21 +233,8 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
             memberId={selectedMember.id}
             memberName={`${selectedMember.firstName} ${selectedMember.lastName}`}
             onSave={() => {
-              // Recargar los datos del socio después de asignar membresía
-              const reloadMember = async () => {
-                if (!gymData?.id) return;
-                
-                try {
-                  const updatedMember = await membersFirestore.getById(selectedMember.id);
-                  if (updatedMember) {
-                    setSelectedMember(updatedMember);
-                  }
-                } catch (err) {
-                  console.error('Error reloading member:', err);
-                }
-              };
-              
-              reloadMember();
+              setSuccess('Membresía asignada correctamente');
+              reloadSelectedMember();
               setView('detail');
             }}
             onCancel={() => setView('detail')}
@@ -357,18 +257,37 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
   
   return (
     <div className="p-6">
-      {/* Mensaje de error */}
+      {/* Mensajes de estado */}
       {error && (
-        <div className="mb-6 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
-          <AlertCircle size={18} className="mr-2" />
-          {error}
+        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg flex items-center">
+          <AlertCircle size={20} className="mr-3" />
+          <span>{error}</span>
+          <button
+            onClick={() => setError('')}
+            className="ml-auto text-red-700 hover:text-red-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {success && (
+        <div className="mb-6 p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg flex items-center">
+          <CheckCircle size={20} className="mr-3" />
+          <span>{success}</span>
+          <button
+            onClick={() => setSuccess('')}
+            className="ml-auto text-green-700 hover:text-green-900"
+          >
+            ×
+          </button>
         </div>
       )}
       
       {/* Cabecera de navegación */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold">
-          {view === 'list' && 'Socios'}
+          {view === 'list' && 'Gestión de Socios'}
           {view === 'form' && (isEdit ? 'Editar Socio' : 'Nuevo Socio')}
           {view === 'detail' && 'Detalle de Socio'}
           {view === 'qr' && 'Código QR'}
@@ -379,13 +298,51 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
         {/* Migas de pan para navegación */}
         {view !== 'list' && (
           <nav className="text-sm text-blue-600 mt-1">
-            <button onClick={() => setView('list')}>Socios</button>
+            <button 
+              onClick={() => setView('list')}
+              className="hover:text-blue-800"
+            >
+              Socios
+            </button>
             {view !== 'form' && selectedMember && (
               <>
-                <span className="mx-2">/</span>
-                <button onClick={() => setView('detail')}>
+                <span className="mx-2 text-gray-400">/</span>
+                <button 
+                  onClick={() => setView('detail')}
+                  className="hover:text-blue-800"
+                >
                   {selectedMember.firstName} {selectedMember.lastName}
                 </button>
+              </>
+            )}
+            {view === 'form' && isEdit && selectedMember && (
+              <>
+                <span className="mx-2 text-gray-400">/</span>
+                <span className="text-gray-600">Editar</span>
+              </>
+            )}
+            {view === 'form' && !isEdit && (
+              <>
+                <span className="mx-2 text-gray-400">/</span>
+                <span className="text-gray-600">Nuevo</span>
+              </>
+            )}
+            {view === 'qr' && (
+              <>
+                <span className="mx-2 text-gray-400">/</span>
+                <span className="text-gray-600">Código QR</span>
+              </>
+            )}
+            {view === 'membership' && (
+              <>
+                <span className="mx-2 text-gray-400">/</span>
+                <span className="text-gray-600">Asignar Membresía</span>
+              </>
+            )}
+            {view === 'payment' && (
+              <>
+                <span className="mx-2 text-gray-400">/</span>
+                <span className="text-gray-600">Registrar Pago</span>
               </>
             )}
           </nav>
@@ -396,7 +353,7 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
       {loading ? (
         <div className="flex justify-center items-center py-12">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
-          <span className="ml-3 text-gray-500">Cargando...</span>
+          <span className="ml-3 text-gray-500">Procesando...</span>
         </div>
       ) : (
         renderView()
