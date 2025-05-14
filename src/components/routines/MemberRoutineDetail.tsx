@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   ArrowLeft, Calendar, Clock, Target, User, Activity, 
   CheckCircle, XCircle, AlertCircle, Globe, Building2,
-  ChevronDown, ChevronUp, Info, Dumbbell
+  ChevronDown, ChevronUp, Info, Dumbbell,Printer
 } from 'lucide-react';
 import { MemberRoutine } from '../../types/exercise.types';
 import { getRoutineById } from '../../services/routine.service';
@@ -11,6 +11,9 @@ import { getExerciseById } from '../../services/exercise.service';
 import { formatDate } from '../../utils/date.utils';
 import exerciseTypes from '../../types/exercise.types';
 import useAuth from '../../hooks/useAuth';
+import PrintableRoutine from './PrintableRoutine';
+import { usePrint } from '../../hooks/usePrint';
+
 
 interface MemberRoutineDetailProps {
   memberRoutine: MemberRoutine;
@@ -18,13 +21,13 @@ interface MemberRoutineDetailProps {
   onUpdateStatus?: (status: 'active' | 'completed' | 'cancelled', notes?: string) => void;
 }
 
-const MemberRoutineDetail: React.FC<MemberRoutineDetailProps> = ({ 
-  memberRoutine, 
+const MemberRoutineDetail: React.FC<MemberRoutineDetailProps> = ({
+  memberRoutine,
   onBack,
   onUpdateStatus
 }) => {
   const { gymData } = useAuth();
-  
+   const { componentRef, handlePrint } = usePrint();
   const [routineDetails, setRoutineDetails] = useState<any>(null);
   const [exerciseDetails, setExerciseDetails] = useState<{[key: string]: any}>({});
   const [activeDay, setActiveDay] = useState<string>('day1');

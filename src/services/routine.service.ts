@@ -116,29 +116,29 @@ import {
   
   // Crear una nueva rutina
   export const createRoutine = async (gymId: string, routineData: Omit<Routine, 'id'>): Promise<Routine> => {
-    try {
-      const routinesRef = collection(db, `gyms/${gymId}/routines`);
-      
-      // Preparar datos para Firestore
-      const newRoutine = {
-        ...routineData,
-        isActive: routineData.isActive !== undefined ? routineData.isActive : true,
-        isTemplate: routineData.isTemplate !== undefined ? routineData.isTemplate : false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      };
-      
-      const docRef = await addDoc(routinesRef, newRoutine);
-      
-      return {
-        id: docRef.id,
-        ...routineData
-      } as Routine;
-    } catch (error) {
-      console.error('Error creating routine:', error);
-      throw error;
-    }
-  };
+  try {
+    const routinesRef = collection(db, `gyms/${gymId}/routines`);
+    
+    // Preparar datos para Firestore con valores por defecto
+    const newRoutine = {
+      ...routineData,
+      isActive: routineData.isActive !== undefined ? routineData.isActive : true,
+      isTemplate: routineData.isTemplate !== undefined ? routineData.isTemplate : true, // ← Por defecto true
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+    
+    const docRef = await addDoc(routinesRef, newRoutine);
+    
+    return {
+      id: docRef.id,
+      ...newRoutine
+    } as Routine;
+  } catch (error) {
+    console.error('Error creating routine:', error);
+    throw error;
+  }
+};
   
   // Actualizar una rutina existente
   export const updateRoutine = async (

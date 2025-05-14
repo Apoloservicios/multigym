@@ -1,5 +1,7 @@
 // src/types/gym.types.ts
 
+
+
 // Definición de la interfaz Attendance con los tipos correctos
 export interface Attendance {
   id: string;

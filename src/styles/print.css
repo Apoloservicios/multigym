@@ -1,0 +1,62 @@
+/* src/styles/print.css - Crear este archivo para estilos de impresión */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+  
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-shadow: none !important;
+  }
+  
+  /* Asegurar que los colores de fondo se impriman */
+  .print-bg-gray-700 {
+    background-color: #374151 !important;
+  }
+  
+  .print-bg-gray-50 {
+    background-color: #f9fafb !important;
+  }
+  
+  .print-text-white {
+    color: white !important;
+  }
+  
+  /* Ocultar elementos que no se deben imprimir */
+  .no-print {
+    display: none !important;
+  }
+  
+  /* Ajustar tamaños para impresión */
+  .print-text-xs {
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+  }
+  
+  .print-text-sm {
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+  }
+  
+  /* Asegurar que las tablas mantengan sus bordes */
+  table {
+    border-collapse: collapse !important;
+  }
+  
+  table td, table th {
+    page-break-inside: avoid !important;
+  }
+  
+  /* Evitar saltos de página dentro de los días de rutina */
+  .routine-day {
+    page-break-inside: avoid !important;
+  }
+}

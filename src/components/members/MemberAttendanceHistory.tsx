@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Search, RefreshCw, AlertCircle } from 'lucide-react';
-import { Attendance } from '../../types/gym.types';
+// Cambiar esta importación para usar los tipos correctos
+import { Attendance } from '../../types/attendance.types';
+import { Member } from '../../types/member.types';
 import { getMemberAttendanceHistory } from '../../services/attendance.service';
 import useAuth from '../../hooks/useAuth';
 
@@ -34,8 +36,6 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
       setLoading(true);
       
       try {
-        // Aquí deberías implementar este método en un servicio
-        // Por ahora, usaremos datos de ejemplo
         const history = await getMemberAttendanceHistory(gymData.id, memberId);
         setAttendances(history);
       } catch (err: any) {
@@ -72,7 +72,10 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
     const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
     
     return filteredBySearch.filter(att => {
-      const attDate = att.timestamp.toDate ? att.timestamp.toDate() : new Date(att.timestamp);
+      // Manejar timestamp de Firestore correctamente
+      const attDate = att.timestamp && typeof att.timestamp === 'object' && 'toDate' in att.timestamp 
+        ? att.timestamp.toDate() 
+        : new Date(att.timestamp);
       
       switch (period) {
         case 'current':
@@ -89,7 +92,9 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
   
   // Formatear fecha y hora
   const formatDateTime = (timestamp: any) => {
-    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const d = timestamp && typeof timestamp === 'object' && 'toDate' in timestamp 
+      ? timestamp.toDate() 
+      : new Date(timestamp);
     return d.toLocaleString('es-AR', {
       year: 'numeric',
       month: '2-digit',
@@ -191,9 +196,12 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
                   <td className="px-4 py-3 text-sm">{att.activityName}</td>
                   <td className="px-4 py-3 text-sm text-center">
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      att.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      att.status === 'success' ? 'bg-green-100 text-green-800' : 
+                      att.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
                     }`}>
-                      {att.status === 'success' ? 'Exitosa' : 'Error'}
+                      {att.status === 'success' ? 'Exitosa' : 
+                       att.status === 'pending' ? 'Pendiente' : 'Error'}
                       {att.error && `: ${att.error}`}
                     </span>
                   </td>

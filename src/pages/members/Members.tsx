@@ -266,6 +266,17 @@ const updateMemberDirectly = async (gymId: string, memberId: string, memberData:
               onDelete={handleDeleteMember}
               onGenerateQr={handleGenerateQR}
               onAssignMembership={handleAssignMembership}
+              onRefreshMember={async () => {
+                // Recargar los datos del socio después de cualquier cambio
+                try {
+                  const updatedMember = await membersFirestore.getById(selectedMember.id);
+                  if (updatedMember) {
+                    setSelectedMember(updatedMember);
+                  }
+                } catch (err) {
+                  console.error('Error recargando datos del socio:', err);
+                }
+              }}
             />
           </div>
         );

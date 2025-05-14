@@ -20,6 +20,7 @@ interface MemberDetailProps {
   onDelete: (id: string) => void;
   onGenerateQr: (member: Member) => void;
   onAssignMembership: (member: Member) => void;
+  onRefreshMember?: () => void; // ← AGREGAR ESTA LÍNEA si no existe
 }
 
 const MemberDetail: React.FC<MemberDetailProps> = ({ 
@@ -27,7 +28,8 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   onEdit, 
   onDelete, 
   onGenerateQr, 
-  onAssignMembership 
+  onAssignMembership,
+  onRefreshMember // ← AGREGAR ESTA LÍNEA si no existe
 }) => {
   const { gymData } = useAuth();
   // Estado para controlar las diferentes vistas
@@ -201,10 +203,10 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
         );
       case 'routines':
         return (
-          <MemberRoutinesTab 
+         <MemberRoutinesTab 
             memberId={member.id}
             memberName={`${member.firstName} ${member.lastName}`}
-            onAssignRoutine={() => onAssignMembership(member)}
+            onRefreshMember={onRefreshMember} 
           />
         );
       case 'memberships':

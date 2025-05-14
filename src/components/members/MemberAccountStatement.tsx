@@ -1,6 +1,7 @@
 // src/components/members/MemberAccountStatement.tsx
 import React, { useState, useEffect } from 'react';
 import { Calendar, DollarSign, Download, CreditCard, RefreshCw, AlertCircle } from 'lucide-react';
+// Usar la importación correcta para Transaction
 import { Transaction } from '../../types/gym.types';
 import { formatCurrency } from '../../utils/formatting.utils';
 import { getMemberPaymentHistory } from '../../services/payment.service';
@@ -64,7 +65,10 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
     const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
     
     return transactions.filter(tx => {
-      const txDate = tx.date.toDate ? tx.date.toDate() : new Date(tx.date);
+      // Manejar timestamp de Firestore correctamente
+      const txDate = tx.date && typeof tx.date === 'object' && 'toDate' in tx.date 
+        ? tx.date.toDate() 
+        : new Date(tx.date);
       
       switch (period) {
         case 'current':
@@ -88,7 +92,9 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   
   // Formatear fecha
   const formatDate = (date: any) => {
-    const d = date.toDate ? date.toDate() : new Date(date);
+    const d = date && typeof date === 'object' && 'toDate' in date 
+      ? date.toDate() 
+      : new Date(date);
     return d.toLocaleDateString('es-AR');
   };
   
