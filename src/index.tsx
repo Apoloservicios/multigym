@@ -20,3 +20,16 @@ root.render(
 // to log results (for example: reportWebVitals(console.log))
 // or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
 reportWebVitals();
+
+// Registrar Service Worker para caching
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js')
+      .then(registration => {
+        console.log('SW registrado con éxito:', registration);
+      })
+      .catch(registrationError => {
+        console.log('SW falló al registrarse:', registrationError);
+      });
+  });
+}

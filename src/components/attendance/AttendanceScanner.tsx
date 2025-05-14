@@ -1,14 +1,13 @@
 // src/components/attendance/AttendanceScanner.tsx
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, User, Calendar, Filter,RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, User } from 'lucide-react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import useAuth from '../../hooks/useAuth';
 import { registerAttendance } from '../../services/attendance.service';
-import { doc, getDoc, collection, query, where, getDocs, limit, orderBy, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-// Importar tipos correctos
-import { Attendance } from '../../types/attendance.types';
+import { debounce } from 'lodash';
 
 interface ScanResult {
   success: boolean;
@@ -30,7 +29,6 @@ interface AttendanceRecord {
   member: any;
   timestamp: Date;
   status: string;
-  activityName: string;
   error?: string;
 }
 
@@ -40,8 +38,6 @@ interface MemberInfo {
   lastName: string;
   email: string;
   photo?: string | null;
-  lastAttendance?: Date;
-  activeMemberships?: number;
 }
 
 const AttendanceScanner: React.FC = () => {
@@ -49,105 +45,161 @@ const AttendanceScanner: React.FC = () => {
   const [scanning, setScanning] = useState<boolean>(false);
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [todayAttendances, setTodayAttendances] = useState<AttendanceRecord[]>([]);
+  const [scanHistory, setScanHistory] = useState<AttendanceRecord[]>([]);
   const [processingQR, setProcessingQR] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   
-  // Estados para el registro manual mejorado
+  // Estados para registro manual mejorados
   const [showManualEntry, setShowManualEntry] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [searchResults, setSearchResults] = useState<MemberInfo[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [selectedMember, setSelectedMember] = useState<MemberInfo | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [showConfirmation, setShowConfirmation] = useState<boolean>(false);
-  
-  // Estados para el historial
-  const [showTodayOnly, setShowTodayOnly] = useState<boolean>(true);
-  const [attendanceFilter, setAttendanceFilter] = useState<string>('all');
+  const [recentMembers, setRecentMembers] = useState<MemberInfo[]>([]);
   
   const webcamRef = useRef<Webcam>(null);
   const scanInterval = useRef<NodeJS.Timeout | null>(null);
-  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastQRProcessed = useRef<string>('');
+  const qrCooldownTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Cargar asistencias del día al inicializar
-  useEffect(() => {
-    loadTodayAttendances();
-  }, [gymData?.id]);
 
-  // Buscar miembros con debounce mejorado
-  useEffect(() => {
-    if (searchDebounceRef.current) {
-      clearTimeout(searchDebounceRef.current);
-    }
 
-    if (searchTerm.length >= 2) {
-      searchDebounceRef.current = setTimeout(() => {
-        searchMembers();
-      }, 300); // Buscar después de 300ms de no escribir
-    } else {
-      setSearchResults([]);
-      setSearchError(null);
-    }
-
-    return () => {
-      if (searchDebounceRef.current) {
-        clearTimeout(searchDebounceRef.current);
+  // Debounced search function mejorada
+  const debouncedSearch = useMemo(
+    () => debounce(async (term: string) => {
+      if (!gymData?.id || term.trim().length < 2) {
+        setSearchResults([]);
+        return;
       }
-    };
-  }, [searchTerm]);
-
-  // Cargar asistencias del día actual
-  const loadTodayAttendances = async () => {
-    if (!gymData?.id) return;
-
-    try {
-      const today = new Date();
-      const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-      const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-
-      // Obtener asistencias de todos los miembros del gimnasio
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      const membersSnapshot = await getDocs(membersRef);
-
-      const allAttendances: AttendanceRecord[] = [];
-
-      // Para cada miembro, obtener sus asistencias del día
-      for (const memberDoc of membersSnapshot.docs) {
-        const attendancesRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/attendances`);
-        const q = query(
-          attendancesRef,
-          where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
-          where('timestamp', '<=', Timestamp.fromDate(endOfDay)),
-          orderBy('timestamp', 'desc')
-        );
-
-        const attendancesSnapshot = await getDocs(q);
+      
+      setIsSearching(true);
+      setSearchError(null);
+      
+      try {
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
         
-        attendancesSnapshot.forEach(doc => {
-          const data = doc.data();
-          allAttendances.push({
-            id: doc.id,
-            memberId: memberDoc.id,
-            member: {
-              firstName: memberDoc.data().firstName || '',
-              lastName: memberDoc.data().lastName || ''
-            },
-            timestamp: data.timestamp.toDate(),
-            status: data.status || 'success',
-            activityName: data.activityName || 'General',
-            error: data.error
+        // Búsqueda optimizada con múltiples queries
+        const searchQueries = [
+          // Búsqueda por nombre
+          query(
+            membersRef,
+            where('firstName', '>=', term),
+            where('firstName', '<=', term + '\uf8ff'),
+            where('status', '==', 'active'),
+            limit(5)
+          ),
+          // Búsqueda por apellido
+          query(
+            membersRef,
+            where('lastName', '>=', term),
+            where('lastName', '<=', term + '\uf8ff'),
+            where('status', '==', 'active'),
+            limit(5)
+          ),
+          // Búsqueda por email
+          query(
+            membersRef,
+            where('email', '>=', term),
+            where('email', '<=', term + '\uf8ff'),
+            where('status', '==', 'active'),
+            limit(5)
+          )
+        ];
+        
+        // Ejecutar búsquedas en paralelo
+        const searchPromises = searchQueries.map(q => getDocs(q));
+        const results = await Promise.all(searchPromises);
+        
+        // Combinar y deduplicar resultados
+        const memberMap = new Map<string, MemberInfo>();
+        
+        results.forEach(snapshot => {
+          snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const member: MemberInfo = {
+              id: doc.id,
+              firstName: data.firstName || "",
+              lastName: data.lastName || "",
+              email: data.email || "",
+              photo: data.photo || null
+            };
+            
+            // Solo agregar si coincide con el término de búsqueda
+            const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
+            const email = member.email.toLowerCase();
+            const searchTerm = term.toLowerCase();
+            
+            if (fullName.includes(searchTerm) || email.includes(searchTerm)) {
+              memberMap.set(doc.id, member);
+            }
           });
         });
+        
+        const finalResults = Array.from(memberMap.values()).slice(0, 10);
+        setSearchResults(finalResults);
+        
+        if (finalResults.length === 0) {
+          setSearchError(`No se encontraron socios activos que coincidan con "${term}"`);
+        }
+      } catch (error) {
+        console.error('Error en búsqueda:', error);
+        setSearchError(`Error al buscar socios: ${error}`);
+      } finally {
+        setIsSearching(false);
       }
+    }, 300),
+    [gymData?.id]
+  );
 
-      // Ordenar por timestamp más reciente primero
-      allAttendances.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      setTodayAttendances(allAttendances);
+  // Cargar miembros recientes para acceso rápido
+  const loadRecentMembers = useCallback(async () => {
+    if (!gymData?.id) return;
+    
+    try {
+      const recentAttendanceQuery = query(
+        collection(db, `gyms/${gymData.id}/attendance`),
+        where('status', '==', 'success'),
+        orderBy('timestamp', 'desc'),
+        limit(5)
+      );
+      
+      const attendanceSnap = await getDocs(recentAttendanceQuery);
+      const memberIds = new Set<string>();
+      const members: MemberInfo[] = [];
+      
+      // Obtener IDs únicos de los últimos asistentes
+      attendanceSnap.forEach(doc => {
+        const data = doc.data();
+        if (data.memberId && !memberIds.has(data.memberId)) {
+          memberIds.add(data.memberId);
+        }
+      });
+      
+      // Obtener datos completos de esos miembros
+      for (const memberId of Array.from(memberIds).slice(0, 3)) {
+        try {
+          const memberDoc = await getDoc(doc(db, `gyms/${gymData.id}/members`, memberId));
+          if (memberDoc.exists()) {
+            const data = memberDoc.data();
+            members.push({
+              id: memberDoc.id,
+              firstName: data.firstName || "",
+              lastName: data.lastName || "",
+              email: data.email || "",
+              photo: data.photo || null
+            });
+          }
+        } catch (err) {
+          console.error(`Error loading member ${memberId}:`, err);
+        }
+      }
+      
+      setRecentMembers(members);
     } catch (error) {
-      console.error('Error loading today attendances:', error);
+      console.error('Error loading recent members:', error);
     }
-  };
+  }, [gymData?.id]);
 
   // Limpiar intervalo de escaneo al desmontar
   useEffect(() => {
@@ -155,23 +207,31 @@ const AttendanceScanner: React.FC = () => {
       if (scanInterval.current) {
         clearInterval(scanInterval.current);
       }
-      if (searchDebounceRef.current) {
-        clearTimeout(searchDebounceRef.current);
+      if (qrCooldownTimeout.current) {
+        clearTimeout(qrCooldownTimeout.current);
       }
+      debouncedSearch.cancel();
     };
-  }, []);
+  }, [debouncedSearch]);
 
-  // Función para capturar y procesar la imagen de la cámara
+  // Cargar miembros recientes al iniciar
+  useEffect(() => {
+    loadRecentMembers();
+  }, [loadRecentMembers]);
+
+  // Función mejorada para capturar y procesar la imagen de la cámara
   const scanQRCode = useCallback(async () => {
     if (processingQR || !webcamRef.current) return;
     
     const imageSrc = webcamRef.current.getScreenshot();
     if (!imageSrc) return;
     
+    // Crear una imagen desde el screenshot para procesar con jsQR
     const image = new Image();
     image.src = imageSrc;
     
     image.onload = () => {
+      // Crear un canvas para dibujar la imagen y obtener los datos de píxeles
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       if (!context) return;
@@ -182,22 +242,36 @@ const AttendanceScanner: React.FC = () => {
       
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       
+      // Escanear la imagen en busca de un código QR
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
         inversionAttempts: "dontInvert",
       });
       
-      if (code) {
+      if (code && code.data !== lastQRProcessed.current) {
+        // Se encontró un código QR nuevo, detener el escaneo y procesar
         setScanning(false);
         if (scanInterval.current) {
           clearInterval(scanInterval.current);
           scanInterval.current = null;
         }
+        
+        // Evitar procesar el mismo QR múltiples veces
+        lastQRProcessed.current = code.data;
+        
+        // Set cooldown para evitar múltiples escaneos del mismo QR
+        if (qrCooldownTimeout.current) {
+          clearTimeout(qrCooldownTimeout.current);
+        }
+        qrCooldownTimeout.current = setTimeout(() => {
+          lastQRProcessed.current = '';
+        }, 3000); // 3 segundos de cooldown
+        
         procesarCodigoQR(code.data);
       }
     };
   }, [processingQR]);
 
-  // Función para iniciar el escaneo
+  // Función mejorada para iniciar el escaneo
   const startScanning = () => {
     setScanResult(null);
     setCameraError(null);
@@ -205,7 +279,10 @@ const AttendanceScanner: React.FC = () => {
     
     try {
       setScanning(true);
-      scanInterval.current = setInterval(scanQRCode, 500);
+      lastQRProcessed.current = '';
+      
+      // Iniciar un intervalo para escanear periódicamente
+      scanInterval.current = setInterval(scanQRCode, 300); // Reducido a 300ms para mejor respuesta
     } catch (err: any) {
       console.error("Error al iniciar el escáner:", err);
       setCameraError(`Error al iniciar el escáner: ${err.message}`);
@@ -220,9 +297,10 @@ const AttendanceScanner: React.FC = () => {
       scanInterval.current = null;
     }
     setScanning(false);
+    lastQRProcessed.current = '';
   };
 
-  // Función para cambiar al modo de entrada manual
+  // Función mejorada para cambiar al modo de entrada manual
   const toggleManualEntry = () => {
     stopScanning();
     setShowManualEntry(!showManualEntry);
@@ -231,114 +309,38 @@ const AttendanceScanner: React.FC = () => {
     setSelectedMember(null);
     setScanResult(null);
     setSearchError(null);
-    setShowConfirmation(false);
-  };
-
-  // Función mejorada para buscar miembros (búsqueda más rápida)
-  const searchMembers = async () => {
-    if (!gymData?.id || searchTerm.trim().length < 2) return;
     
-    setIsSearching(true);
-    setSearchResults([]);
-    setSearchError(null);
-    
-    try {
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      // Optimización: solo obtener campos necesarios para la búsqueda
-      const querySnapshot = await getDocs(membersRef);
-      
-      const term = searchTerm.toLowerCase().trim();
-      const results: MemberInfo[] = [];
-      
-      querySnapshot.forEach(doc => {
-        const data = doc.data();
-        const firstName = String(data.firstName || "").toLowerCase();
-        const lastName = String(data.lastName || "").toLowerCase();
-        const email = String(data.email || "").toLowerCase();
-        const fullName = `${firstName} ${lastName}`.toLowerCase();
-        
-        if (firstName.includes(term) || lastName.includes(term) || 
-            email.includes(term) || fullName.includes(term)) {
-          results.push({
-            id: doc.id,
-            firstName: data.firstName || "",
-            lastName: data.lastName || "",
-            email: data.email || "",
-            photo: data.photo || null,
-            lastAttendance: data.lastAttendance ? data.lastAttendance.toDate() : undefined,
-            activeMemberships: 1 // Esto se podría calcular dinámicamente
-          });
-        }
-      });
-      
-      // Ordenar por relevancia: primero por coincidencia exacta, luego alfabéticamente
-      results.sort((a, b) => {
-        const aFullName = `${a.firstName} ${a.lastName}`.toLowerCase();
-        const bFullName = `${b.firstName} ${b.lastName}`.toLowerCase();
-        
-        const aExact = aFullName.startsWith(term);
-        const bExact = bFullName.startsWith(term);
-        
-        if (aExact && !bExact) return -1;
-        if (!aExact && bExact) return 1;
-        
-        return aFullName.localeCompare(bFullName);
-      });
-      
-      if (results.length === 0) {
-        setSearchError(`No se encontraron miembros que coincidan con "${searchTerm}"`);
-      } else {
-        setSearchResults(results.slice(0, 10)); // Limitar a 10 resultados para mejor rendimiento
-      }
-    } catch (error) {
-      console.error("Error buscando miembros:", error);
-      setSearchError(`Error al buscar miembros: ${error}`);
-    } finally {
-      setIsSearching(false);
+    // Cargar miembros recientes al abrir entrada manual
+    if (!showManualEntry) {
+      loadRecentMembers();
     }
   };
 
-  // Función para mostrar confirmación antes de registrar asistencia
-  const selectMemberForConfirmation = (member: MemberInfo) => {
-    setSelectedMember(member);
-    setShowConfirmation(true);
-  };
+  // Función para buscar miembros (ahora usa debounced search)
+  const searchMembers = useCallback(() => {
+    debouncedSearch(searchTerm);
+  }, [searchTerm, debouncedSearch]);
 
-  // Función para confirmar y registrar asistencia manualmente
-  const confirmManualAttendance = async () => {
-    if (!gymData?.id || !selectedMember) return;
+  // Efecto para manejar búsqueda automática mientras el usuario escribe
+  useEffect(() => {
+    if (searchTerm.trim().length >= 2) {
+      debouncedSearch(searchTerm);
+    } else {
+      setSearchResults([]);
+      setSearchError(null);
+    }
+  }, [searchTerm, debouncedSearch]);
+
+  // Función mejorada para registrar asistencia manualmente
+  const registerManualAttendance = async (member: MemberInfo) => {
+    if (!gymData?.id) return;
     
+    setSelectedMember(member);
     setProcessingQR(true);
-    setShowConfirmation(false);
     
     try {
-      // Verificar si ya tiene asistencia hoy
-      const today = new Date();
-      const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-      
-      const attendancesRef = collection(db, `gyms/${gymData.id}/members/${selectedMember.id}/attendances`);
-      const todayQ = query(
-        attendancesRef,
-        where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
-        orderBy('timestamp', 'desc'),
-        limit(1)
-      );
-      
-      const todaySnapshot = await getDocs(todayQ);
-      
-      if (!todaySnapshot.empty) {
-        // Verificar si ya se registró en las últimas 2 horas
-        const lastAttendance = todaySnapshot.docs[0].data();
-        const lastTime = lastAttendance.timestamp.toDate();
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-        
-        if (lastTime > twoHoursAgo) {
-          throw new Error(`${selectedMember.firstName} ya registró asistencia hoy a las ${lastTime.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`);
-        }
-      }
-      
-      // Obtener membresías activas del socio
-      const membershipsQuery = collection(db, `gyms/${gymData.id}/members/${selectedMember.id}/memberships`);
+      // Verificar membresías activas del socio
+      const membershipsQuery = collection(db, `gyms/${gymData.id}/members/${member.id}/memberships`);
       const activeQ = query(membershipsQuery, where('status', '==', 'active'), limit(1));
       const activeSnap = await getDocs(activeQ);
       
@@ -346,6 +348,7 @@ const AttendanceScanner: React.FC = () => {
         throw new Error("El socio no tiene membresías activas");
       }
       
+      // Obtener la primera membresía activa
       const membershipDoc = activeSnap.docs[0];
       const membershipData = membershipDoc.data();
       
@@ -353,25 +356,24 @@ const AttendanceScanner: React.FC = () => {
       const now = new Date();
       const result = await registerAttendance(
         gymData.id,
-        selectedMember.id,
-        `${selectedMember.firstName} ${selectedMember.lastName}`,
+        member.id,
+        `${member.firstName} ${member.lastName}`,
         membershipDoc.id,
         membershipData.activityName || "General"
-        // No pasamos notes si no está definido
       );
       
       // Crear objeto de resultado
       const scanResultObj: ScanResult = {
         success: result.status === 'success',
         message: result.status === 'success' 
-          ? `¡Asistencia registrada para ${selectedMember.firstName} ${selectedMember.lastName}!`
+          ? `Asistencia registrada para ${member.firstName} ${member.lastName}`
           : result.error || "Error al registrar asistencia",
         timestamp: now,
         member: {
-          id: selectedMember.id,
-          firstName: selectedMember.firstName,
-          lastName: selectedMember.lastName,
-          photo: selectedMember.photo || null,
+          id: member.id,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          photo: member.photo || null,
           activeMemberships: activeSnap.size
         },
         error: result.status === 'error' ? result.error : undefined
@@ -379,15 +381,26 @@ const AttendanceScanner: React.FC = () => {
       
       setScanResult(scanResultObj);
       
-      // Recargar asistencias del día
-      await loadTodayAttendances();
+      // Agregar al historial
+      const attendanceRecord: AttendanceRecord = {
+        id: result.id || `ATT${Date.now()}`,
+        memberId: member.id,
+        member: {
+          firstName: member.firstName,
+          lastName: member.lastName
+        },
+        timestamp: now,
+        status: result.status,
+        error: result.status === 'error' ? result.error : undefined
+      };
       
-      // Actualizar timestamp del último escaneo
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
       setLastScan(now);
       
-      // Limpiar la búsqueda
+      // Limpiar búsqueda y actualizar miembros recientes
       setSearchTerm("");
       setSearchResults([]);
+      loadRecentMembers();
       
     } catch (error: any) {
       console.error("Error registrando asistencia:", error);
@@ -401,14 +414,13 @@ const AttendanceScanner: React.FC = () => {
       };
       
       setScanResult(errorResult);
-      
     } finally {
       setProcessingQR(false);
       setSelectedMember(null);
     }
   };
 
-  // Función para procesar el código QR leído (con confirmación)
+  // Función mejorada para procesar el código QR leído
   const procesarCodigoQR = async (decodedText: string) => {
     if (!gymData?.id || processingQR) {
       return;
@@ -416,32 +428,50 @@ const AttendanceScanner: React.FC = () => {
 
     try {
       setProcessingQR(true);
+      console.log("QR Code escaneado:", decodedText);
       
-      // Extraer ID del miembro del QR
+      // Intentar diferentes formas de obtener el ID del miembro
       let memberId = "";
       
+      // Método 1: Decodificar como base64 JSON
       try {
         const decoded = atob(decodedText);
         const qrData = JSON.parse(decoded);
         if (qrData && qrData.memberId) {
           memberId = qrData.memberId;
+          console.log("ID del miembro decodificado del JSON (base64):", memberId);
         }
       } catch (e) {
+        console.log("No es un JSON codificado en base64");
+      }
+      
+      // Método 2: Intentar como JSON directo
+      if (!memberId) {
         try {
           const qrData = JSON.parse(decodedText);
           if (qrData && qrData.memberId) {
             memberId = qrData.memberId;
+            console.log("ID del miembro decodificado del JSON:", memberId);
           }
         } catch (e) {
-          memberId = decodedText;
+          console.log("No es un JSON directo");
         }
       }
       
+      // Método 3: Asumir que es el ID directo
+      if (!memberId) {
+        memberId = decodedText;
+        console.log("Usando el texto completo como ID:", memberId);
+      }
+      
+      // Verificar que tenemos un ID
       if (!memberId) {
         throw new Error("No se pudo extraer un ID del código QR");
       }
 
-      // Verificar que el miembro existe
+      const now = new Date();
+
+      // Obtener datos del miembro
       const memberRef = doc(db, `gyms/${gymData.id}/members`, memberId);
       const memberSnap = await getDoc(memberRef);
 
@@ -451,31 +481,12 @@ const AttendanceScanner: React.FC = () => {
 
       const memberData = memberSnap.data();
       
-      // Verificar si ya tiene asistencia hoy
-      const today = new Date();
-      const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-      
-      const attendancesRef = collection(db, `gyms/${gymData.id}/members/${memberId}/attendances`);
-      const todayQ = query(
-        attendancesRef,
-        where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
-        orderBy('timestamp', 'desc'),
-        limit(1)
-      );
-      
-      const todaySnapshot = await getDocs(todayQ);
-      
-      if (!todaySnapshot.empty) {
-        const lastAttendance = todaySnapshot.docs[0].data();
-        const lastTime = lastAttendance.timestamp.toDate();
-        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
-        
-        if (lastTime > twoHoursAgo) {
-          throw new Error(`${memberData.firstName} ya registró asistencia hoy a las ${lastTime.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`);
-        }
+      // Verificar que el socio esté activo
+      if (memberData.status !== 'active') {
+        throw new Error("El socio no está activo. Consulte con administración.");
       }
       
-      // Obtener membresías activas
+      // Obtener membresías activas del socio
       const membershipsQuery = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
       const activeQ = query(membershipsQuery, where('status', '==', 'active'), limit(1));
       const activeSnap = await getDocs(activeQ);
@@ -484,40 +495,30 @@ const AttendanceScanner: React.FC = () => {
         throw new Error("El socio no tiene membresías activas");
       }
       
+      // Seleccionar la primera membresía activa para registrar asistencia
       const membershipDoc = activeSnap.docs[0];
       const membershipData = membershipDoc.data();
       
-      // Registrar la asistencia automáticamente para QR
-      console.log('🎯 INICIANDO procesarCodigoQR');
-      console.log('QR decodificado:', decodedText);
-      console.log('ID del miembro extraído:', memberId);
-      console.log('Datos del gimnasio:', gymData);
+      // Verificar si la membresía no ha expirado
+      const endDate = membershipData.endDate.toDate();
+      if (endDate < now) {
+        throw new Error("La membresía ha expirado. Renueve su membresía.");
+      }
       
-      const now = new Date();
-      
-      console.log('🚀 Llamando a registerAttendance desde QR con:');
-      console.log('- gymId:', gymData.id);
-      console.log('- memberId:', memberId);
-      console.log('- memberName:', `${memberData.firstName} ${memberData.lastName}`);
-      console.log('- membershipId:', membershipDoc.id);
-      console.log('- activityName:', membershipData.activityName || "General");
-      console.log('- notes: NO SE PASA');
-      
+      // Registrar la asistencia
       const result = await registerAttendance(
         gymData.id,
         memberId,
         `${memberData.firstName} ${memberData.lastName}`,
         membershipDoc.id,
         membershipData.activityName || "General"
-        // No pasamos notes para registros automáticos de QR
       );
       
-      console.log('📊 Resultado de registerAttendance QR:', result);
-      
+      // Crear objeto de resultado
       const scanResultObj: ScanResult = {
         success: result.status === 'success',
         message: result.status === 'success' 
-          ? `¡Bienvenido/a ${memberData.firstName} ${memberData.lastName}!`
+          ? `¡Bienvenido/a ${memberData.firstName}! Asistencia registrada correctamente`
           : result.error || "Error al registrar asistencia",
         timestamp: now,
         member: {
@@ -532,13 +533,26 @@ const AttendanceScanner: React.FC = () => {
       
       setScanResult(scanResultObj);
       
-      // Recargar asistencias del día
-      await loadTodayAttendances();
+      // Agregar al historial
+      const attendanceRecord: AttendanceRecord = {
+        id: result.id || `ATT${Date.now()}`,
+        memberId,
+        member: {
+          firstName: memberData.firstName,
+          lastName: memberData.lastName
+        },
+        timestamp: now,
+        status: result.status,
+        error: result.status === 'error' ? result.error : undefined
+      };
+      
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
       setLastScan(now);
       
     } catch (error: any) {
       console.error("Error procesando QR:", error);
       
+      // Crear resultado de error
       const errorResult: ScanResult = {
         success: false,
         message: error.message || "Error al procesar el código QR",
@@ -563,13 +577,6 @@ const AttendanceScanner: React.FC = () => {
     });
   };
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('es-AR', { 
-      hour: '2-digit', 
-      minute: '2-digit'
-    });
-  };
-
   // Manejar error de la cámara
   const handleWebcamError = useCallback((err: string | DOMException) => {
     console.error("Error de cámara:", err);
@@ -581,18 +588,10 @@ const AttendanceScanner: React.FC = () => {
     }
   }, []);
 
-  // Filtrar asistencias según el filtro seleccionado
-  const filteredAttendances = todayAttendances.filter(attendance => {
-    if (attendanceFilter === 'all') return true;
-    if (attendanceFilter === 'success') return attendance.status === 'success';
-    if (attendanceFilter === 'error') return attendance.status === 'error';
-    return true;
-  });
-
-  // Componente para el escáner QR
+  // Componente para el escáner QR mejorado
   const renderScanner = () => (
     <div className="flex flex-col items-center">
-      <div className="mb-4 h-64 w-full max-w-md bg-gray-100 rounded-lg flex items-center justify-center relative overflow-hidden">
+      <div className="mb-4 h-80 w-full max-w-lg bg-gray-100 rounded-lg flex items-center justify-center relative overflow-hidden">
         {scanning ? (
           <div className="w-full h-full relative">
             <Webcam
@@ -601,35 +600,59 @@ const AttendanceScanner: React.FC = () => {
               screenshotFormat="image/jpeg"
               videoConstraints={{
                 facingMode: "environment",
-                aspectRatio: 1
+                aspectRatio: 1,
+                width: { ideal: 640 },
+                height: { ideal: 640 }
               }}
               onUserMediaError={handleWebcamError}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover rounded-lg"
             />
-            <div className="absolute inset-0 border-4 border-blue-500 animate-pulse rounded-lg pointer-events-none"></div>
-            <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-blue-500 animate-scan pointer-events-none"></div>
-            <div className="absolute bottom-4 left-0 right-0 text-center">
-              <p className="text-white text-sm bg-black bg-opacity-50 px-3 py-1 rounded">
-                Enfoca el código QR del socio
-              </p>
+            
+            {/* Marco de escaneo */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="relative">
+                {/* Esquinas del marco */}
+                <div className="w-48 h-48 border-2 border-transparent relative">
+                  <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-500"></div>
+                  <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-500"></div>
+                  <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-500"></div>
+                  <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-500"></div>
+                </div>
+                
+                {/* Línea de escaneo animada */}
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-blue-500 animate-scan-line"></div>
+              </div>
             </div>
+            
+            {/* Indicador de procesamiento */}
+            {processingQR && (
+              <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+                <div className="bg-white rounded-lg p-4 flex items-center">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mr-3"></div>
+                  <span className="text-gray-700">Procesando...</span>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center">
-            <CameraOff size={64} className="text-gray-400 mb-2" />
-            <p className="text-gray-500 text-sm">Cámara inactiva</p>
+          <div className="flex flex-col items-center justify-center text-center">
+            <CameraOff size={64} className="text-gray-400 mb-4" />
+            <p className="text-gray-500 text-lg mb-2">Cámara inactiva</p>
+            <p className="text-gray-400 text-sm">
+              Presiona "Iniciar Escaneo" para comenzar
+            </p>
           </div>
         )}
       </div>
       
-      <div className="w-full max-w-md flex justify-center">
+      <div className="w-full max-w-lg flex justify-center">
         {!scanning ? (
           <button
             onClick={startScanning}
             className="w-full py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors flex items-center justify-center"
           >
             <QrCode size={20} className="mr-2" />
-            Iniciar Escaneo QR
+            Iniciar Escaneo
           </button>
         ) : (
           <button
@@ -643,165 +666,174 @@ const AttendanceScanner: React.FC = () => {
       </div>
       
       {lastScan && (
-        <div className="mt-4 w-full max-w-md text-center text-sm text-gray-500">
+        <div className="mt-4 w-full max-w-lg text-center text-sm text-gray-500">
           Último escaneo: {formatDateTime(lastScan)}
         </div>
       )}
     </div>
   );
 
-  // Componente para la entrada manual mejorada
+  // Componente mejorado para la entrada manual
   const renderManualEntry = () => (
     <div className="flex flex-col items-center">
-      <div className="mb-4 w-full max-w-md">
+      {/* Barra de búsqueda */}
+      <div className="mb-4 w-full max-w-lg">
         <div className="relative">
           <input
             type="text"
-            placeholder="Buscar socio (mín. 2 caracteres)..."
+            placeholder="Buscar socio por nombre, apellido o email..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 pl-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={(e) => e.key === 'Enter' && searchMembers()}
+            className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             disabled={isSearching}
+            autoFocus
           />
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            {isSearching ? (
-              <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-            ) : (
-              <Search size={18} className="text-gray-400" />
-            )}
+          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+            <Search size={20} className="text-gray-400" />
           </div>
+          
+          {isSearching && (
+            <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+            </div>
+          )}
         </div>
         
-        {searchTerm.length > 0 && searchTerm.length < 2 && (
-          <p className="mt-1 text-xs text-gray-500">Escribe al menos 2 caracteres para buscar</p>
-        )}
+        <button
+          onClick={searchMembers}
+          disabled={searchTerm.trim().length < 2 || isSearching}
+          className={`w-full mt-3 py-2 rounded-lg flex items-center justify-center transition-colors ${
+            searchTerm.trim().length < 2 || isSearching 
+              ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {isSearching ? (
+            <>
+              <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
+              Buscando...
+            </>
+          ) : (
+            <>
+              <Search size={18} className="mr-2" />
+              Buscar Socio
+            </>
+          )}
+        </button>
       </div>
       
-      {/* Error de búsqueda */}
-      {searchError && (
-        <div className="w-full max-w-md p-3 mb-4 bg-red-50 text-red-700 rounded-md">
-          <AlertCircle size={18} className="inline-block mr-2" />
-          {searchError}
-        </div>
-      )}
-      
-      {/* Resultados de búsqueda */}
-      {searchResults.length > 0 ? (
-        <div className="w-full max-w-md border rounded-md overflow-hidden mt-4">
-          <div className="p-2 bg-gray-50 border-b text-sm font-medium">
-            {searchResults.length} resultado(s) encontrado(s)
-          </div>
-          <div className="divide-y max-h-64 overflow-y-auto">
-            {searchResults.map(member => (
+      {/* Miembros recientes */}
+      {recentMembers.length > 0 && searchResults.length === 0 && !searchTerm && (
+        <div className="w-full max-w-lg mb-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">Socios recientes:</h3>
+          <div className="space-y-2">
+            {recentMembers.map(member => (
               <div 
                 key={member.id} 
-                className="p-3 hover:bg-blue-50 cursor-pointer flex items-center transition-colors"
-                onClick={() => selectMemberForConfirmation(member)}
+                className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors"
+                onClick={() => registerManualAttendance(member)}
               >
-                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium mr-3">
-                  {member.firstName.charAt(0)}{member.lastName.charAt(0)}
-                </div>
-                <div className="flex-1">
-                  <div className="font-medium">{member.firstName} {member.lastName}</div>
-                  <div className="text-sm text-gray-500">{member.email}</div>
-                  {member.lastAttendance && (
-                    <div className="text-xs text-gray-400">
-                      Última asistencia: {formatTime(member.lastAttendance)}
+                <div className="flex items-center">
+                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium mr-3">
+                    {member.firstName.charAt(0)}{member.lastName.charAt(0)}
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900">
+                      {member.firstName} {member.lastName}
                     </div>
-                  )}
-                </div>
-                <div className="text-green-600">
-                  <CheckCircle size={16} />
+                    <div className="text-sm text-gray-500">{member.email}</div>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      ) : null}
+      )}
+      
+      {/* Error de búsqueda */}
+      {searchError && (
+        <div className="w-full max-w-lg p-3 mb-4 bg-red-50 text-red-700 rounded-lg border border-red-200">
+          <div className="flex items-center">
+            <AlertCircle size={18} className="mr-2 flex-shrink-0" />
+            <span className="text-sm">{searchError}</span>
+          </div>
+        </div>
+      )}
+      
+      {/* Resultados de búsqueda */}
+      {searchResults.length > 0 && (
+        <div className="w-full max-w-lg border border-gray-200 rounded-lg overflow-hidden">
+          <div className="p-3 bg-gray-50 border-b border-gray-200 text-sm font-medium text-gray-700">
+            {searchResults.length} resultado(s) encontrado(s)
+          </div>
+          <div className="max-h-64 overflow-y-auto">
+            {searchResults.map(member => (
+              <div 
+                key={member.id} 
+                className="p-4 border-b border-gray-100 last:border-b-0 hover:bg-blue-50 cursor-pointer transition-colors"
+                onClick={() => registerManualAttendance(member)}
+              >
+                <div className="flex items-center">
+                  {member.photo ? (
+                    <img 
+                      src={member.photo} 
+                      alt={`${member.firstName} ${member.lastName}`}
+                      className="h-12 w-12 rounded-full object-cover mr-3"
+                    />
+                  ) : (
+                    <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium mr-3">
+                      {member.firstName.charAt(0)}{member.lastName.charAt(0)}
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-900">
+                      {member.firstName} {member.lastName}
+                    </div>
+                    <div className="text-sm text-gray-500">{member.email}</div>
+                  </div>
+                  <div className="text-blue-600">
+                    <User size={20} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* Ayuda */}
+      <div className="mt-4 w-full max-w-lg text-center text-xs text-gray-500">
+        <p>Escribe al menos 2 caracteres para buscar</p>
+        <p>o selecciona un socio de la lista de recientes</p>
+      </div>
     </div>
   );
 
-  // Modal de confirmación para registro manual
-  const renderConfirmationModal = () => {
-    if (!showConfirmation || !selectedMember) return null;
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
-          <h3 className="text-lg font-medium text-gray-900 mb-3 text-center">
-            Confirmar Asistencia
-          </h3>
-          
-          <div className="flex items-center justify-center mb-4">
-            <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium text-xl">
-              {selectedMember.firstName.charAt(0)}{selectedMember.lastName.charAt(0)}
-            </div>
-          </div>
-          
-          <p className="text-center text-gray-600 mb-6">
-            ¿Confirmas la asistencia de{' '}
-            <span className="font-medium">
-              {selectedMember.firstName} {selectedMember.lastName}
-            </span>?
-          </p>
-          
-          <div className="flex space-x-3">
-            <button
-              onClick={() => {
-                setShowConfirmation(false);
-                setSelectedMember(null);
-              }}
-              className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={confirmManualAttendance}
-              disabled={processingQR}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center"
-            >
-              {processingQR ? (
-                <>
-                  <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-                  Registrando...
-                </>
-              ) : (
-                <>
-                  <CheckCircle size={16} className="mr-2" />
-                  Confirmar
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold mb-4">Control de Asistencias</h2>
+      <h2 className="text-xl font-semibold mb-6">Control de Asistencias</h2>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Sección de escáner/entrada manual */}
-        <div className="border rounded-lg p-5">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium">
-              {showManualEntry ? "Registro Manual" : "Escanear QR"}
+        <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-lg font-medium text-gray-900">
+              {showManualEntry ? "Registro Manual" : "Escanear Código QR"}
             </h3>
             
             <button
               onClick={toggleManualEntry}
-              className="px-3 py-1 text-sm border border-gray-300 rounded-md hover:bg-gray-50 flex items-center transition-colors"
+              className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center"
             >
               {showManualEntry ? (
                 <>
-                  <QrCode size={16} className="mr-1" />
-                  Usar Escáner
+                  <QrCode size={16} className="mr-2" />
+                  Usar Escáner QR
                 </>
               ) : (
                 <>
-                  <User size={16} className="mr-1" />
+                  <User size={16} className="mr-2" />
                   Registro Manual
                 </>
               )}
@@ -809,12 +841,18 @@ const AttendanceScanner: React.FC = () => {
           </div>
           
           {cameraError && !showManualEntry && (
-            <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
-              <AlertCircle size={18} className="mr-2" />
-              <div>
-                <p className="font-medium">Error de cámara</p>
-                <p className="text-sm">{cameraError}</p>
-                <p className="text-sm mt-1">Asegúrate de que tu dispositivo tiene cámara y has concedido permisos.</p>
+            <div className="mb-6 p-4 bg-red-100 text-red-700 rounded-lg border border-red-200">
+              <div className="flex items-start">
+                <AlertCircle size={20} className="mr-3 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="font-medium">Error de cámara</p>
+                  <p className="text-sm mt-1">{cameraError}</p>
+                  <p className="text-sm mt-2 text-red-600">
+                    • Verifica que tu dispositivo tenga cámara<br />
+                    • Asegúrate de permitir el acceso a la cámara<br />
+                    • Intenta recargar la página
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -823,142 +861,119 @@ const AttendanceScanner: React.FC = () => {
           
           {/* Resultado del escaneo */}
           {scanResult && (
-            <div className={`mt-6 p-4 rounded-lg ${scanResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+            <div className={`mt-6 p-4 rounded-lg ${
+              scanResult.success 
+                ? 'bg-green-50 border border-green-200' 
+                : 'bg-red-50 border border-red-200'
+            }`}>
               <div className="flex items-start">
-                <div className={`flex-shrink-0 rounded-full p-2 ${scanResult.success ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
-                  {scanResult.success ? <CheckCircle size={20} /> : <XCircle size={20} />}
+                <div className={`flex-shrink-0 rounded-full p-2 ${
+                  scanResult.success 
+                    ? 'bg-green-100 text-green-600' 
+                    : 'bg-red-100 text-red-600'
+                }`}>
+                  {scanResult.success ? <CheckCircle size={24} /> : <XCircle size={24} />}
                 </div>
                 
-                <div className="ml-3">
-                  <h3 className={`text-sm font-medium ${scanResult.success ? 'text-green-800' : 'text-red-800'}`}>
-                    {scanResult.success ? '¡Asistencia Registrada!' : 'Error al Registrar'}
+                <div className="ml-4 flex-1">
+                  <h3 className={`text-base font-medium ${
+                    scanResult.success ? 'text-green-800' : 'text-red-800'
+                  }`}>
+                    {scanResult.success ? 'Asistencia Registrada' : 'Error al Registrar'}
                   </h3>
-                  <div className="mt-1 text-sm text-gray-600">
-                    <p>{scanResult.message}</p>
-                    {scanResult.timestamp && (
-                      <p className="mt-1 text-xs text-gray-500">
-                        {formatDateTime(scanResult.timestamp)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </div>
-              
-              {scanResult.member && (
-                <div className="mt-3 flex items-center">
-                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
-                    {scanResult.member.firstName.charAt(0)}{scanResult.member.lastName.charAt(0)}
-                  </div>
-                  <div className="ml-3">
-                    <div className="text-sm font-medium text-gray-700">
-                      {scanResult.member.firstName} {scanResult.member.lastName}
-                    </div>
-                    {scanResult.success && scanResult.member.activeMemberships !== undefined && (
-                      <div className="text-xs text-gray-500">
-                        {scanResult.member.activeMemberships} membresía(s) activa(s)
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        
-        {/* Asistencias del día */}
-        <div className="border rounded-lg p-5">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-medium flex items-center">
-              <Calendar size={20} className="mr-2 text-blue-600" />
-              Asistencias de Hoy
-            </h3>
-            
-            <div className="flex items-center space-x-2">
-              <select
-                value={attendanceFilter}
-                onChange={(e) => setAttendanceFilter(e.target.value)}
-                className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">Todas</option>
-                <option value="success">Exitosas</option>
-                <option value="error">Con errores</option>
-              </select>
-              
-              <button
-                onClick={loadTodayAttendances}
-                className="p-1 text-gray-500 hover:text-blue-600 transition-colors"
-                title="Actualizar"
-              >
-                <RefreshCw size={16} />
-              </button>
-            </div>
-          </div>
-          
-          {/* Estadísticas rápidas */}
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-blue-50 p-3 rounded-lg text-center">
-              <div className="text-2xl font-bold text-blue-600">
-                {filteredAttendances.filter(a => a.status === 'success').length}
-              </div>
-              <div className="text-xs text-blue-700">Asistencias exitosas</div>
-            </div>
-            <div className="bg-green-50 p-3 rounded-lg text-center">
-              <div className="text-2xl font-bold text-green-600">
-                {new Set(filteredAttendances.filter(a => a.status === 'success').map(a => a.memberId)).size}
-              </div>
-              <div className="text-xs text-green-700">Socios únicos</div>
-            </div>
-          </div>
-          
-          {filteredAttendances.length === 0 ? (
-            <div className="text-center py-10">
-              <Clock size={48} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500">
-                {attendanceFilter === 'all' 
-                  ? "No hay registros de asistencia hoy" 
-                  : `No hay registros ${attendanceFilter === 'success' ? 'exitosos' : 'con errores'} hoy`
-                }
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-y-auto max-h-96 space-y-3">
-              {filteredAttendances.map((record) => (
-                <div
-                  key={`${record.id}-${record.timestamp.getTime()}`}
-                  className={`p-3 rounded-lg border-l-4 transition-all hover:shadow-md ${
-                    record.status === 'success' 
-                      ? 'border-l-green-500 bg-green-50 hover:bg-green-100' 
-                      : 'border-l-red-500 bg-red-50 hover:bg-red-100'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium text-sm">
-                        {record.member.firstName.charAt(0)}{record.member.lastName.charAt(0)}
-                      </div>
+                  
+                  <p className={`mt-1 text-sm ${
+                    scanResult.success ? 'text-green-700' : 'text-red-700'
+                  }`}>
+                    {scanResult.message}
+                  </p>
+                  
+                  <p className="mt-2 text-xs text-gray-500">
+                    {formatDateTime(scanResult.timestamp)}
+                  </p>
+                  
+                  {scanResult.member && (
+                    <div className="mt-3 flex items-center p-3 bg-white rounded-md border">
+                      {scanResult.member.photo ? (
+                        <img 
+                          src={scanResult.member.photo} 
+                          alt={`${scanResult.member.firstName} ${scanResult.member.lastName}`}
+                          className="h-12 w-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
+                          {scanResult.member.firstName.charAt(0)}{scanResult.member.lastName.charAt(0)}
+                        </div>
+                      )}
                       <div className="ml-3">
-                        <div className="font-medium text-sm">
-                          {record.member.firstName} {record.member.lastName}
+                        <div className="text-sm font-medium text-gray-900">
+                          {scanResult.member.firstName} {scanResult.member.lastName}
                         </div>
-                        <div className="text-xs text-gray-500">
-                          {record.activityName || 'General'}
-                        </div>
-                        {record.status !== 'success' && record.error && (
-                          <div className="text-xs text-red-600 mt-1">
-                            {record.error}
+                        {scanResult.success && scanResult.member.activeMemberships !== undefined && (
+                          <div className="text-xs text-gray-500">
+                            {scanResult.member.activeMemberships} membresía(s) activa(s)
                           </div>
                         )}
                       </div>
                     </div>
-                    
-                    <div className="text-right">
-                      <div className="text-sm font-medium text-gray-700">
-                        {formatTime(record.timestamp)}
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Historial de registros */}
+        <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
+          <h3 className="text-lg font-medium mb-6 text-gray-900">Registros Recientes</h3>
+          
+          {scanHistory.length === 0 ? (
+            <div className="text-center py-12">
+              <Clock size={48} className="mx-auto text-gray-300 mb-4" />
+              <p className="text-gray-500 text-base">No hay registros de asistencia recientes</p>
+              <p className="text-gray-400 text-sm mt-2">
+                Los registros aparecerán aquí una vez que comiences a escanear
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {scanHistory.map((record) => (
+                <div
+                  key={record.id}
+                  className={`p-4 rounded-lg border-l-4 ${
+                    record.status === 'success' 
+                      ? 'border-l-green-500 bg-green-50 border border-green-200' 
+                      : 'border-l-red-500 bg-red-50 border border-red-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-medium ${
+                        record.status === 'success' ? 'bg-green-500' : 'bg-red-500'
+                      }`}>
+                        {record.member.firstName.charAt(0)}{record.member.lastName.charAt(0)}
                       </div>
-                      <div className={`text-xs ${
+                      <div className="ml-3">
+                        <div className="text-sm font-medium text-gray-900">
+                          {record.member.firstName} {record.member.lastName}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {record.status === 'success' ? (
+                            'Asistencia registrada'
+                          ) : (
+                            record.error || 'Error al registrar'
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs text-gray-500">
+                        {formatDateTime(record.timestamp)}
+                      </div>
+                      <div className={`text-xs font-medium ${
                         record.status === 'success' ? 'text-green-600' : 'text-red-600'
                       }`}>
-                        {record.status === 'success' ? 'Exitosa' : 'Error'}
+                        {record.status === 'success' ? '✓ Exitoso' : '✗ Error'}
                       </div>
                     </div>
                   </div>
@@ -967,38 +982,40 @@ const AttendanceScanner: React.FC = () => {
             </div>
           )}
           
-          {filteredAttendances.length > 0 && (
-            <div className="mt-4 pt-3 border-t text-center">
-              <p className="text-xs text-gray-500">
-                Última actualización: {new Date().toLocaleTimeString('es-AR')}
-              </p>
+          {scanHistory.length > 0 && (
+            <div className="mt-6 flex justify-center">
+              <button 
+                onClick={() => setScanHistory([])}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition-colors"
+              >
+                Limpiar Historial
+              </button>
             </div>
           )}
         </div>
       </div>
       
-      {/* Modal de confirmación */}
-      {renderConfirmationModal()}
-      
-      {/* Estilos para la animación de escaneo */}
-      <style>
-        {`
-        @keyframes scan {
-          0% {
-            transform: translateY(-100px);
-          }
-          100% {
-            transform: translateY(100px);
-          }
-        }
-        
-        .animate-scan {
-          animation: scan 2s linear infinite;
-        }
-        `}
-      </style>
+      {/* Estilos CSS para animaciones */}
+    <style>{`
+  @keyframes scan-line {
+    0% {
+      top: 0;
+      opacity: 1;
+    }
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
+  }
+  
+  .animate-scan-line {
+    animation: scan-line 2s linear infinite;
+  }
+`}</style>
     </div>
   );
 };
 
 export default AttendanceScanner;
+
+
