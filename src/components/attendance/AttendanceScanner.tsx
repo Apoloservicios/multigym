@@ -1,10 +1,10 @@
-// src/components/attendance/AttendanceScanner.tsx
+// src/components/attendance/AttendanceScanner.tsx - VERSIÓN COMPLETA
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, User } from 'lucide-react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import useAuth from '../../hooks/useAuth';
-import { registerAttendance } from '../../services/attendance.service';
+import { attendanceService } from '../../services/attendance.service';
 import { doc, getDoc, collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { debounce } from 'lodash';
@@ -40,8 +40,18 @@ interface MemberInfo {
   photo?: string | null;
 }
 
+interface MembershipInfo {
+  id: string;
+  activityId?: string;
+  activityName: string;
+  currentAttendances: number;
+  maxAttendances: number;
+  endDate: Date;
+  status: string;
+}
+
 const AttendanceScanner: React.FC = () => {
-  const { gymData } = useAuth();
+  const { gymData, userData } = useAuth();
   const [scanning, setScanning] = useState<boolean>(false);
   const [lastScan, setLastScan] = useState<Date | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
@@ -49,7 +59,7 @@ const AttendanceScanner: React.FC = () => {
   const [processingQR, setProcessingQR] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   
-  // Estados para registro manual mejorados
+  // Estados para registro manual
   const [showManualEntry, setShowManualEntry] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [searchResults, setSearchResults] = useState<MemberInfo[]>([]);
@@ -58,14 +68,18 @@ const AttendanceScanner: React.FC = () => {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [recentMembers, setRecentMembers] = useState<MemberInfo[]>([]);
   
+  // Estados para selección de membresía
+  const [memberMemberships, setMemberMemberships] = useState<MembershipInfo[]>([]);
+  const [selectedMembership, setSelectedMembership] = useState<MembershipInfo | null>(null);
+  const [showMembershipSelection, setShowMembershipSelection] = useState<boolean>(false);
+  const [pendingQRData, setPendingQRData] = useState<string | null>(null);
+  
   const webcamRef = useRef<Webcam>(null);
   const scanInterval = useRef<NodeJS.Timeout | null>(null);
   const lastQRProcessed = useRef<string>('');
   const qrCooldownTimeout = useRef<NodeJS.Timeout | null>(null);
 
-
-
-  // Debounced search function mejorada
+  // Función de búsqueda con debounce
   const debouncedSearch = useMemo(
     () => debounce(async (term: string) => {
       if (!gymData?.id || term.trim().length < 2) {
@@ -78,73 +92,43 @@ const AttendanceScanner: React.FC = () => {
       
       try {
         const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const q = query(
+          membersRef,
+          where('status', '==', 'active'),
+          limit(10)
+        );
         
-        // Búsqueda optimizada con múltiples queries
-        const searchQueries = [
-          // Búsqueda por nombre
-          query(
-            membersRef,
-            where('firstName', '>=', term),
-            where('firstName', '<=', term + '\uf8ff'),
-            where('status', '==', 'active'),
-            limit(5)
-          ),
-          // Búsqueda por apellido
-          query(
-            membersRef,
-            where('lastName', '>=', term),
-            where('lastName', '<=', term + '\uf8ff'),
-            where('status', '==', 'active'),
-            limit(5)
-          ),
-          // Búsqueda por email
-          query(
-            membersRef,
-            where('email', '>=', term),
-            where('email', '<=', term + '\uf8ff'),
-            where('status', '==', 'active'),
-            limit(5)
-          )
-        ];
+        const querySnapshot = await getDocs(q);
+        const allMembers: MemberInfo[] = [];
         
-        // Ejecutar búsquedas en paralelo
-        const searchPromises = searchQueries.map(q => getDocs(q));
-        const results = await Promise.all(searchPromises);
-        
-        // Combinar y deduplicar resultados
-        const memberMap = new Map<string, MemberInfo>();
-        
-        results.forEach(snapshot => {
-          snapshot.docs.forEach(doc => {
-            const data = doc.data();
-            const member: MemberInfo = {
-              id: doc.id,
-              firstName: data.firstName || "",
-              lastName: data.lastName || "",
-              email: data.email || "",
-              photo: data.photo || null
-            };
-            
-            // Solo agregar si coincide con el término de búsqueda
-            const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
-            const email = member.email.toLowerCase();
-            const searchTerm = term.toLowerCase();
-            
-            if (fullName.includes(searchTerm) || email.includes(searchTerm)) {
-              memberMap.set(doc.id, member);
-            }
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
+          allMembers.push({
+            id: doc.id,
+            firstName: data.firstName || "",
+            lastName: data.lastName || "",
+            email: data.email || "",
+            photo: data.photo || null
           });
         });
         
-        const finalResults = Array.from(memberMap.values()).slice(0, 10);
-        setSearchResults(finalResults);
+        // Filtrar localmente
+        const filtered = allMembers.filter(member => {
+          const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
+          const email = member.email.toLowerCase();
+          const searchTerm = term.toLowerCase();
+          
+          return fullName.includes(searchTerm) || email.includes(searchTerm);
+        });
         
-        if (finalResults.length === 0) {
-          setSearchError(`No se encontraron socios activos que coincidan con "${term}"`);
+        setSearchResults(filtered);
+        
+        if (filtered.length === 0) {
+          setSearchError(`No se encontraron socios que coincidan con "${term}"`);
         }
       } catch (error) {
         console.error('Error en búsqueda:', error);
-        setSearchError(`Error al buscar socios: ${error}`);
+        setSearchError(`Error al buscar socios`);
       } finally {
         setIsSearching(false);
       }
@@ -152,7 +136,7 @@ const AttendanceScanner: React.FC = () => {
     [gymData?.id]
   );
 
-  // Cargar miembros recientes para acceso rápido
+  // Cargar miembros recientes
   const loadRecentMembers = useCallback(async () => {
     if (!gymData?.id) return;
     
@@ -168,7 +152,6 @@ const AttendanceScanner: React.FC = () => {
       const memberIds = new Set<string>();
       const members: MemberInfo[] = [];
       
-      // Obtener IDs únicos de los últimos asistentes
       attendanceSnap.forEach(doc => {
         const data = doc.data();
         if (data.memberId && !memberIds.has(data.memberId)) {
@@ -176,7 +159,6 @@ const AttendanceScanner: React.FC = () => {
         }
       });
       
-      // Obtener datos completos de esos miembros
       for (const memberId of Array.from(memberIds).slice(0, 3)) {
         try {
           const memberDoc = await getDoc(doc(db, `gyms/${gymData.id}/members`, memberId));
@@ -201,7 +183,126 @@ const AttendanceScanner: React.FC = () => {
     }
   }, [gymData?.id]);
 
-  // Limpiar intervalo de escaneo al desmontar
+  // Cargar membresías de un socio
+  const loadMemberMemberships = async (memberId: string): Promise<MembershipInfo[]> => {
+    if (!gymData?.id) return [];
+    
+    try {
+      const memberships = await attendanceService.getActiveMemberships(gymData.id, memberId);
+      
+      return memberships.map(m => ({
+        id: m.id,
+        activityId: m.activityId,
+        activityName: m.activityName,
+        currentAttendances: m.currentAttendances || 0,
+        maxAttendances: m.maxAttendances || 0,
+        endDate: m.endDate,
+        status: m.status
+      }));
+    } catch (error) {
+      console.error('Error loading memberships:', error);
+      return [];
+    }
+  };
+
+  // Manejar selección de socio
+  const handleMemberSelect = async (member: MemberInfo) => {
+    setSelectedMember(member);
+    setSearchTerm(`${member.firstName} ${member.lastName}`);
+    setSearchResults([]);
+    
+    const memberships = await loadMemberMemberships(member.id);
+    setMemberMemberships(memberships);
+    
+    if (memberships.length === 0) {
+      setSearchError('Este socio no tiene membresías activas');
+      setSelectedMembership(null);
+    } else if (memberships.length === 1) {
+      setSelectedMembership(memberships[0]);
+    } else {
+      setSelectedMembership(null);
+    }
+  };
+
+  // Registrar asistencia manual
+  const registerManualAttendance = async (member: MemberInfo, membership: MembershipInfo) => {
+    if (!gymData?.id) return;
+    
+    setProcessingQR(true);
+    
+    try {
+      const result = await attendanceService.registerAttendance(gymData.id, {
+        memberId: member.id,
+        memberName: `${member.firstName} ${member.lastName}`,
+        memberFirstName: member.firstName,
+        memberLastName: member.lastName,
+        memberEmail: member.email,
+        membershipId: membership.id,
+        activityId: membership.activityId || '',
+        activityName: membership.activityName,
+        notes: 'Registro manual',
+        registeredBy: 'gym',
+        registeredByUserId: userData?.id,
+        registeredByUserName: userData?.name
+      });
+      
+      const scanResultObj: ScanResult = {
+        success: result.success,
+        message: result.success 
+          ? `Asistencia registrada para ${member.firstName} ${member.lastName} - ${membership.activityName}`
+          : result.error || "Error al registrar asistencia",
+        timestamp: new Date(),
+        member: {
+          id: member.id,
+          firstName: member.firstName,
+          lastName: member.lastName,
+          photo: member.photo || null,
+          activeMemberships: memberMemberships.length
+        },
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanResult(scanResultObj);
+      
+      const attendanceRecord: AttendanceRecord = {
+        id: result.attendanceId || `ATT${Date.now()}`,
+        memberId: member.id,
+        member: {
+          firstName: member.firstName,
+          lastName: member.lastName
+        },
+        timestamp: new Date(),
+        status: result.success ? 'success' : 'failed',
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+      setLastScan(new Date());
+      
+      // Limpiar formulario
+      setSearchTerm("");
+      setSearchResults([]);
+      setSelectedMember(null);
+      setSelectedMembership(null);
+      setMemberMemberships([]);
+      loadRecentMembers();
+      
+    } catch (error: any) {
+      console.error("Error registrando asistencia:", error);
+      
+      setScanResult({
+        success: false,
+        message: error.message || "Error al registrar asistencia",
+        timestamp: new Date(),
+        member: null,
+        error: error.message
+      });
+    } finally {
+      setProcessingQR(false);
+    }
+  };
+
+  // Limpiar recursos al desmontar
   useEffect(() => {
     return () => {
       if (scanInterval.current) {
@@ -214,24 +315,21 @@ const AttendanceScanner: React.FC = () => {
     };
   }, [debouncedSearch]);
 
-  // Cargar miembros recientes al iniciar
   useEffect(() => {
     loadRecentMembers();
   }, [loadRecentMembers]);
 
-  // Función mejorada para capturar y procesar la imagen de la cámara
-  const scanQRCode = useCallback(async () => {
+  // Función para escanear QR
+  const scanQRCode = useCallback(() => {
     if (processingQR || !webcamRef.current) return;
     
     const imageSrc = webcamRef.current.getScreenshot();
     if (!imageSrc) return;
     
-    // Crear una imagen desde el screenshot para procesar con jsQR
     const image = new Image();
     image.src = imageSrc;
     
     image.onload = () => {
-      // Crear un canvas para dibujar la imagen y obtener los datos de píxeles
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       if (!context) return;
@@ -242,47 +340,250 @@ const AttendanceScanner: React.FC = () => {
       
       const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
       
-      // Escanear la imagen en busca de un código QR
       const code = jsQR(imageData.data, imageData.width, imageData.height, {
         inversionAttempts: "dontInvert",
       });
       
       if (code && code.data !== lastQRProcessed.current) {
-        // Se encontró un código QR nuevo, detener el escaneo y procesar
         setScanning(false);
         if (scanInterval.current) {
           clearInterval(scanInterval.current);
           scanInterval.current = null;
         }
         
-        // Evitar procesar el mismo QR múltiples veces
         lastQRProcessed.current = code.data;
         
-        // Set cooldown para evitar múltiples escaneos del mismo QR
         if (qrCooldownTimeout.current) {
           clearTimeout(qrCooldownTimeout.current);
         }
         qrCooldownTimeout.current = setTimeout(() => {
           lastQRProcessed.current = '';
-        }, 3000); // 3 segundos de cooldown
+        }, 3000);
         
         procesarCodigoQR(code.data);
       }
     };
   }, [processingQR]);
 
-  // Función mejorada para iniciar el escaneo
+  // Procesar código QR
+  const procesarCodigoQR = async (decodedText: string) => {
+    if (!gymData?.id || processingQR) return;
+
+    try {
+      setProcessingQR(true);
+      console.log("QR Code escaneado:", decodedText);
+      
+      let memberId = "";
+      
+      // Intentar decodificar como base64
+      try {
+        const decoded = atob(decodedText);
+        const qrData = JSON.parse(decoded);
+        if (qrData && qrData.memberId) {
+          memberId = qrData.memberId;
+        }
+      } catch (e) {
+        // Intentar como JSON directo
+        try {
+          const qrData = JSON.parse(decodedText);
+          if (qrData && qrData.memberId) {
+            memberId = qrData.memberId;
+          }
+        } catch (e2) {
+          // Usar como ID directo
+          memberId = decodedText;
+        }
+      }
+      
+      if (!memberId) {
+        throw new Error("No se pudo extraer un ID del código QR");
+      }
+
+      const memberRef = doc(db, `gyms/${gymData.id}/members`, memberId);
+      const memberSnap = await getDoc(memberRef);
+
+      if (!memberSnap.exists()) {
+        throw new Error("Socio no encontrado");
+      }
+
+      const memberData = memberSnap.data();
+      
+      if (memberData.status !== 'active') {
+        throw new Error("El socio no está activo");
+      }
+      
+      const memberships = await loadMemberMemberships(memberId);
+      
+      if (memberships.length === 0) {
+        throw new Error("El socio no tiene membresías activas");
+      }
+      
+      // Si hay múltiples membresías, mostrar selector
+      if (memberships.length > 1) {
+        setPendingQRData(decodedText);
+        setSelectedMember({
+          id: memberId,
+          firstName: memberData.firstName,
+          lastName: memberData.lastName,
+          email: memberData.email,
+          photo: memberData.photo
+        });
+        setMemberMemberships(memberships);
+        setShowMembershipSelection(true);
+        return;
+      }
+      
+      // Si solo hay una membresía, procesar directamente
+      const membership = memberships[0];
+      const result = await attendanceService.registerAttendance(gymData.id, {
+        memberId: memberId,
+        memberName: `${memberData.firstName} ${memberData.lastName}`,
+        memberFirstName: memberData.firstName,
+        memberLastName: memberData.lastName,
+        memberEmail: memberData.email,
+        membershipId: membership.id,
+        activityId: membership.activityId || '',
+        activityName: membership.activityName,
+        notes: 'Acceso por código QR',
+        registeredBy: 'gym',
+        registeredByUserId: userData?.id,
+        registeredByUserName: userData?.name
+      });
+      
+      const scanResultObj: ScanResult = {
+        success: result.success,
+        message: result.success 
+          ? `¡Bienvenido/a ${memberData.firstName}! - ${membership.activityName}`
+          : result.error || "Error al registrar asistencia",
+        timestamp: new Date(),
+        member: {
+          id: memberId,
+          firstName: memberData.firstName,
+          lastName: memberData.lastName,
+          photo: memberData.photo || null,
+          activeMemberships: memberships.length
+        },
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanResult(scanResultObj);
+      
+      const attendanceRecord: AttendanceRecord = {
+        id: result.attendanceId || `ATT${Date.now()}`,
+        memberId,
+        member: {
+          firstName: memberData.firstName,
+          lastName: memberData.lastName
+        },
+        timestamp: new Date(),
+        status: result.success ? 'success' : 'failed',
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+      setLastScan(new Date());
+      
+    } catch (error: any) {
+      console.error("Error procesando QR:", error);
+      
+      setScanResult({
+        success: false,
+        message: error.message || "Error al procesar el código QR",
+        timestamp: new Date(),
+        member: null,
+        error: error.message
+      });
+      
+    } finally {
+      setProcessingQR(false);
+    }
+  };
+
+  // Confirmar asistencia con membresía seleccionada
+  const confirmAttendanceWithMembership = async (membership: MembershipInfo) => {
+    if (!pendingQRData || !selectedMember || !gymData?.id) return;
+    
+    setProcessingQR(true);
+    setShowMembershipSelection(false);
+    
+    try {
+      const result = await attendanceService.registerAttendance(gymData.id, {
+        memberId: selectedMember.id,
+        memberName: `${selectedMember.firstName} ${selectedMember.lastName}`,
+        memberFirstName: selectedMember.firstName,
+        memberLastName: selectedMember.lastName,
+        memberEmail: selectedMember.email,
+        membershipId: membership.id,
+        activityId: membership.activityId || '',
+        activityName: membership.activityName,
+        notes: 'Acceso por código QR',
+        registeredBy: 'gym',
+        registeredByUserId: userData?.id,
+        registeredByUserName: userData?.name
+      });
+      
+      const scanResultObj: ScanResult = {
+        success: result.success,
+        message: result.success 
+          ? `¡Bienvenido/a ${selectedMember.firstName}! - ${membership.activityName}`
+          : result.error || "Error al registrar asistencia",
+        timestamp: new Date(),
+        member: {
+          id: selectedMember.id,
+          firstName: selectedMember.firstName,
+          lastName: selectedMember.lastName,
+          photo: selectedMember.photo || null,
+          activeMemberships: memberMemberships.length
+        },
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanResult(scanResultObj);
+      
+      const attendanceRecord: AttendanceRecord = {
+        id: result.attendanceId || `ATT${Date.now()}`,
+        memberId: selectedMember.id,
+        member: {
+          firstName: selectedMember.firstName,
+          lastName: selectedMember.lastName
+        },
+        timestamp: new Date(),
+        status: result.success ? 'success' : 'failed',
+        error: !result.success ? result.error : undefined
+      };
+      
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+      setLastScan(new Date());
+      
+    } catch (error: any) {
+      console.error("Error confirmando asistencia:", error);
+      
+      setScanResult({
+        success: false,
+        message: error.message || "Error al confirmar asistencia",
+        timestamp: new Date(),
+        member: null,
+        error: error.message
+      });
+    } finally {
+      setProcessingQR(false);
+      setPendingQRData(null);
+      setSelectedMember(null);
+      setMemberMemberships([]);
+    }
+  };
+
+  // Iniciar escaneo
   const startScanning = () => {
     setScanResult(null);
     setCameraError(null);
     setShowManualEntry(false);
+    setShowMembershipSelection(false);
     
     try {
       setScanning(true);
       lastQRProcessed.current = '';
-      
-      // Iniciar un intervalo para escanear periódicamente
-      scanInterval.current = setInterval(scanQRCode, 300); // Reducido a 300ms para mejor respuesta
+      scanInterval.current = setInterval(scanQRCode, 500);
     } catch (err: any) {
       console.error("Error al iniciar el escáner:", err);
       setCameraError(`Error al iniciar el escáner: ${err.message}`);
@@ -290,7 +591,7 @@ const AttendanceScanner: React.FC = () => {
     }
   };
   
-  // Función para detener el escaneo
+  // Detener escaneo
   const stopScanning = () => {
     if (scanInterval.current) {
       clearInterval(scanInterval.current);
@@ -300,28 +601,29 @@ const AttendanceScanner: React.FC = () => {
     lastQRProcessed.current = '';
   };
 
-  // Función mejorada para cambiar al modo de entrada manual
+  // Alternar entrada manual
   const toggleManualEntry = () => {
     stopScanning();
     setShowManualEntry(!showManualEntry);
+    setShowMembershipSelection(false);
     setSearchTerm("");
     setSearchResults([]);
     setSelectedMember(null);
+    setSelectedMembership(null);
+    setMemberMemberships([]);
     setScanResult(null);
     setSearchError(null);
     
-    // Cargar miembros recientes al abrir entrada manual
     if (!showManualEntry) {
       loadRecentMembers();
     }
   };
 
-  // Función para buscar miembros (ahora usa debounced search)
+  // Buscar miembros
   const searchMembers = useCallback(() => {
     debouncedSearch(searchTerm);
   }, [searchTerm, debouncedSearch]);
 
-  // Efecto para manejar búsqueda automática mientras el usuario escribe
   useEffect(() => {
     if (searchTerm.trim().length >= 2) {
       debouncedSearch(searchTerm);
@@ -331,244 +633,7 @@ const AttendanceScanner: React.FC = () => {
     }
   }, [searchTerm, debouncedSearch]);
 
-  // Función mejorada para registrar asistencia manualmente
-  const registerManualAttendance = async (member: MemberInfo) => {
-    if (!gymData?.id) return;
-    
-    setSelectedMember(member);
-    setProcessingQR(true);
-    
-    try {
-      // Verificar membresías activas del socio
-      const membershipsQuery = collection(db, `gyms/${gymData.id}/members/${member.id}/memberships`);
-      const activeQ = query(membershipsQuery, where('status', '==', 'active'), limit(1));
-      const activeSnap = await getDocs(activeQ);
-      
-      if (activeSnap.empty) {
-        throw new Error("El socio no tiene membresías activas");
-      }
-      
-      // Obtener la primera membresía activa
-      const membershipDoc = activeSnap.docs[0];
-      const membershipData = membershipDoc.data();
-      
-      // Registrar la asistencia
-      const now = new Date();
-      const result = await registerAttendance(
-        gymData.id,
-        member.id,
-        `${member.firstName} ${member.lastName}`,
-        membershipDoc.id,
-        membershipData.activityName || "General"
-      );
-      
-      // Crear objeto de resultado
-      const scanResultObj: ScanResult = {
-        success: result.status === 'success',
-        message: result.status === 'success' 
-          ? `Asistencia registrada para ${member.firstName} ${member.lastName}`
-          : result.error || "Error al registrar asistencia",
-        timestamp: now,
-        member: {
-          id: member.id,
-          firstName: member.firstName,
-          lastName: member.lastName,
-          photo: member.photo || null,
-          activeMemberships: activeSnap.size
-        },
-        error: result.status === 'error' ? result.error : undefined
-      };
-      
-      setScanResult(scanResultObj);
-      
-      // Agregar al historial
-      const attendanceRecord: AttendanceRecord = {
-        id: result.id || `ATT${Date.now()}`,
-        memberId: member.id,
-        member: {
-          firstName: member.firstName,
-          lastName: member.lastName
-        },
-        timestamp: now,
-        status: result.status,
-        error: result.status === 'error' ? result.error : undefined
-      };
-      
-      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
-      setLastScan(now);
-      
-      // Limpiar búsqueda y actualizar miembros recientes
-      setSearchTerm("");
-      setSearchResults([]);
-      loadRecentMembers();
-      
-    } catch (error: any) {
-      console.error("Error registrando asistencia:", error);
-      
-      const errorResult: ScanResult = {
-        success: false,
-        message: error.message || "Error al registrar asistencia",
-        timestamp: new Date(),
-        member: null,
-        error: error.message
-      };
-      
-      setScanResult(errorResult);
-    } finally {
-      setProcessingQR(false);
-      setSelectedMember(null);
-    }
-  };
-
-  // Función mejorada para procesar el código QR leído
-  const procesarCodigoQR = async (decodedText: string) => {
-    if (!gymData?.id || processingQR) {
-      return;
-    }
-
-    try {
-      setProcessingQR(true);
-      console.log("QR Code escaneado:", decodedText);
-      
-      // Intentar diferentes formas de obtener el ID del miembro
-      let memberId = "";
-      
-      // Método 1: Decodificar como base64 JSON
-      try {
-        const decoded = atob(decodedText);
-        const qrData = JSON.parse(decoded);
-        if (qrData && qrData.memberId) {
-          memberId = qrData.memberId;
-          console.log("ID del miembro decodificado del JSON (base64):", memberId);
-        }
-      } catch (e) {
-        console.log("No es un JSON codificado en base64");
-      }
-      
-      // Método 2: Intentar como JSON directo
-      if (!memberId) {
-        try {
-          const qrData = JSON.parse(decodedText);
-          if (qrData && qrData.memberId) {
-            memberId = qrData.memberId;
-            console.log("ID del miembro decodificado del JSON:", memberId);
-          }
-        } catch (e) {
-          console.log("No es un JSON directo");
-        }
-      }
-      
-      // Método 3: Asumir que es el ID directo
-      if (!memberId) {
-        memberId = decodedText;
-        console.log("Usando el texto completo como ID:", memberId);
-      }
-      
-      // Verificar que tenemos un ID
-      if (!memberId) {
-        throw new Error("No se pudo extraer un ID del código QR");
-      }
-
-      const now = new Date();
-
-      // Obtener datos del miembro
-      const memberRef = doc(db, `gyms/${gymData.id}/members`, memberId);
-      const memberSnap = await getDoc(memberRef);
-
-      if (!memberSnap.exists()) {
-        throw new Error("Socio no encontrado. ID: " + memberId);
-      }
-
-      const memberData = memberSnap.data();
-      
-      // Verificar que el socio esté activo
-      if (memberData.status !== 'active') {
-        throw new Error("El socio no está activo. Consulte con administración.");
-      }
-      
-      // Obtener membresías activas del socio
-      const membershipsQuery = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
-      const activeQ = query(membershipsQuery, where('status', '==', 'active'), limit(1));
-      const activeSnap = await getDocs(activeQ);
-      
-      if (activeSnap.empty) {
-        throw new Error("El socio no tiene membresías activas");
-      }
-      
-      // Seleccionar la primera membresía activa para registrar asistencia
-      const membershipDoc = activeSnap.docs[0];
-      const membershipData = membershipDoc.data();
-      
-      // Verificar si la membresía no ha expirado
-      const endDate = membershipData.endDate.toDate();
-      if (endDate < now) {
-        throw new Error("La membresía ha expirado. Renueve su membresía.");
-      }
-      
-      // Registrar la asistencia
-      const result = await registerAttendance(
-        gymData.id,
-        memberId,
-        `${memberData.firstName} ${memberData.lastName}`,
-        membershipDoc.id,
-        membershipData.activityName || "General"
-      );
-      
-      // Crear objeto de resultado
-      const scanResultObj: ScanResult = {
-        success: result.status === 'success',
-        message: result.status === 'success' 
-          ? `¡Bienvenido/a ${memberData.firstName}! Asistencia registrada correctamente`
-          : result.error || "Error al registrar asistencia",
-        timestamp: now,
-        member: {
-          id: memberId,
-          firstName: memberData.firstName,
-          lastName: memberData.lastName,
-          photo: memberData.photo || null,
-          activeMemberships: activeSnap.size
-        },
-        error: result.status === 'error' ? result.error : undefined
-      };
-      
-      setScanResult(scanResultObj);
-      
-      // Agregar al historial
-      const attendanceRecord: AttendanceRecord = {
-        id: result.id || `ATT${Date.now()}`,
-        memberId,
-        member: {
-          firstName: memberData.firstName,
-          lastName: memberData.lastName
-        },
-        timestamp: now,
-        status: result.status,
-        error: result.status === 'error' ? result.error : undefined
-      };
-      
-      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
-      setLastScan(now);
-      
-    } catch (error: any) {
-      console.error("Error procesando QR:", error);
-      
-      // Crear resultado de error
-      const errorResult: ScanResult = {
-        success: false,
-        message: error.message || "Error al procesar el código QR",
-        timestamp: new Date(),
-        member: null,
-        error: error.message
-      };
-      
-      setScanResult(errorResult);
-      
-    } finally {
-      setProcessingQR(false);
-    }
-  };
-
-  // Formatear fecha y hora
+  // Formatear fecha
   const formatDateTime = (date: Date) => {
     return date.toLocaleTimeString('es-AR', { 
       hour: '2-digit', 
@@ -577,7 +642,7 @@ const AttendanceScanner: React.FC = () => {
     });
   };
 
-  // Manejar error de la cámara
+  // Manejar error de cámara
   const handleWebcamError = useCallback((err: string | DOMException) => {
     console.error("Error de cámara:", err);
     setCameraError(`Error al acceder a la cámara: ${err.toString()}`);
@@ -588,7 +653,7 @@ const AttendanceScanner: React.FC = () => {
     }
   }, []);
 
-  // Componente para el escáner QR mejorado
+  // Renderizar escáner QR
   const renderScanner = () => (
     <div className="flex flex-col items-center">
       <div className="mb-4 h-80 w-full max-w-lg bg-gray-100 rounded-lg flex items-center justify-center relative overflow-hidden">
@@ -611,16 +676,13 @@ const AttendanceScanner: React.FC = () => {
             {/* Marco de escaneo */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="relative">
-                {/* Esquinas del marco */}
                 <div className="w-48 h-48 border-2 border-transparent relative">
                   <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-500"></div>
                   <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-500"></div>
                   <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-500"></div>
                   <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-500"></div>
                 </div>
-                
-                {/* Línea de escaneo animada */}
-                <div className="absolute top-0 left-0 w-full h-0.5 bg-blue-500 animate-scan-line"></div>
+                <div className="absolute top-0 left-0 w-full h-0.5 bg-blue-500 animate-pulse"></div>
               </div>
             </div>
             
@@ -638,9 +700,7 @@ const AttendanceScanner: React.FC = () => {
           <div className="flex flex-col items-center justify-center text-center">
             <CameraOff size={64} className="text-gray-400 mb-4" />
             <p className="text-gray-500 text-lg mb-2">Cámara inactiva</p>
-            <p className="text-gray-400 text-sm">
-              Presiona "Iniciar Escaneo" para comenzar
-            </p>
+            <p className="text-gray-400 text-sm">Presiona "Iniciar Escaneo" para comenzar</p>
           </div>
         )}
       </div>
@@ -649,7 +709,7 @@ const AttendanceScanner: React.FC = () => {
         {!scanning ? (
           <button
             onClick={startScanning}
-            className="w-full py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors flex items-center justify-center"
+            className="w-full py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center justify-center"
           >
             <QrCode size={20} className="mr-2" />
             Iniciar Escaneo
@@ -657,7 +717,7 @@ const AttendanceScanner: React.FC = () => {
         ) : (
           <button
             onClick={stopScanning}
-            className="w-full py-3 bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition-colors flex items-center justify-center"
+            className="w-full py-3 bg-red-600 text-white rounded-md hover:bg-red-700 flex items-center justify-center"
           >
             <CameraOff size={20} className="mr-2" />
             Detener Escaneo
@@ -673,10 +733,9 @@ const AttendanceScanner: React.FC = () => {
     </div>
   );
 
-  // Componente mejorado para la entrada manual
+  // Renderizar entrada manual
   const renderManualEntry = () => (
     <div className="flex flex-col items-center">
-      {/* Barra de búsqueda */}
       <div className="mb-4 w-full max-w-lg">
         <div className="relative">
           <input
@@ -685,7 +744,7 @@ const AttendanceScanner: React.FC = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && searchMembers()}
-            className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={isSearching}
             autoFocus
           />
@@ -732,7 +791,7 @@ const AttendanceScanner: React.FC = () => {
               <div 
                 key={member.id} 
                 className="p-3 border border-gray-200 rounded-lg hover:bg-blue-50 cursor-pointer transition-colors"
-                onClick={() => registerManualAttendance(member)}
+                onClick={() => handleMemberSelect(member)}
               >
                 <div className="flex items-center">
                   <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium mr-3">
@@ -772,7 +831,7 @@ const AttendanceScanner: React.FC = () => {
               <div 
                 key={member.id} 
                 className="p-4 border-b border-gray-100 last:border-b-0 hover:bg-blue-50 cursor-pointer transition-colors"
-                onClick={() => registerManualAttendance(member)}
+                onClick={() => handleMemberSelect(member)}
               >
                 <div className="flex items-center">
                   {member.photo ? (
@@ -801,11 +860,113 @@ const AttendanceScanner: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Selección de membresía para registro manual */}
+      {selectedMember && memberMemberships.length > 0 && (
+        <div className="w-full max-w-lg mt-4">
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            Seleccionar membresía para {selectedMember.firstName} {selectedMember.lastName}:
+          </h3>
+          <div className="space-y-2">
+            {memberMemberships.map(membership => (
+              <button
+                key={membership.id}
+                onClick={() => registerManualAttendance(selectedMember, membership)}
+                disabled={processingQR}
+                className="w-full p-3 text-left border border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors disabled:opacity-50"
+              >
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-medium text-gray-900">
+                      {membership.activityName}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      {membership.currentAttendances}
+                      {membership.maxAttendances > 0 && ` / ${membership.maxAttendances}`} asistencias
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm text-gray-500">
+                      Vence: {membership.endDate.toLocaleDateString('es-AR')}
+                    </div>
+                    <div className={`text-xs px-2 py-1 rounded-full ${
+                      membership.endDate > new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+                        ? 'bg-green-100 text-green-700'
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      {membership.endDate > new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+                        ? 'Activa'
+                        : 'Por vencer'
+                      }
+                    </div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       
       {/* Ayuda */}
       <div className="mt-4 w-full max-w-lg text-center text-xs text-gray-500">
         <p>Escribe al menos 2 caracteres para buscar</p>
         <p>o selecciona un socio de la lista de recientes</p>
+      </div>
+    </div>
+  );
+
+  // Modal para selección de membresía desde QR
+  const renderMembershipSelection = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <h3 className="text-lg font-semibold mb-4">
+          Seleccionar Membresía
+        </h3>
+        <p className="text-gray-600 mb-4">
+          {selectedMember?.firstName} {selectedMember?.lastName} tiene múltiples membresías. 
+          Selecciona una para registrar la asistencia:
+        </p>
+        
+        <div className="space-y-3 mb-4">
+          {memberMemberships.map(membership => (
+            <button
+              key={membership.id}
+              onClick={() => confirmAttendanceWithMembership(membership)}
+              disabled={processingQR}
+              className="w-full p-3 text-left border border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors disabled:opacity-50"
+            >
+              <div className="flex justify-between items-center">
+                <div>
+                  <div className="font-medium text-gray-900">
+                    {membership.activityName}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {membership.currentAttendances}
+                    {membership.maxAttendances > 0 && ` / ${membership.maxAttendances}`} asistencias
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm text-gray-500">
+                    Vence: {membership.endDate.toLocaleDateString('es-AR')}
+                  </div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+        
+        <button
+          onClick={() => {
+            setShowMembershipSelection(false);
+            setPendingQRData(null);
+            setSelectedMember(null);
+            setMemberMemberships([]);
+            setProcessingQR(false);
+          }}
+          className="w-full py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+        >
+          Cancelar
+        </button>
       </div>
     </div>
   );
@@ -994,28 +1155,11 @@ const AttendanceScanner: React.FC = () => {
           )}
         </div>
       </div>
-      
-      {/* Estilos CSS para animaciones */}
-    <style>{`
-  @keyframes scan-line {
-    0% {
-      top: 0;
-      opacity: 1;
-    }
-    100% {
-      top: 100%;
-      opacity: 0;
-    }
-  }
-  
-  .animate-scan-line {
-    animation: scan-line 2s linear infinite;
-  }
-`}</style>
+
+      {/* Modal de selección de membresía */}
+      {showMembershipSelection && renderMembershipSelection()}
     </div>
   );
 };
 
 export default AttendanceScanner;
-
-

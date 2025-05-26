@@ -7,10 +7,11 @@ import {
   DollarSign, 
   Activity, 
   Calendar,
-  TrendingUp,
   AlertTriangle,
   Clock,
-  RefreshCw
+  RefreshCw,
+  Gift,
+  Cake
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import { formatCurrency } from '../../utils/formatting.utils';
@@ -24,6 +25,9 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { getMembersWithUpcomingBirthdays } from '../../services/member.service';
+import QuickAttendanceRegister from '../../components/attendance/QuickAttendanceRegister';
+import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
 
 // Tipos para las métricas del dashboard
 interface DashboardMetrics {
@@ -37,6 +41,7 @@ interface DashboardMetrics {
   thisWeekAttendance: number;
   expiringMemberships: number;
   pendingPayments: number;
+  upcomingBirthdays: number;
 }
 
 interface AttendanceRecord {
@@ -55,6 +60,15 @@ interface RecentActivity {
   iconColor: string;
 }
 
+interface UpcomingBirthday {
+  id: string;
+  firstName: string;
+  lastName: string;
+  birthDate: any;
+  daysUntilBirthday: number;
+  photo?: string;
+}
+
 const Dashboard: React.FC = () => {
   const { gymData } = useAuth();
   
@@ -69,11 +83,13 @@ const Dashboard: React.FC = () => {
     todayAttendance: 0,
     thisWeekAttendance: 0,
     expiringMemberships: 0,
-    pendingPayments: 0
+    pendingPayments: 0,
+    upcomingBirthdays: 0
   });
   
   const [recentAttendance, setRecentAttendance] = useState<AttendanceRecord[]>([]);
   const [recentActivities, setRecentActivities] = useState<RecentActivity[]>([]);
+  const [upcomingBirthdays, setUpcomingBirthdays] = useState<UpcomingBirthday[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +108,31 @@ const Dashboard: React.FC = () => {
       now: Timestamp.fromDate(now)
     };
   }, []);
+
+  // Cargar próximos cumpleaños
+  const loadUpcomingBirthdays = useCallback(async () => {
+    if (!gymData?.id) return;
+    
+    try {
+      const birthdayMembers = await getMembersWithUpcomingBirthdays(gymData.id, 30, 10);
+      
+      const birthdays: UpcomingBirthday[] = birthdayMembers.map(member => ({
+        id: member.id,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        birthDate: member.birthDate,
+        daysUntilBirthday: (member as any).daysUntilBirthday || 0,
+        photo: member.photo || undefined
+      }));
+      
+      setUpcomingBirthdays(birthdays);
+      
+      return birthdays.length;
+    } catch (err: any) {
+      console.error('Error loading upcoming birthdays:', err);
+      return 0;
+    }
+  }, [gymData?.id]);
 
   // Cargar métricas principales
   const loadMetrics = useCallback(async () => {
@@ -122,19 +163,69 @@ const Dashboard: React.FC = () => {
         ))
       ]);
 
-      // Obtener asistencias
-      const [todayAttendanceSnap, weekAttendanceSnap] = await Promise.all([
-        getDocs(query(
+      // Obtener asistencias con manejo de errores mejorado
+      let todayAttendanceCount = 0;
+      let weekAttendanceCount = 0;
+      
+      try {
+        // Intentar consulta optimizada para asistencias de hoy
+        const todayAttendanceSnap = await getDocs(query(
           collection(db, `gyms/${gymData.id}/attendance`),
           where('timestamp', '>=', today),
           where('status', '==', 'success')
-        )),
-        getDocs(query(
+        ));
+        todayAttendanceCount = todayAttendanceSnap.size;
+      } catch (todayErr) {
+        console.warn('Error getting today attendance, trying fallback:', todayErr);
+        // Fallback: obtener todas las asistencias y filtrar manualmente
+        try {
+          const allAttendanceSnap = await getDocs(
+            collection(db, `gyms/${gymData.id}/attendance`)
+          );
+          
+          const todayTimestamp = today.seconds;
+          allAttendanceSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.status === 'success' && 
+                data.timestamp && 
+                data.timestamp.seconds >= todayTimestamp) {
+              todayAttendanceCount++;
+            }
+          });
+        } catch (fallbackErr) {
+          console.error('Fallback attendance query failed:', fallbackErr);
+        }
+      }
+
+      try {
+        // Intentar consulta para asistencias de la semana
+        const weekAttendanceSnap = await getDocs(query(
           collection(db, `gyms/${gymData.id}/attendance`),
           where('timestamp', '>=', thisWeek),
           where('status', '==', 'success')
-        ))
-      ]);
+        ));
+        weekAttendanceCount = weekAttendanceSnap.size;
+      } catch (weekErr) {
+        console.warn('Error getting week attendance, trying fallback:', weekErr);
+        // Fallback similar para la semana
+        try {
+          const allAttendanceSnap = await getDocs(
+            collection(db, `gyms/${gymData.id}/attendance`)
+          );
+          
+          const weekTimestamp = thisWeek.seconds;
+          allAttendanceSnap.forEach(doc => {
+            const data = doc.data();
+            if (data.status === 'success' && 
+                data.timestamp && 
+                data.timestamp.seconds >= weekTimestamp) {
+              weekAttendanceCount++;
+            }
+          });
+        } catch (fallbackErr) {
+          console.error('Fallback week attendance query failed:', fallbackErr);
+        }
+      }
 
       // Obtener transacciones para revenue
       const [monthlyTransactionsSnap, allTransactionsSnap] = await Promise.all([
@@ -167,6 +258,9 @@ const Dashboard: React.FC = () => {
         where('paymentStatus', '==', 'pending')
       ));
 
+      // Cargar próximos cumpleaños
+      const birthdayCount = await loadUpcomingBirthdays();
+
       // Calcular revenues
       let monthlyRevenue = 0;
       monthlyTransactionsSnap.forEach(doc => {
@@ -188,36 +282,41 @@ const Dashboard: React.FC = () => {
         membersWithDebt: membersWithDebtSnap.size,
         totalRevenue,
         monthlyRevenue,
-        todayAttendance: todayAttendanceSnap.size,
-        thisWeekAttendance: weekAttendanceSnap.size,
+        todayAttendance: todayAttendanceCount,
+        thisWeekAttendance: weekAttendanceCount,
         expiringMemberships: expiringMembershipsSnap.size,
-        pendingPayments: pendingPaymentsSnap.size
+        pendingPayments: pendingPaymentsSnap.size,
+        upcomingBirthdays: birthdayCount || 0
       });
 
     } catch (err: any) {
       console.error('Error loading metrics:', err);
       setError('Error al cargar las métricas del dashboard');
     }
-  }, [gymData?.id, getDateRanges]);
+  }, [gymData?.id, getDateRanges, loadUpcomingBirthdays]);
 
   // Cargar asistencias recientes
   const loadRecentAttendance = useCallback(async () => {
     if (!gymData?.id) return;
     
     try {
-      const attendanceSnap = await getDocs(query(
-        collection(db, `gyms/${gymData.id}/attendance`),
+      // Usar el servicio de asistencias actualizado
+      const attendanceRef = collection(db, `gyms/${gymData.id}/attendance`);
+      const q = query(
+        attendanceRef,
         where('status', '==', 'success'),
         orderBy('timestamp', 'desc'),
         limit(5)
-      ));
+      );
+      
+      const querySnapshot = await getDocs(q);
 
       const attendance: AttendanceRecord[] = [];
-      attendanceSnap.forEach(doc => {
+      querySnapshot.forEach(doc => {
         const data = doc.data();
         attendance.push({
           id: doc.id,
-          memberName: data.memberName || 'Desconocido',
+          memberName: data.memberName || `${data.memberFirstName || ''} ${data.memberLastName || ''}`.trim() || 'Desconocido',
           activityName: data.activityName || 'General',
           timestamp: data.timestamp
         });
@@ -226,6 +325,40 @@ const Dashboard: React.FC = () => {
       setRecentAttendance(attendance);
     } catch (err: any) {
       console.error('Error loading recent attendance:', err);
+      // Si hay error con la consulta ordenada, intentar sin orderBy
+      try {
+        const attendanceRef = collection(db, `gyms/${gymData.id}/attendance`);
+        const q = query(
+          attendanceRef,
+          where('status', '==', 'success'),
+          limit(5)
+        );
+        
+        const querySnapshot = await getDocs(q);
+        const attendance: AttendanceRecord[] = [];
+        
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
+          attendance.push({
+            id: doc.id,
+            memberName: data.memberName || `${data.memberFirstName || ''} ${data.memberLastName || ''}`.trim() || 'Desconocido',
+            activityName: data.activityName || 'General',
+            timestamp: data.timestamp
+          });
+        });
+
+        // Ordenar manualmente por timestamp
+        attendance.sort((a, b) => {
+          const aTime = a.timestamp?.seconds || 0;
+          const bTime = b.timestamp?.seconds || 0;
+          return bTime - aTime;
+        });
+
+        setRecentAttendance(attendance.slice(0, 5));
+      } catch (fallbackErr) {
+        console.error('Error in fallback attendance query:', fallbackErr);
+        setRecentAttendance([]);
+      }
     }
   }, [gymData?.id]);
 
@@ -371,6 +504,28 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  // Función para formatear días hasta cumpleaños
+  const formatDaysUntilBirthday = (days: number) => {
+    if (days === 0) return 'Hoy';
+    if (days === 1) return 'Mañana';
+    return `En ${days} días`;
+  };
+
+  // Función para obtener fecha de cumpleaños formateada
+  const formatBirthdayDate = (birthDate: any) => {
+    if (!birthDate) return '';
+    
+    try {
+      const date = birthDate.toDate ? birthDate.toDate() : new Date(birthDate);
+      return date.toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit'
+      });
+    } catch (error) {
+      return '';
+    }
+  };
+
   if (loading && Object.values(metrics).every(v => v === 0)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -418,6 +573,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
       )}
+
       {/* Tarjetas de métricas principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {/* Total de Socios */}
@@ -500,7 +656,13 @@ const Dashboard: React.FC = () => {
                     {metrics.membersWithDebt} socios con deuda
                   </div>
                 )}
-                {metrics.expiringMemberships === 0 && metrics.pendingPayments === 0 && metrics.membersWithDebt === 0 && (
+                {metrics.upcomingBirthdays > 0 && (
+                  <div className="text-sm text-pink-600">
+                    {metrics.upcomingBirthdays} cumpleaños próximos
+                  </div>
+                )}
+                {metrics.expiringMemberships === 0 && metrics.pendingPayments === 0 && 
+                 metrics.membersWithDebt === 0 && metrics.upcomingBirthdays === 0 && (
                   <div className="text-sm text-green-600">
                     Todo al día ✓
                   </div>
@@ -517,7 +679,7 @@ const Dashboard: React.FC = () => {
       {/* Sección de contenido principal */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Asistencias Recientes */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-lg font-semibold text-gray-900">Asistencias Recientes</h2>
           </div>
@@ -544,6 +706,72 @@ const Dashboard: React.FC = () => {
                       <p className="text-sm text-gray-500">
                         {formatDateTime(attendance.timestamp)}
                       </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Próximos Cumpleaños */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+          <div className="p-6 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Próximos Cumpleaños</h2>
+              <div className="bg-pink-50 p-2 rounded-full">
+                <Cake size={20} className="text-pink-600" />
+              </div>
+            </div>
+          </div>
+          <div className="p-6">
+            {upcomingBirthdays.length === 0 ? (
+              <div className="text-center py-8">
+                <Gift size={48} className="mx-auto text-gray-300 mb-3" />
+                <p className="text-gray-500">No hay cumpleaños próximos</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {upcomingBirthdays.map((birthday) => (
+                  <div key={birthday.id} className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-50 to-purple-50 rounded-lg border border-pink-100">
+                    <div className="flex items-center">
+                      <div className="relative">
+                        {birthday.photo ? (
+                          <img 
+                            src={birthday.photo} 
+                            alt={`${birthday.firstName} ${birthday.lastName}`}
+                            className="w-10 h-10 rounded-full object-cover mr-3"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 bg-pink-100 rounded-full flex items-center justify-center mr-3">
+                            <Users size={16} className="text-pink-600" />
+                          </div>
+                        )}
+                        {birthday.daysUntilBirthday === 0 && (
+                          <div className="absolute -top-1 -right-1 bg-pink-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                            !
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        <p className="font-medium text-gray-900">
+                          {birthday.firstName} {birthday.lastName}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          {formatBirthdayDate(birthday.birthDate)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-sm font-medium px-2 py-1 rounded-full ${
+                        birthday.daysUntilBirthday === 0 
+                          ? 'bg-pink-500 text-white' 
+                          : birthday.daysUntilBirthday === 1
+                          ? 'bg-pink-100 text-pink-700'
+                          : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {formatDaysUntilBirthday(birthday.daysUntilBirthday)}
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -586,7 +814,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Métricas adicionales */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-8">
         {/* Tasa de Asistencia */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Tasa de Asistencia</h3>
@@ -654,6 +882,35 @@ const Dashboard: React.FC = () => {
             <div className="text-xs text-gray-500">
               Membresías que vencen en los próximos 7 días
             </div>
+          </div>
+        </div>
+
+        {/* Resumen de Cumpleaños */}
+        <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Cake size={20} className="mr-2 text-pink-600" />
+            Cumpleaños
+          </h3>
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-600">Este mes</span>
+              <span className="text-sm font-medium text-pink-600">
+                {metrics.upcomingBirthdays}
+              </span>
+            </div>
+            <div className="text-xs text-gray-500">
+              Próximos cumpleaños en 30 días
+            </div>
+            {upcomingBirthdays.filter(b => b.daysUntilBirthday === 0).length > 0 && (
+              <div className="bg-pink-50 p-2 rounded-lg border border-pink-100">
+                <div className="flex items-center">
+                  <Gift size={14} className="text-pink-600 mr-1" />
+                  <span className="text-xs text-pink-700 font-medium">
+                    {upcomingBirthdays.filter(b => b.daysUntilBirthday === 0).length} cumpleaños hoy
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

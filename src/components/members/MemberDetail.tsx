@@ -194,13 +194,19 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
             onCancel={() => setActiveView('account')}
           />
         );
-      case 'attendance':
-        return (
-          <MemberAttendanceHistory 
-            memberId={member.id}
-            memberName={`${member.firstName} ${member.lastName}`}
-          />
-        );
+          case 'attendance':
+            return (
+              <MemberAttendanceHistory
+                member={member}
+                onClose={() => {
+                  // Si setView está disponible en el scope:
+                  // setView('detail');
+                  // O si necesitas navegar hacia atrás:
+                  window.history.back();
+                  // O cualquier otra lógica que manejes para cerrar/volver
+                }}
+              />
+            );
       case 'routines':
         return (
          <MemberRoutinesTab 

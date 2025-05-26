@@ -1,9 +1,9 @@
-// src/App.tsx
+// src/App.tsx - ACTUALIZADA CON SISTEMA FINANCIERO
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import RouterProvider from './components/common/RouterProvider';
 
-// Importamos los componentes
+// Importamos los componentes EXISTENTES
 import Sidebar from './components/Layout/Sidebar';
 import Members from './pages/members/Members';
 import Attendance from './pages/attendance/Attendance';
@@ -19,6 +19,10 @@ import Users from './pages/settings/Users';
 import Exercises from './pages/exercises/Exercises';
 import Routines from './pages/routines/Routines';
 import MemberRoutines from './pages/member-routines/MemberRoutines';
+
+// NUEVOS COMPONENTES del sistema financiero
+import DashboardImproved from './pages/dashboard/DashboardImproved';
+import PaymentManagement from './components/payments/PaymentManagement';
 
 // Firebase
 import { auth } from './config/firebase';
@@ -120,6 +124,12 @@ const AppContent: React.FC = () => {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard />;
+      // NUEVA OPCIÓN: Dashboard mejorado
+      case 'dashboard-financial':
+        return <DashboardImproved />;
+      // NUEVA OPCIÓN: Gestión de pagos
+      case 'payments':
+        return <PaymentManagement />;
       case 'members':
         return <Members />;
       case 'attendance':
@@ -152,10 +162,10 @@ const AppContent: React.FC = () => {
         return <RevenueManager />;
       case 'superadmin-gym-account':
         return <GymAccountDetails />;
-      default:
-        return <Dashboard />;
       case 'superadmin-exercises':
         return <GlobalExercises />;
+      default:
+        return <Dashboard />;
     }
   };
   
@@ -192,7 +202,8 @@ const AppContent: React.FC = () => {
     
     if (userData.role === 'admin') {
       const adminPages = [
-        'dashboard', 'members', 'attendance', 'cashier', 'reports',
+        'dashboard', 'dashboard-financial', 'payments', // NUEVAS PÁGINAS
+        'members', 'attendance', 'cashier', 'reports',
         'exercises', 'routines', 'member-routines',
         'business', 'memberships', 'activities', 'users'
       ];
@@ -201,7 +212,8 @@ const AppContent: React.FC = () => {
     
     if (userData.role === 'user') {
       const allowedPages = [
-        'dashboard', 'members', 'attendance', 'exercises', 
+        'dashboard', 'dashboard-financial', // Usuario puede ver dashboards
+        'members', 'attendance', 'exercises', 
         'routines', 'member-routines'
       ];
       return allowedPages.includes(page);

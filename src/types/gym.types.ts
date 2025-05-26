@@ -1,20 +1,137 @@
-// src/types/gym.types.ts
+// src/types/gym.types.ts - CORREGIDO PARA COMPATIBILIDAD
 
+import { Timestamp } from 'firebase/firestore';
 
+// ============ TIPOS EXISTENTES CORREGIDOS ============
 
-// Definición de la interfaz Attendance con los tipos correctos
-export interface Attendance {
-  id: string;
-  memberId: string;
-  memberName: string;
-  timestamp: any; // Timestamp de Firebase
-  membershipId: string;
-  activityName: string;
-  status: 'success' | 'error';
-  error?: string;
+export interface Transaction {
+  id?: string;
+  gymId?: string;
+  memberId?: string;
+  memberName?: string;
+  membershipAssignmentId?: string; // Para pagos de membresías
+  membershipId?: string; // AGREGAR PARA COMPATIBILIDAD
+  
+  // Campos existentes en tu sistema
+  amount: number;
+  description: string;
+  date?: any; // Para compatibilidad con código existente
+  category?: string; // Para compatibilidad con código existente
+  userName?: string; // Para compatibilidad con código existente
+  userId?: string; // Para compatibilidad con código existente
+  
+  // Tipos compatibles - incluimos 'income' para el código existente
+  type: 'income' | 'expense' | 'membership_payment' | 'penalty' | 'refund' | 'other_income';
+  
+  // Métodos de pago compatibles
+  paymentMethod?: 'cash' | 'card' | 'transfer' | 'other' | string;
+  
+  status: 'completed' | 'pending' | 'failed' | 'refunded';
+  
+  // Campos nuevos opcionales
+  processedBy?: string; // ID del usuario que procesó
+  createdAt?: any; // Timestamp de Firebase
+  completedAt?: any;
+  refundedAt?: any;
+  notes?: string;
+  originalTransactionId?: string; // Para refunds
+  updatedAt?: any;
 }
 
-// Resto de las interfaces
+// DailyCash compatible con código existente
+export interface DailyCash {
+  id?: string;
+  gymId: string;
+  date: string; // YYYY-MM-DD
+  
+  // Campos existentes en tu código
+  openingAmount?: number; // Campo que usa tu código existente
+  closingAmount?: number; // Campo que usa tu código existente
+  openingTime?: any; // Campo que usa tu código existente
+  closingTime?: any; // Campo que usa tu código existente
+  totalExpense?: number; // Campo que usa tu código existente (singular)
+  membershipIncome?: number; // Campo que usa tu código existente
+  otherIncome?: number; // Campo que usa tu código existente
+  
+  // Campos nuevos (compatibles)
+  openingBalance: number;
+  closingBalance?: number;
+  totalIncome: number;
+  totalExpenses: number; // Nuevo campo (plural)
+  
+  status: 'open' | 'closed';
+  openedBy: string;
+  closedBy?: string;
+  openedAt: any; // Timestamp
+  closedAt?: any;
+  lastUpdated: any;
+  notes?: string;
+  
+  // Breakdown por método de pago
+  paymentMethodBreakdown?: {
+    cash: number;
+    card: number;
+    transfer: number;
+    other: number;
+  };
+}
+
+// ============ NUEVOS TIPOS PARA EL SISTEMA MEJORADO ============
+
+export interface PaymentTransaction {
+  id?: string;
+  gymId: string;
+  memberId: string;
+  memberName: string;
+  membershipAssignmentId: string;
+  amount: number;
+  paymentMethod: 'cash' | 'card' | 'transfer' | 'other';
+  description: string;
+  status: 'completed' | 'pending' | 'failed' | 'refunded';
+  type: 'membership_payment' | 'penalty' | 'refund' | 'other_income';
+  processedBy: string;
+  createdAt: Timestamp;
+  completedAt?: Timestamp;
+  refundedAt?: Timestamp;
+  notes?: string;
+}
+
+export interface DailyCashRegister {
+  id?: string;
+  gymId: string;
+  date: string; // YYYY-MM-DD
+  openingBalance: number;
+  closingBalance?: number;
+  totalIncome: number;
+  totalExpenses: number;
+  status: 'open' | 'closed';
+  openedBy: string;
+  closedBy?: string;
+  openedAt: Timestamp;
+  closedAt?: Timestamp;
+  lastUpdated: Timestamp;
+}
+
+export interface PaymentSummary {
+  totalAmount: number;
+  paymentMethod: string;
+  count: number;
+  percentage: number;
+}
+
+export interface FinancialSummary {
+  date: string;
+  totalIncome: number;
+  totalExpenses: number;
+  netAmount: number;
+  transactionCount: number;
+  paymentBreakdown: PaymentSummary[];
+  pendingPayments: number;
+  refunds: number;
+}
+
+// ============ TIPOS EXISTENTES MANTENIDOS ============
+
 export interface Gym {
   id: string;
   name: string;
@@ -22,10 +139,6 @@ export interface Gym {
   email: string;
   phone: string;
   cuit: string;
-  address?: string;
-  website?: string;
-  socialMedia?: string;
-  logo?: string;
   status: 'active' | 'trial' | 'suspended';
   registrationDate: any;
   trialEndsAt?: any;
@@ -38,87 +151,64 @@ export interface Gym {
     lastPayment: any;
     renewalRequested: boolean;
   };
+  logo?: string;
+  logoUrl?: string;
 }
 
 export interface BusinessProfile {
+  id?: string;
+  gymId: string;
   name: string;
+  description?: string;
   address: string;
   phone: string;
-  cuit: string;
   email: string;
-  website: string;
-  socialMedia: string;
-  logo: string | null;
-}
-
-export interface Activity {
-  id: string;
-  name: string;
-  description: string;
-}
-
-// Actualización de tipos para incluir todas las categorías utilizadas
-export type TransactionIncomeCategory = 'membership' | 'extra' | 'product' | 'service' | 'other';
-export type TransactionExpenseCategory = 'withdrawal' | 'supplier' | 'services' | 'maintenance' | 'salary' | 'other' | 'refund';
-export type TransactionCategory = TransactionIncomeCategory | TransactionExpenseCategory;
-
-export interface Transaction {
-  id: string;
-  type: 'income' | 'expense';
-  category?: TransactionCategory;
-  amount: number;
-  description: string;
-  memberId?: string;
-  membershipId?: string;
-  date: any;
-  userId: string;
-  userName: string;
-  paymentMethod?: string;
-  status: 'completed' | 'pending' | 'cancelled';
-  notes?: string;
+  website?: string;
+  socialMedia?: {
+    facebook?: string;
+    instagram?: string;
+    twitter?: string;
+    whatsapp?: string;
+  };
+  businessHours?: {
+    [key: string]: {
+      open: string;
+      close: string;
+      isOpen: boolean;
+    };
+  };
+  logo?: string;
   createdAt?: any;
   updatedAt?: any;
 }
 
-export interface DailyCash {
+export interface Activity {
+  id?: string;
+  gymId: string;
+  name: string;
+  description: string;
+  isActive: boolean;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
+export interface Attendance {
   id: string;
-  date: string;
-  openingTime: any;
-  closingTime?: any;
-  openingAmount: number;
-  closingAmount?: number;
-  totalIncome: number;
-  totalExpense: number;
-  membershipIncome: number;
-  otherIncome: number;
-  status: 'open' | 'closed';
-  openedBy: string;
-  closedBy?: string;
+  memberId: string;
+  memberName: string;
+  membershipId: string;
+  activityName: string;
+  timestamp: Timestamp | Date;
+  status: 'success' | 'error' | 'pending';
+  error?: string;
   notes?: string;
+  createdAt: Timestamp | Date;
+  updatedAt?: Timestamp | Date;
 }
 
-// Crear un namespace para los tipos (esto no interfiere con las interfaces exportadas)
-export namespace GymTypeUtils {
-  export const createEmptyGym = (): Gym => ({
-    id: '',
-    name: '',
-    owner: '',
-    email: '',
-    phone: '',
-    cuit: '',
-    status: 'trial',
-    registrationDate: new Date()
-  });
-  
-  export const createEmptyAttendance = (): Attendance => ({
-    id: '',
-    memberId: '',
-    memberName: '',
-    timestamp: new Date(),
-    membershipId: '',
-    activityName: '',
-    status: 'success'
-  });
-}
+// Tipos de categorías para compatibilidad - COMPLETADOS
+export type TransactionIncomeCategory = 'membership' | 'extra' | 'penalty' | 'product' | 'service' | 'other';
+export type TransactionExpenseCategory = 'withdrawal' | 'refund' | 'expense' | 'supplier' | 'services' | 'maintenance' | 'salary' | 'other';
 
-// No es necesario exportar un objeto default si no lo vas a usar directamente
+// AGREGAR TIPO FALTANTE
+export type TransactionCategory = TransactionIncomeCategory | TransactionExpenseCategory;

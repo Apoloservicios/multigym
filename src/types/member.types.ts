@@ -43,17 +43,34 @@ export interface MembershipAssignment {
   startDate: string;
   endDate: string;
   cost: number;
-  paymentStatus: 'paid' | 'pending';
+  paymentStatus: 'paid' | 'pending' | 'partial';
   status: 'active' | 'expired' | 'cancelled';
   maxAttendances: number;
   currentAttendances: number;
   description: string;
-  // Nuevos campos opcionales para evitar errores
-  memberName?: string; // Añadido para mostrar el nombre del miembro
+  
+  // Campos adicionales para mejor gestión financiera
+  memberName?: string;
   autoRenewal?: boolean;
   paymentFrequency?: 'single' | 'monthly';
   lastRenewalDate?: string;
-  daysUntilBirthday?: number; // Para ordenar en cumpleaños
+  
+  // Nuevos campos para el sistema financiero mejorado
+  paidAmount?: number; // Cuánto se ha pagado
+  paidAt?: any; // Timestamp cuando se pagó completamente
+  partialPayments?: {
+    amount: number;
+    date: any;
+    transactionId: string;
+  }[]; // Para pagos parciales
+  
+  // Para cancelaciones
+  cancelledAt?: any;
+  cancellationReason?: string;
+  
+  // Timestamps
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 // Objeto con funciones útiles relacionadas con estos tipos

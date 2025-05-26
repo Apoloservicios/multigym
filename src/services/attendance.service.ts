@@ -1,304 +1,521 @@
-// src/services/attendance.service.ts - VERSIÓN COMPLETA
-
+// src/services/attendance.service.ts
 import { 
   collection, 
   doc, 
-  addDoc, 
+  getDoc, 
   getDocs, 
+  addDoc, 
+  updateDoc,
   query, 
   where, 
   orderBy, 
   limit,
   Timestamp,
-  updateDoc,
-  getDoc
+  serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Attendance, AttendanceStats, AttendanceFilter, DailyAttendanceReport } from '../types/attendance.types';
 
-// PRIMERA VERSIÓN SUPER SIMPLE - Sin notes para probar
-export const registerAttendance = async (
-  gymId: string,
-  memberId: string,
-  memberName: string,
-  membershipId: string,
-  activityName: string,
-  notes?: string
-): Promise<{ status: 'success' | 'error'; id?: string; error?: string }> => {
-  console.log('🚀 NUEVA VERSION - registerAttendance iniciada');
-  console.log('Parámetros recibidos:', { gymId, memberId, memberName, membershipId, activityName, notes });
-  
-  try {
-    // Verificar que el socio tenga la membresía activa
-    const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
-    const membershipSnap = await getDoc(membershipRef);
-    
-    if (!membershipSnap.exists()) {
-      throw new Error('Membresía no encontrada');
+export interface AttendanceRecord {
+  id?: string;
+  memberId: string;
+  memberName: string;
+  memberFirstName: string;
+  memberLastName: string;
+  memberEmail: string;
+  activityId?: string;
+  activityName: string;
+  membershipId?: string;
+  timestamp: any;
+  status: 'success' | 'failed' | 'expired';
+  notes?: string;
+  createdAt?: any;
+  // NUEVOS CAMPOS
+  registeredBy?: 'gym' | 'member'; // Quién registró la asistencia
+  registeredByUserId?: string; // ID del usuario que registró (si fue el gimnasio)
+  registeredByUserName?: string; // Nombre del usuario que registró
+}
+
+export interface AttendanceStats {
+  totalToday: number;
+  totalThisWeek: number;
+  totalThisMonth: number;
+  uniqueMembersToday: number;
+  uniqueMembersThisWeek: number;
+  recentAttendances: AttendanceRecord[];
+}
+
+class AttendanceService {
+  // Registrar una asistencia con selección de membresía
+  async registerAttendance(
+    gymId: string,
+    attendanceData: {
+      memberId: string;
+      memberName: string;
+      memberFirstName: string;
+      memberLastName: string;
+      memberEmail: string;
+      membershipId: string; // REQUERIDO - ID de la membresía específica
+      activityId?: string;
+      activityName: string;
+      notes?: string;
+      // NUEVOS CAMPOS OPCIONALES
+      registeredBy?: 'gym' | 'member';
+      registeredByUserId?: string;
+      registeredByUserName?: string;
     }
-    
-    const membershipData = membershipSnap.data();
-    if (membershipData.status !== 'active') {
-      throw new Error('La membresía no está activa');
-    }
-    
-    // DATOS CON NOTES OPCIONAL - MANEJO CORRECTO
-    const attendanceData: any = {
-      memberId,
-      memberName,
-      membershipId,
-      activityName,
-      timestamp: Timestamp.now(),
-      status: 'success' as const,
-      createdAt: Timestamp.now()
-    };
-    
-    // SOLO agregar notes si tiene un valor válido
-    if (notes && notes.trim() !== '') {
-      attendanceData.notes = notes.trim();
-      console.log('📝 Agregando notes:', notes.trim());
-    } else {
-      console.log('📝 No se agregan notes (valor vacío o undefined)');
-    }
-    
-    console.log('📋 Datos finales a guardar:', attendanceData);
-    
-    const attendancesRef = collection(db, `gyms/${gymId}/members/${memberId}/attendances`);
-    console.log('📍 Intentando guardar en:', `gyms/${gymId}/members/${memberId}/attendances`);
-    
-    const attendanceDoc = await addDoc(attendancesRef, attendanceData);
-    console.log('✅ Guardado exitoso con ID:', attendanceDoc.id);
-    
-    // Actualizar el contador de asistencias en la membresía
-    await updateDoc(membershipRef, {
-      currentAttendances: (membershipData.currentAttendances || 0) + 1,
-      updatedAt: Timestamp.now()
-    });
-    
-    // Actualizar la última asistencia del socio
-    const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-    await updateDoc(memberRef, {
-      lastAttendance: Timestamp.now(),
-      updatedAt: Timestamp.now()
-    });
-    
-    return { 
-      status: 'success', 
-      id: attendanceDoc.id 
-    };
-    
-  } catch (error: any) {
-    console.error('❌ Error en registerAttendance:', error);
-    
-    // Para el error, también manejamos notes correctamente
+  ): Promise<{ success: boolean; attendanceId?: string; error?: string }> {
     try {
-      const errorData: any = {
-        memberId,
-        memberName,
-        membershipId,
-        activityName,
-        timestamp: Timestamp.now(),
-        status: 'error' as const,
-        error: error.message,
-        createdAt: Timestamp.now()
-      };
+      // Verificar que el miembro existe
+      const memberRef = doc(db, `gyms/${gymId}/members`, attendanceData.memberId);
+      const memberSnap = await getDoc(memberRef);
       
-      // SOLO agregar notes al error si tiene un valor válido
-      if (notes && notes.trim() !== '') {
-        errorData.notes = notes.trim();
-        console.log('🔥 Agregando notes al error:', notes.trim());
-      } else {
-        console.log('🔥 No se agregan notes al error (valor vacío o undefined)');
+      if (!memberSnap.exists()) {
+        return { success: false, error: 'El socio no existe' };
       }
+
+      const memberData = memberSnap.data();
       
-      console.log('🔥 Datos de error a guardar:', errorData);
+      // Verificar que el miembro esté activo
+      if (memberData.status !== 'active') {
+        return { success: false, error: 'El socio no está activo' };
+      }
+
+      // Verificar que la membresía existe y está activa
+      const membershipRef = doc(db, `gyms/${gymId}/members/${attendanceData.memberId}/memberships`, attendanceData.membershipId);
+      const membershipSnap = await getDoc(membershipRef);
       
-      const attendancesRef = collection(db, `gyms/${gymId}/members/${memberId}/attendances`);
-      const errorDoc = await addDoc(attendancesRef, errorData);
+      if (!membershipSnap.exists()) {
+        return { success: false, error: 'La membresía no existe' };
+      }
+
+      const membershipData = membershipSnap.data();
       
-      return { 
-        status: 'error', 
-        error: error.message,
-        id: errorDoc.id 
+      // Verificar que la membresía esté activa
+      if (membershipData.status !== 'active') {
+        return { success: false, error: 'La membresía no está activa' };
+      }
+
+      // Verificar que no haya expirado
+      const endDate = membershipData.endDate?.toDate ? membershipData.endDate.toDate() : new Date(membershipData.endDate);
+      if (endDate < new Date()) {
+        return { success: false, error: 'La membresía ha expirado' };
+      }
+
+      // Verificar límite de asistencias si aplica
+      if (membershipData.maxAttendances > 0 && 
+          (membershipData.currentAttendances || 0) >= membershipData.maxAttendances) {
+        return { success: false, error: 'Se ha alcanzado el límite de asistencias para esta membresía' };
+      }
+
+      // Crear registro de asistencia
+      const attendance: Omit<AttendanceRecord, 'id'> = {
+        memberId: attendanceData.memberId,
+        memberName: attendanceData.memberName,
+        memberFirstName: attendanceData.memberFirstName,
+        memberLastName: attendanceData.memberLastName,
+        memberEmail: attendanceData.memberEmail,
+        membershipId: attendanceData.membershipId,
+        activityId: attendanceData.activityId,
+        activityName: attendanceData.activityName,
+        timestamp: serverTimestamp(),
+        status: 'success',
+        notes: attendanceData.notes,
+        createdAt: serverTimestamp(),
+        // NUEVOS CAMPOS
+        registeredBy: attendanceData.registeredBy || 'gym',
+        registeredByUserId: attendanceData.registeredByUserId,
+        registeredByUserName: attendanceData.registeredByUserName
       };
-    } catch (logError) {
-      console.error('💥 Error al guardar el error:', logError);
+
+      const docRef = await addDoc(collection(db, `gyms/${gymId}/attendance`), attendance);
+
+      // Actualizar contador de asistencias en la membresía
+      await updateDoc(membershipRef, {
+        currentAttendances: (membershipData.currentAttendances || 0) + 1,
+        updatedAt: serverTimestamp()
+      });
+
+      // Actualizar última asistencia del socio
+      await updateDoc(memberRef, {
+        lastAttendance: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
       return { 
-        status: 'error', 
-        error: error.message 
+        success: true, 
+        attendanceId: docRef.id 
+      };
+
+    } catch (error: any) {
+      console.error('Error registering attendance:', error);
+      return { 
+        success: false, 
+        error: error.message || 'Error al registrar la asistencia' 
       };
     }
   }
-};
 
-// Obtener historial de asistencias de un socio (VERSIÓN SIMPLE)
-export const getMemberAttendanceHistory = async (
-  gymId: string,
-  memberId: string,
-  filter?: AttendanceFilter
-): Promise<Attendance[]> => {
-  try {
-    console.log('📚 getMemberAttendanceHistory llamada para:', gymId, memberId);
-    
-    const attendancesRef = collection(db, `gyms/${gymId}/members/${memberId}/attendances`);
-    
-    let q = query(attendancesRef, orderBy('timestamp', 'desc'));
-    
-    // Aplicar filtros si existen
-    if (filter?.status && filter.status !== 'all') {
-      q = query(q, where('status', '==', filter.status));
-    }
-    
-    if (filter?.dateFrom) {
-      q = query(q, where('timestamp', '>=', Timestamp.fromDate(filter.dateFrom)));
-    }
-    
-    if (filter?.dateTo) {
-      q = query(q, where('timestamp', '<=', Timestamp.fromDate(filter.dateTo)));
-    }
-    
-    if (filter?.activityName) {
-      q = query(q, where('activityName', '==', filter.activityName));
-    }
-    
-    const querySnapshot = await getDocs(q);
-    
-    const attendances = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    })) as Attendance[];
-    
-    console.log('📚 Asistencias encontradas:', attendances.length);
-    
-    return attendances;
-    
-  } catch (error) {
-    console.error('Error fetching member attendance history:', error);
-    throw error;
-  }
-};
-
-// Obtener asistencias del día para el gimnasio (VERSIÓN SIMPLE)
-export const getTodayAttendances = async (
-  gymId: string,
-  filter?: { status?: 'success' | 'error' | 'all'; activityName?: string }
-): Promise<Attendance[]> => {
-  try {
-    console.log('📅 getTodayAttendances llamada para gimnasio:', gymId);
-    
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-    
-    // Obtener todos los miembros
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    const allAttendances: Attendance[] = [];
-    
-    // Para cada miembro, obtener sus asistencias del día
-    for (const memberDoc of membersSnapshot.docs) {
-      const attendancesRef = collection(db, `gyms/${gymId}/members/${memberDoc.id}/attendances`);
+  // Obtener membresías activas de un socio para selección
+  async getActiveMemberships(gymId: string, memberId: string): Promise<any[]> {
+    try {
+      console.log('Buscando membresías para socio:', memberId, 'en gimnasio:', gymId);
       
-      let q = query(
-        attendancesRef,
-        where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
-        where('timestamp', '<=', Timestamp.fromDate(endOfDay)),
+      const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
+      
+      // Primero intentar con orderBy
+      let q;
+      try {
+        q = query(
+          membershipsRef,
+          where('status', '==', 'active'),
+          orderBy('activityName', 'asc')
+        );
+      } catch (indexError) {
+        console.log('No hay índice para orderBy, usando query simple');
+        q = query(
+          membershipsRef,
+          where('status', '==', 'active')
+        );
+      }
+
+      const querySnapshot = await getDocs(q);
+      const memberships: any[] = [];
+
+      console.log('Documentos encontrados:', querySnapshot.size);
+
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        console.log('Datos de membresía:', doc.id, data);
+        
+        // Verificar fecha de vencimiento
+        let endDate = new Date();
+        try {
+          endDate = data.endDate?.toDate ? data.endDate.toDate() : new Date(data.endDate);
+        } catch (dateError) {
+          console.error('Error procesando fecha:', dateError);
+          endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // Default: 30 días
+        }
+        
+        // Solo incluir membresías que no hayan expirado
+        if (endDate >= new Date()) {
+          memberships.push({
+            id: doc.id,
+            activityId: data.activityId || '',
+            activityName: data.activityName || 'Actividad General',
+            currentAttendances: data.currentAttendances || 0,
+            maxAttendances: data.maxAttendances || 0,
+            endDate: endDate,
+            status: data.status || 'active'
+          });
+        } else {
+          console.log('Membresía expirada excluida:', doc.id, endDate);
+        }
+      });
+
+      console.log('Membresías activas encontradas:', memberships.length);
+      return memberships;
+    } catch (error) {
+      console.error('Error getting active memberships:', error);
+      // En caso de error, devolver array vacío en lugar de lanzar excepción
+      return [];
+    }
+  }
+
+  // Función específica para cuando el socio registra su propia asistencia
+  async registerSelfAttendance(
+    gymId: string,
+    memberId: string,
+    membershipId: string,
+    notes?: string
+  ): Promise<{ success: boolean; attendanceId?: string; error?: string }> {
+    try {
+      // Obtener información del miembro
+      const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+      const memberSnap = await getDoc(memberRef);
+      
+      if (!memberSnap.exists()) {
+        return { success: false, error: 'Socio no encontrado' };
+      }
+
+      const memberData = memberSnap.data();
+      
+      // Obtener información de la membresía
+      const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
+      const membershipSnap = await getDoc(membershipRef);
+      
+      if (!membershipSnap.exists()) {
+        return { success: false, error: 'Membresía no encontrada' };
+      }
+
+      const membershipData = membershipSnap.data();
+      
+      return await this.registerAttendance(gymId, {
+        memberId: memberId,
+        memberName: `${memberData.firstName} ${memberData.lastName}`,
+        memberFirstName: memberData.firstName,
+        memberLastName: memberData.lastName,
+        memberEmail: memberData.email,
+        membershipId: membershipId,
+        activityId: membershipData.activityId,
+        activityName: membershipData.activityName,
+        notes: notes || 'Auto-registro del socio',
+        registeredBy: 'member' // Indica que fue el socio quien se registró
+      });
+      
+    } catch (error: any) {
+      console.error('Error in self attendance registration:', error);
+      return { 
+        success: false, 
+        error: error.message || 'Error al registrar asistencia' 
+      };
+    }
+  }
+
+  // Obtener asistencias para un rango de fechas
+  async getAttendanceByDateRange(
+    gymId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<AttendanceRecord[]> {
+    try {
+      const attendanceRef = collection(db, `gyms/${gymId}/attendance`);
+      const q = query(
+        attendanceRef,
+        where('timestamp', '>=', Timestamp.fromDate(startDate)),
+        where('timestamp', '<=', Timestamp.fromDate(endDate)),
+        where('status', '==', 'success'),
         orderBy('timestamp', 'desc')
       );
-      
-      // Aplicar filtros
-      if (filter?.status && filter.status !== 'all') {
-        q = query(q, where('status', '==', filter.status));
-      }
-      
-      if (filter?.activityName) {
-        q = query(q, where('activityName', '==', filter.activityName));
-      }
-      
-      const attendancesSnapshot = await getDocs(q);
-      
-      attendancesSnapshot.forEach(doc => {
-        allAttendances.push({
+
+      const querySnapshot = await getDocs(q);
+      const attendances: AttendanceRecord[] = [];
+
+      querySnapshot.forEach(doc => {
+        attendances.push({
           id: doc.id,
-          ...doc.data(),
-          memberName: `${memberDoc.data().firstName || ''} ${memberDoc.data().lastName || ''}`.trim()
-        } as Attendance);
+          ...doc.data()
+        } as AttendanceRecord);
       });
+
+      return attendances;
+    } catch (error) {
+      console.error('Error getting attendance by date range:', error);
+      throw error;
     }
-    
-    // Ordenar por timestamp más reciente primero
-    const sortedAttendances = allAttendances.sort((a, b) => {
-      const timeA = a.timestamp instanceof Timestamp ? a.timestamp.toDate() : a.timestamp;
-      const timeB = b.timestamp instanceof Timestamp ? b.timestamp.toDate() : b.timestamp;
-      return timeB.getTime() - timeA.getTime();
-    });
-    
-    console.log('📅 Asistencias de hoy encontradas:', sortedAttendances.length);
-    
-    return sortedAttendances;
-    
-  } catch (error) {
-    console.error('Error fetching today attendances:', error);
-    throw error;
   }
-};
 
-// Obtener estadísticas de asistencia (VERSIÓN SIMPLE)
-export const getAttendanceStats = async (
-  gymId: string,
-  dateFrom?: Date,
-  dateTo?: Date
-): Promise<AttendanceStats> => {
-  try {
-    console.log('📊 getAttendanceStats llamada');
+  // Obtener asistencias de hoy
+  async getTodayAttendance(gymId: string): Promise<AttendanceRecord[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    // Implementación básica para que no falle
-    return {
-      totalAttendances: 0,
-      todayAttendances: 0,
-      uniqueMembersToday: 0,
-      successfulAttendances: 0,
-      errorAttendances: 0,
-      averageAttendancesPerDay: 0,
-      peakHour: 0,
-      mostActiveMembers: []
-    };
-    
-  } catch (error) {
-    console.error('Error fetching attendance stats:', error);
-    throw error;
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    return this.getAttendanceByDateRange(gymId, today, tomorrow);
   }
-};
 
-// Obtener reporte diario de asistencias (VERSIÓN SIMPLE)
-export const getDailyAttendanceReport = async (
-  gymId: string,
-  date: Date
-): Promise<DailyAttendanceReport> => {
-  try {
-    console.log('📈 getDailyAttendanceReport llamada');
-    
-    // Implementación básica para que no falle
-    return {
-      date: date.toISOString().split('T')[0],
-      totalAttendances: 0,
-      uniqueMembers: 0,
-      activities: {},
-      hourlyDistribution: {}
-    };
-    
-  } catch (error) {
-    console.error('Error generating daily attendance report:', error);
-    throw error;
+  // Obtener estadísticas de asistencia
+  async getAttendanceStats(gymId: string): Promise<AttendanceStats> {
+    try {
+      const now = new Date();
+      
+      // Fechas para los filtros
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const monthAgo = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      // Obtener asistencias
+      const [todayAttendances, weekAttendances, monthAttendances, recentAttendances] = await Promise.all([
+        this.getAttendanceByDateRange(gymId, today, tomorrow),
+        this.getAttendanceByDateRange(gymId, weekAgo, now),
+        this.getAttendanceByDateRange(gymId, monthAgo, now),
+        this.getRecentAttendances(gymId, 10)
+      ]);
+
+      // Calcular miembros únicos
+      const uniqueMembersToday = new Set(todayAttendances.map(a => a.memberId)).size;
+      const uniqueMembersThisWeek = new Set(weekAttendances.map(a => a.memberId)).size;
+
+      return {
+        totalToday: todayAttendances.length,
+        totalThisWeek: weekAttendances.length,
+        totalThisMonth: monthAttendances.length,
+        uniqueMembersToday,
+        uniqueMembersThisWeek,
+        recentAttendances
+      };
+
+    } catch (error) {
+      console.error('Error getting attendance stats:', error);
+      throw error;
+    }
   }
-};
 
-// Exportar funciones por defecto
-export default {
-  registerAttendance,
-  getMemberAttendanceHistory,
-  getTodayAttendances,
-  getAttendanceStats,
-  getDailyAttendanceReport
-};
+  // Obtener asistencias recientes
+  async getRecentAttendances(gymId: string, limitCount: number = 5): Promise<AttendanceRecord[]> {
+    try {
+      const attendanceRef = collection(db, `gyms/${gymId}/attendance`);
+      const q = query(
+        attendanceRef,
+        where('status', '==', 'success'),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const attendances: AttendanceRecord[] = [];
+
+      querySnapshot.forEach(doc => {
+        attendances.push({
+          id: doc.id,
+          ...doc.data()
+        } as AttendanceRecord);
+      });
+
+      return attendances;
+    } catch (error) {
+      console.error('Error getting recent attendances:', error);
+      throw error;
+    }
+  }
+
+  // Obtener asistencias de un miembro específico
+  async getMemberAttendance(
+    gymId: string, 
+    memberId: string, 
+    limitCount: number = 20
+  ): Promise<AttendanceRecord[]> {
+    try {
+      const attendanceRef = collection(db, `gyms/${gymId}/attendance`);
+      const q = query(
+        attendanceRef,
+        where('memberId', '==', memberId),
+        where('status', '==', 'success'),
+        orderBy('timestamp', 'desc'),
+        limit(limitCount)
+      );
+
+      const querySnapshot = await getDocs(q);
+      const attendances: AttendanceRecord[] = [];
+
+      querySnapshot.forEach(doc => {
+        attendances.push({
+          id: doc.id,
+          ...doc.data()
+        } as AttendanceRecord);
+      });
+
+      return attendances;
+    } catch (error) {
+      console.error('Error getting member attendance:', error);
+      throw error;
+    }
+  }
+
+  // Alias para compatibilidad con código existente
+  async getMemberAttendanceHistory(
+    gymId: string, 
+    memberId: string, 
+    limitCount: number = 20
+  ): Promise<AttendanceRecord[]> {
+    return this.getMemberAttendance(gymId, memberId, limitCount);
+  }
+
+  // Registrar asistencia por QR - REQUIERE SELECCIÓN DE MEMBRESÍA
+  async registerAttendanceByQR(
+    gymId: string,
+    qrData: string,
+    membershipId: string // NUEVO: ID de membresía seleccionada
+  ): Promise<{ success: boolean; message: string; attendanceId?: string }> {
+    try {
+      // Decodificar QR
+      let memberData;
+      try {
+        const decodedData = JSON.parse(Buffer.from(qrData, 'base64').toString());
+        if (decodedData.gymId !== gymId) {
+          return { success: false, message: 'Código QR no válido para este gimnasio' };
+        }
+        memberData = decodedData;
+      } catch (error) {
+        return { success: false, message: 'Código QR inválido' };
+      }
+
+      // Obtener información completa del miembro
+      const memberRef = doc(db, `gyms/${gymId}/members`, memberData.memberId);
+      const memberSnap = await getDoc(memberRef);
+
+      if (!memberSnap.exists()) {
+        return { success: false, message: 'Socio no encontrado' };
+      }
+
+      const member = memberSnap.data();
+
+      // Obtener información de la membresía seleccionada
+      const membershipRef = doc(db, `gyms/${gymId}/members/${memberData.memberId}/memberships`, membershipId);
+      const membershipSnap = await getDoc(membershipRef);
+
+      if (!membershipSnap.exists()) {
+        return { success: false, message: 'Membresía no encontrada' };
+      }
+
+      const membership = membershipSnap.data();
+
+      // Registrar asistencia con la membresía específica
+      const result = await this.registerAttendance(gymId, {
+        memberId: memberData.memberId,
+        memberName: `${member.firstName} ${member.lastName}`,
+        memberFirstName: member.firstName,
+        memberLastName: member.lastName,
+        memberEmail: member.email,
+        membershipId: membershipId,
+        activityId: membership.activityId,
+        activityName: membership.activityName,
+        notes: 'Acceso por código QR'
+      });
+
+      if (result.success) {
+        return {
+          success: true,
+          message: `Asistencia registrada para ${member.firstName} ${member.lastName} - ${membership.activityName}`,
+          attendanceId: result.attendanceId
+        };
+      } else {
+        return {
+          success: false,
+          message: result.error || 'Error al registrar asistencia'
+        };
+      }
+
+    } catch (error: any) {
+      console.error('Error registering QR attendance:', error);
+      return {
+        success: false,
+        message: error.message || 'Error al procesar código QR'
+      };
+    }
+  }
+}
+
+export const attendanceService = new AttendanceService();
+
+// Exportar funciones específicas para compatibilidad
+export const getMemberAttendanceHistory = (gymId: string, memberId: string, limit?: number) => 
+  attendanceService.getMemberAttendanceHistory(gymId, memberId, limit);
+
+export const registerAttendance = (gymId: string, data: any) => 
+  attendanceService.registerAttendance(gymId, data);
+
+export const getRecentAttendances = (gymId: string, limit?: number) => 
+  attendanceService.getRecentAttendances(gymId, limit);
+
+export const getAttendanceByDateRange = (gymId: string, startDate: Date, endDate: Date) => 
+  attendanceService.getAttendanceByDateRange(gymId, startDate, endDate);
+
+export const getAttendanceStats = (gymId: string) => 
+  attendanceService.getAttendanceStats(gymId);
+
+export default attendanceService;

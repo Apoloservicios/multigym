@@ -1,445 +1,589 @@
-// src/components/reports/AttendanceReports.tsx
+// src/components/reports/AttendanceReports.tsx - VERSIÓN CORREGIDA COMPLETA
+
 import React, { useState, useEffect } from 'react';
 import { 
-  Calendar, Search, Download, FilterX, BarChart2, CheckCircle, Clock, AlertCircle
+  Download, 
+  Calendar, 
+  Users, 
+  TrendingUp, 
+  Filter, 
+  RefreshCw,
+  BarChart3,
+  Clock,
+  UserCheck,
+  Activity
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import useAuth from '../../hooks/useAuth';
-import { Attendance } from '../../types/gym.types';
-import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  orderBy, 
+  Timestamp 
+} from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import useAuth from '../../hooks/useAuth';
+import { 
+  toJavaScriptDate, 
+  formatFirebaseTimestamp, 
+  formatTime,
+  formatDateTime 
+} from '../../utils/formatting.utils';
+import { Attendance } from '../../types/gym.types';
+
+// Interfaces para el reporte
+interface AttendanceStats {
+  totalAttendances: number;
+  uniqueMembers: number;
+  averagePerDay: number;
+  peakHour: number;
+  mostActiveDay: string;
+  successRate: number;
+}
+
+interface DayAttendance {
+  date: string;
+  count: number;
+  members: string[];
+}
+
+interface HourlyDistribution {
+  hour: number;
+  count: number;
+}
+
+interface MemberStats {
+  memberId: string;
+  memberName: string;
+  attendances: number;
+  lastAttendance: Date;
+}
 
 const AttendanceReports: React.FC = () => {
   const { gymData } = useAuth();
   
-  // Estado para las fechas del reporte
-  const [startDate, setStartDate] = useState<string>(() => {
-    const date = new Date();
-    date.setMonth(date.getMonth() - 1); // Un mes atrás por defecto
-    return date.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  
-  // Estado para los datos del reporte
-  const [attendanceData, setAttendanceData] = useState<Attendance[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-  const [isExporting, setIsExporting] = useState<boolean>(false);
-  
-  // Datos procesados para gráficos
-  const [dailyAttendance, setDailyAttendance] = useState<any[]>([]);
-  const [activityAttendance, setActivityAttendance] = useState<any[]>([]);
-  const [successRate, setSuccessRate] = useState<number>(0);
-  const [totalAttendances, setTotalAttendances] = useState<number>(0);
-  
-  // Cargar datos
-  useEffect(() => {
-    loadAttendanceData();
-  }, [gymData?.id, startDate, endDate]);
-  
-  // Función para cargar datos de asistencias
-  const loadAttendanceData = async () => {
-    if (!gymData?.id) {
-      setLoading(false);
-      return;
-    }
+  // Estados
+  const [attendances, setAttendances] = useState<Attendance[]>([]);
+  const [filteredAttendances, setFilteredAttendances] = useState<Attendance[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [stats, setStats] = useState<AttendanceStats | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>('month');
+  const [selectedActivity, setSelectedActivity] = useState<string>('all');
+  const [selectedMember, setSelectedMember] = useState<string>('all');
+  const [activities, setActivities] = useState<string[]>([]);
+  const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
+
+  // Función helper para manejar timestamps de forma segura
+  const safeFormatTimestamp = (timestamp: any, format: 'date' | 'datetime' | 'time' | 'iso' = 'datetime'): string => {
+    const jsDate = toJavaScriptDate(timestamp);
     
-    setLoading(true);
-    setError('');
+    if (!jsDate) return format === 'iso' ? '' : 'Fecha no disponible';
     
     try {
-      // Convertir fechas para la consulta
-      const start = new Date(startDate);
-      start.setHours(0, 0, 0, 0);
+      switch (format) {
+        case 'date':
+          return jsDate.toLocaleDateString('es-AR');
+        case 'time':
+          return jsDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        case 'iso':
+          return jsDate.toISOString().split('T')[0];
+        default:
+          return jsDate.toLocaleString('es-AR');
+      }
+    } catch (error) {
+      console.error('Error formatting timestamp:', error);
+      return format === 'iso' ? '' : 'Fecha inválida';
+    }
+  };
+
+  // Obtener rango de fechas según el período seleccionado
+  const getDateRange = () => {
+    const now = new Date();
+    let startDate: Date;
+    
+    switch (selectedPeriod) {
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      case 'quarter':
+        startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+        break;
+      case 'year':
+        startDate = new Date(now.getFullYear(), 0, 1);
+        break;
+      default:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    
+    return { startDate, endDate: now };
+  };
+
+  // Cargar asistencias
+  const loadAttendances = async () => {
+    if (!gymData?.id) return;
+    
+    setLoading(true);
+    
+    try {
+      const { startDate, endDate } = getDateRange();
       
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
+      // Obtener todas las asistencias del período
+      const membersRef = collection(db, `gyms/${gymData.id}/members`);
+      const membersSnapshot = await getDocs(membersRef);
       
-      // Consultar colección de asistencias
-      const attendancesRef = collection(db, `gyms/${gymData.id}/attendances`);
-      const q = query(
-        attendancesRef,
-        where('timestamp', '>=', Timestamp.fromDate(start)),
-        where('timestamp', '<=', Timestamp.fromDate(end)),
-        orderBy('timestamp', 'desc')
-      );
+      const allAttendances: Attendance[] = [];
+      const activitiesSet = new Set<string>();
+      const membersMap = new Map<string, string>();
       
-      const querySnapshot = await getDocs(q);
-      const attendances: Attendance[] = [];
+      // Para cada miembro, obtener sus asistencias
+      for (const memberDoc of membersSnapshot.docs) {
+        const memberData = memberDoc.data();
+        const memberName = `${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
+        membersMap.set(memberDoc.id, memberName);
+        
+        const attendancesRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/attendances`);
+        const q = query(
+          attendancesRef,
+          where('timestamp', '>=', Timestamp.fromDate(startDate)),
+          where('timestamp', '<=', Timestamp.fromDate(endDate)),
+          orderBy('timestamp', 'desc')
+        );
+        
+        const attendancesSnapshot = await getDocs(q);
+        
+        attendancesSnapshot.forEach(doc => {
+          const attendanceData = doc.data();
+          
+          allAttendances.push({
+            id: doc.id,
+            memberId: memberDoc.id,
+            memberName: memberName,
+            membershipId: attendanceData.membershipId || '',
+            activityName: attendanceData.activityName || 'General',
+            timestamp: attendanceData.timestamp,
+            status: attendanceData.status || 'success',
+            error: attendanceData.error,
+            notes: attendanceData.notes,
+            createdAt: attendanceData.createdAt || attendanceData.timestamp,
+            updatedAt: attendanceData.updatedAt
+          });
+          
+          if (attendanceData.activityName) {
+            activitiesSet.add(attendanceData.activityName);
+          }
+        });
+      }
       
-      querySnapshot.forEach(doc => {
-        attendances.push({
-          id: doc.id,
-          ...doc.data()
-        } as Attendance);
-      });
+      setAttendances(allAttendances);
+      setActivities(Array.from(activitiesSet));
+      setMembers(Array.from(membersMap.entries()).map(([id, name]) => ({ id, name })));
       
-      setAttendanceData(attendances);
-      
-      // Procesar datos para gráficos
-      processAttendanceData(attendances);
-    } catch (err: any) {
-      console.error('Error loading attendance data:', err);
-      setError(err.message || 'Error al cargar los datos de asistencias');
+    } catch (error) {
+      console.error('Error loading attendances:', error);
     } finally {
       setLoading(false);
     }
   };
-  
-  // Procesar datos para gráficos
-  const processAttendanceData = (attendances: Attendance[]) => {
-    // Calcular total y tasa de éxito
-    const total = attendances.length;
-    const successful = attendances.filter(a => a.status === 'success').length;
-    const successRateValue = total > 0 ? (successful / total) * 100 : 0;
+
+  // Aplicar filtros
+  useEffect(() => {
+    let filtered = [...attendances];
     
-    setTotalAttendances(total);
-    setSuccessRate(parseFloat(successRateValue.toFixed(2)));
+    if (selectedActivity !== 'all') {
+      filtered = filtered.filter(att => att.activityName === selectedActivity);
+    }
     
-    // Agrupar por fecha
+    if (selectedMember !== 'all') {
+      filtered = filtered.filter(att => att.memberId === selectedMember);
+    }
+    
+    setFilteredAttendances(filtered);
+  }, [attendances, selectedActivity, selectedMember]);
+
+  // Calcular estadísticas
+  useEffect(() => {
+    if (filteredAttendances.length === 0) {
+      setStats(null);
+      return;
+    }
+    
+    const { startDate, endDate } = getDateRange();
+    const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Agrupar por día
     const byDate: Record<string, number> = {};
-    attendances.forEach(att => {
-      const date = att.timestamp.toDate ? 
-        att.timestamp.toDate().toISOString().split('T')[0] : 
-        new Date(att.timestamp).toISOString().split('T')[0];
-      
-      byDate[date] = (byDate[date] || 0) + 1;
+    filteredAttendances.forEach(att => {
+      const date = safeFormatTimestamp(att.timestamp, 'iso');
+      if (date) {
+        byDate[date] = (byDate[date] || 0) + 1;
+      }
     });
     
-    const dailyData = Object.entries(byDate).map(([date, count]) => ({
-      date: new Date(date).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }),
-      count
-    })).sort((a, b) => a.date.localeCompare(b.date));
-    
-    setDailyAttendance(dailyData);
-    
-    // Agrupar por actividad
-    const byActivity: Record<string, number> = {};
-    attendances.forEach(att => {
-      const activity = att.activityName || 'Sin especificar';
-      byActivity[activity] = (byActivity[activity] || 0) + 1;
+    // Agrupar por hora
+    const byHour: Record<number, number> = {};
+    filteredAttendances.forEach(att => {
+      const jsDate = toJavaScriptDate(att.timestamp);
+      if (jsDate) {
+        const hour = jsDate.getHours();
+        byHour[hour] = (byHour[hour] || 0) + 1;
+      }
     });
     
-    const activityData = Object.entries(byActivity)
-      .map(([activity, count]) => ({ activity, count }))
-      .sort((a, b) => b.count - a.count);
+    // Agrupar por día de la semana
+    const byDayOfWeek: Record<string, number> = {};
+    filteredAttendances.forEach(att => {
+      const jsDate = toJavaScriptDate(att.timestamp);
+      if (jsDate) {
+        const dayName = jsDate.toLocaleDateString('es-AR', { weekday: 'long' });
+        byDayOfWeek[dayName] = (byDayOfWeek[dayName] || 0) + 1;
+      }
+    });
     
-    setActivityAttendance(activityData);
-  };
-  
+    // Calcular estadísticas
+    const uniqueMembers = new Set(filteredAttendances.map(att => att.memberId)).size;
+    const successfulAttendances = filteredAttendances.filter(att => att.status === 'success').length;
+    const peakHour = Object.entries(byHour).reduce((max, [hour, count]) => 
+      count > (byHour[max] || 0) ? parseInt(hour) : max, 0);
+    const mostActiveDay = Object.entries(byDayOfWeek).reduce((max, [day, count]) => 
+      count > (byDayOfWeek[max] || 0) ? day : max, '');
+    
+    setStats({
+      totalAttendances: filteredAttendances.length,
+      uniqueMembers,
+      averagePerDay: Math.round((filteredAttendances.length / daysDiff) * 10) / 10,
+      peakHour,
+      mostActiveDay,
+      successRate: Math.round((successfulAttendances / filteredAttendances.length) * 100)
+    });
+  }, [filteredAttendances, selectedPeriod]);
+
   // Exportar a CSV
-  const handleExportCSV = () => {
-    setIsExporting(true);
+  const exportToCSV = () => {
+    if (filteredAttendances.length === 0) {
+      alert('No hay datos para exportar');
+      return;
+    }
     
     try {
-      // Crear contenido CSV
-      let csvContent = 'Fecha,Hora,Socio,ID Socio,Actividad,Estado,Error\n';
+      let csvContent = 'Fecha,Hora,Socio,Actividad,Estado,Notas\n';
       
-      attendanceData.forEach(att => {
-        const date = att.timestamp.toDate ? 
-          att.timestamp.toDate().toLocaleDateString('es-AR') : 
-          new Date(att.timestamp).toLocaleDateString('es-AR');
-        
-        const time = att.timestamp.toDate ? 
-          att.timestamp.toDate().toLocaleTimeString('es-AR') : 
-          new Date(att.timestamp).toLocaleTimeString('es-AR');
-        
+      filteredAttendances.forEach(att => {
+        const date = safeFormatTimestamp(att.timestamp, 'date');
+        const time = safeFormatTimestamp(att.timestamp, 'time');
         const memberName = att.memberName.replace(/,/g, ' ');
         const activity = att.activityName.replace(/,/g, ' ');
-        const error = att.error ? att.error.replace(/,/g, ' ') : '';
+        const status = att.status === 'success' ? 'Exitosa' : 'Error';
+        const notes = (att.notes || '').replace(/,/g, ' ');
         
-        csvContent += `${date},${time},${memberName},${att.memberId},${activity},${att.status},${error}\n`;
+        csvContent += `${date},${time},${memberName},${activity},${status},${notes}\n`;
       });
       
       // Crear blob y descargar
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      
       link.setAttribute('href', url);
-      link.setAttribute('download', `asistencias_${startDate}_${endDate}.csv`);
+      link.setAttribute('download', `reporte-asistencias-${selectedPeriod}.csv`);
       link.style.visibility = 'hidden';
+      
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (err) {
-      console.error('Error exporting to CSV:', err);
-    } finally {
-      setIsExporting(false);
+      
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+      alert('Error al exportar el archivo');
     }
   };
-  
+
+  // Cargar datos al montar y cuando cambien los filtros
+  useEffect(() => {
+    loadAttendances();
+  }, [gymData?.id, selectedPeriod]);
+
+  // Obtener distribución horaria para gráfico
+  const getHourlyDistribution = (): HourlyDistribution[] => {
+    const hourlyData: Record<number, number> = {};
+    
+    filteredAttendances.forEach(att => {
+      const jsDate = toJavaScriptDate(att.timestamp);
+      if (jsDate) {
+        const hour = jsDate.getHours();
+        hourlyData[hour] = (hourlyData[hour] || 0) + 1;
+      }
+    });
+    
+    return Object.entries(hourlyData)
+      .map(([hour, count]) => ({ hour: parseInt(hour), count }))
+      .sort((a, b) => a.hour - b.hour);
+  };
+
   return (
     <div className="p-6">
-      <h2 className="text-xl font-semibold mb-6">Informe de Asistencias</h2>
-      
-      {/* Filtros de fecha */}
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-          <h3 className="text-lg font-semibold mb-4 md:mb-0">Período del Informe</h3>
-          
-          <div className="flex flex-wrap gap-3">
-            <div className="flex items-center space-x-2">
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Calendar size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <span>a</span>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Calendar size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-            
-            <button
-              onClick={loadAttendanceData}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center"
-            >
-              <Search size={18} className="mr-2" />
-              Generar Informe
-            </button>
-            
-            <button
-              onClick={handleExportCSV}
-              disabled={isExporting || attendanceData.length === 0}
-              className={`px-4 py-2 rounded-md flex items-center ${
-                isExporting || attendanceData.length === 0
-                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
-                  : 'bg-green-600 text-white hover:bg-green-700'
-              }`}
-            >
-              <Download size={18} className="mr-2" />
-              {isExporting ? 'Exportando...' : 'Exportar CSV'}
-            </button>
-          </div>
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Reportes de Asistencias</h1>
+          <p className="text-gray-600">Análisis detallado de asistencias al gimnasio</p>
         </div>
         
-        {error && (
-          <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
-            <AlertCircle size={18} className="mr-2" />
-            {error}
-          </div>
-        )}
-        
-        {/* Selector de fecha rápido */}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex space-x-3">
           <button
-            onClick={() => {
-              const today = new Date();
-              const startOfWeek = new Date(today);
-              startOfWeek.setDate(today.getDate() - today.getDay());
-              setStartDate(startOfWeek.toISOString().split('T')[0]);
-              setEndDate(today.toISOString().split('T')[0]);
-            }}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
+            onClick={loadAttendances}
+            disabled={loading}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            Esta semana
+            <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Cargando...' : 'Actualizar'}
           </button>
           
           <button
-            onClick={() => {
-              const today = new Date();
-              const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-              setStartDate(startOfMonth.toISOString().split('T')[0]);
-              setEndDate(today.toISOString().split('T')[0]);
-            }}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
+            onClick={exportToCSV}
+            disabled={filteredAttendances.length === 0}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
           >
-            Este mes
-          </button>
-          
-          <button
-            onClick={() => {
-              const today = new Date();
-              const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-              const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-              setStartDate(startOfLastMonth.toISOString().split('T')[0]);
-              setEndDate(endOfLastMonth.toISOString().split('T')[0]);
-            }}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
-          >
-            Mes anterior
-          </button>
-          
-          <button
-            onClick={() => {
-              const today = new Date();
-              const startOfYear = new Date(today.getFullYear(), 0, 1);
-              setStartDate(startOfYear.toISOString().split('T')[0]);
-              setEndDate(today.toISOString().split('T')[0]);
-            }}
-            className="px-3 py-1 border border-gray-300 rounded-md text-sm hover:bg-gray-50"
-          >
-            Este año
+            <Download size={16} className="mr-2" />
+            Exportar CSV
           </button>
         </div>
       </div>
-      
-      {loading ? (
-        <div className="bg-white rounded-lg shadow-md p-12 flex justify-center items-center">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
-          <span className="ml-3 text-gray-500">Generando informe...</span>
+
+      {/* Filtros */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Período</label>
+          <select
+            value={selectedPeriod}
+            onChange={(e) => setSelectedPeriod(e.target.value)}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="week">Última semana</option>
+            <option value="month">Último mes</option>
+            <option value="quarter">Último trimestre</option>
+            <option value="year">Último año</option>
+          </select>
         </div>
-      ) : attendanceData.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-md p-12 text-center">
-          <FilterX size={48} className="mx-auto text-gray-300 mb-4" />
-          <h3 className="text-lg font-medium text-gray-700 mb-2">No hay datos para mostrar</h3>
-          <p className="text-gray-500">
-            {startDate && endDate ? 
-              `No se encontraron asistencias para el período seleccionado` : 
-              'Selecciona un rango de fechas para generar el informe'}
-          </p>
+        
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Actividad</label>
+          <select
+            value={selectedActivity}
+            onChange={(e) => setSelectedActivity(e.target.value)}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Todas las actividades</option>
+            {activities.map(activity => (
+              <option key={activity} value={activity}>{activity}</option>
+            ))}
+          </select>
         </div>
-      ) : (
-        <>
-          {/* Tarjetas de resumen */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-500 font-medium">Total de Asistencias</p>
-                  <p className="text-3xl font-bold text-blue-600 mt-1">{totalAttendances}</p>
-                </div>
-                <div className="p-3 bg-blue-100 rounded-full">
-                  <CheckCircle className="h-6 w-6 text-blue-600" />
-                </div>
-              </div>
-              <p className="text-sm text-gray-600 mt-4">
-                Período: {new Date(startDate).toLocaleDateString('es-AR')} al {new Date(endDate).toLocaleDateString('es-AR')}
-              </p>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-500 font-medium">Tasa de Éxito</p>
-                  <p className="text-3xl font-bold text-green-600 mt-1">{successRate}%</p>
-                </div>
-                <div className="p-3 bg-green-100 rounded-full">
-                  <CheckCircle className="h-6 w-6 text-green-600" />
-                </div>
-              </div>
-              <p className="text-sm text-gray-600 mt-4">
-                Asistencias exitosas: {attendanceData.filter(a => a.status === 'success').length}
-              </p>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="text-sm text-gray-500 font-medium">Promedio Diario</p>
-                  <p className="text-3xl font-bold text-purple-600 mt-1">
-                    {dailyAttendance.length > 0 
-                      ? Math.round(totalAttendances / dailyAttendance.length) 
-                      : 0}
-                  </p>
-                </div>
-                <div className="p-3 bg-purple-100 rounded-full">
-                  <Clock className="h-6 w-6 text-purple-600" />
-                </div>
-              </div>
-              <p className="text-sm text-gray-600 mt-4">
-                En {dailyAttendance.length} {dailyAttendance.length === 1 ? 'día' : 'días'} con actividad
-              </p>
-            </div>
-          </div>
-          
-          {/* Gráficos */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-lg font-semibold mb-4">Asistencias por Día</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dailyAttendance}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="count" name="Asistencias" fill="#4F46E5" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-            
-            <div className="bg-white rounded-lg shadow-md p-6">
-              <h3 className="text-lg font-semibold mb-4">Asistencias por Actividad</h3>
-              <div className="h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={activityAttendance} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" />
-                    <YAxis type="category" dataKey="activity" width={150} />
-                    <Tooltip />
-                    <Bar dataKey="count" name="Asistencias" fill="#10B981" />
-                  </BarChart>
-                </ResponsiveContainer>
+        
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Socio</label>
+          <select
+            value={selectedMember}
+            onChange={(e) => setSelectedMember(e.target.value)}
+            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="all">Todos los socios</option>
+            {members.map(member => (
+              <option key={member.id} value={member.id}>{member.name}</option>
+            ))}
+          </select>
+        </div>
+        
+        <div className="flex items-end">
+          <button
+            onClick={() => {
+              setSelectedActivity('all');
+              setSelectedMember('all');
+            }}
+            className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+          >
+            <Filter size={16} className="inline mr-2" />
+            Limpiar Filtros
+          </button>
+        </div>
+      </div>
+
+      {/* Estadísticas principales */}
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <UserCheck className="h-8 w-8 text-blue-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Total Asistencias</p>
+                <p className="text-2xl font-bold text-blue-600">{stats.totalAttendances}</p>
               </div>
             </div>
           </div>
           
-          {/* Tabla de asistencias */}
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-lg font-semibold mb-4">Detalle de Asistencias</h3>
-            
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha y Hora</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Socio</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actividad</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {attendanceData.slice(0, 100).map((att) => (
-                    <tr key={att.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {att.timestamp && att.timestamp.toDate 
-                          ? att.timestamp.toDate().toLocaleString('es-AR')
-                          : new Date(att.timestamp).toLocaleString('es-AR')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="font-medium">{att.memberName}</div>
-                        <div className="text-sm text-gray-500">{att.memberId}</div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        {att.activityName}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          att.status === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {att.status === 'success' ? 'Exitosa' : 'Error'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              
-              {attendanceData.length > 100 && (
-                <div className="mt-4 text-center text-sm text-gray-500">
-                  Mostrando 100 de {attendanceData.length} asistencias. Exporta a CSV para ver todos los datos.
-                </div>
-              )}
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <Users className="h-8 w-8 text-green-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Socios Únicos</p>
+                <p className="text-2xl font-bold text-green-600">{stats.uniqueMembers}</p>
+              </div>
             </div>
           </div>
-        </>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <TrendingUp className="h-8 w-8 text-purple-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Promedio/Día</p>
+                <p className="text-2xl font-bold text-purple-600">{stats.averagePerDay}</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <Clock className="h-8 w-8 text-orange-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Hora Pico</p>
+                <p className="text-2xl font-bold text-orange-600">{stats.peakHour}:00</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <Calendar className="h-8 w-8 text-red-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Día Más Activo</p>
+                <p className="text-lg font-bold text-red-600 capitalize">{stats.mostActiveDay}</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <Activity className="h-8 w-8 text-indigo-600" />
+              <div className="ml-3">
+                <p className="text-sm font-medium text-gray-600">Tasa de Éxito</p>
+                <p className="text-2xl font-bold text-indigo-600">{stats.successRate}%</p>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
+
+      {/* Distribución horaria */}
+      <div className="bg-white rounded-lg shadow mb-8">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Distribución por Horario</h2>
+        </div>
+        <div className="p-6">
+          <div className="grid grid-cols-12 gap-2">
+            {Array.from({ length: 24 }, (_, i) => {
+              const hourData = getHourlyDistribution().find(h => h.hour === i);
+              const count = hourData?.count || 0;
+              const maxCount = Math.max(...getHourlyDistribution().map(h => h.count));
+              const height = maxCount > 0 ? (count / maxCount) * 100 : 0;
+              
+              return (
+                <div key={i} className="text-center">
+                  <div className="h-20 flex items-end justify-center mb-2">
+                    <div
+                      className="w-6 bg-blue-500 rounded-t"
+                      style={{ height: `${height}%`, minHeight: count > 0 ? '4px' : '0px' }}
+                      title={`${i}:00 - ${count} asistencias`}
+                    ></div>
+                  </div>
+                  <div className="text-xs text-gray-600">{i}</div>
+                  <div className="text-xs font-bold text-gray-800">{count}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Tabla de asistencias */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">
+            Detalle de Asistencias ({filteredAttendances.length})
+          </h2>
+        </div>
+        
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Fecha y Hora
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Socio
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actividad
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Estado
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Notas
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-4 text-center">
+                    <div className="flex justify-center">
+                      <RefreshCw size={20} className="animate-spin text-gray-400" />
+                      <span className="ml-2 text-gray-500">Cargando asistencias...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredAttendances.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
+                    No se encontraron asistencias para los filtros seleccionados
+                  </td>
+                </tr>
+              ) : (
+                filteredAttendances.map((att) => (
+                  <tr key={att.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {safeFormatTimestamp(att.timestamp)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="font-medium">{att.memberName}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {att.activityName}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        att.status === 'success' 
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {att.status === 'success' ? 'Exitosa' : 'Error'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-900 max-w-xs truncate">
+                        {att.notes || att.error || '-'}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 };

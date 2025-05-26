@@ -18,10 +18,13 @@ import { db } from '../config/firebase';
 import { 
   DailyCash, 
   Transaction, 
-  TransactionCategory, 
+  TransactionCategory,  // MANTENER ESTE
   TransactionIncomeCategory, 
   TransactionExpenseCategory 
 } from '../types/gym.types';
+
+
+
 
 
 // Elimina getCurrentDailyCash y reemplazamos por getDailyCashByDate
@@ -116,7 +119,8 @@ export const registerExtraIncome = async (
     
     // Validar que la categoría es válida para ingresos
     const category = data.category || 'extra';
-    const validCategories: TransactionIncomeCategory[] = ['membership', 'extra', 'product', 'service', 'other'];
+    const validCategories: TransactionIncomeCategory[] = ['membership', 'extra', 'penalty', 'product', 'service', 'other'];
+
     
     if (!validCategories.includes(category as TransactionIncomeCategory)) {
       throw new Error(`Categoría inválida para ingresos: ${category}`);
@@ -204,8 +208,8 @@ export const registerExpense = async (
     
     // Validar que la categoría es válida para gastos
     const category = data.category || 'withdrawal';
-    const validCategories: TransactionExpenseCategory[] = ['withdrawal', 'supplier', 'services', 'maintenance', 'salary', 'other', 'refund'];
-    
+    const validCategories: TransactionExpenseCategory[] = ['withdrawal', 'refund', 'expense', 'supplier', 'services', 'maintenance', 'salary', 'other'];
+
     if (!validCategories.includes(category as TransactionExpenseCategory)) {
       throw new Error(`Categoría inválida para gastos: ${category}`);
     }

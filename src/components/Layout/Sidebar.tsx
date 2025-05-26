@@ -1,9 +1,10 @@
-// src/components/Layout/Sidebar.tsx
+// src/components/Layout/Sidebar.tsx - ACTUALIZADA
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
-  Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User
+  Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
+  Wallet, ArrowUpRight, CheckCircle
 } from 'lucide-react';
 import { logoutUser } from '../../services/auth.service';
 import { navigateTo } from '../../services/navigation.service';
@@ -21,11 +22,12 @@ interface NavItemProps {
   active: boolean;
   onClick: () => void;
   badge?: string | number;
+  isNew?: boolean; // Para marcar opciones nuevas
 }
 
-const NavItem: React.FC<NavItemProps> = ({ icon, text, active, onClick, badge }) => (
+const NavItem: React.FC<NavItemProps> = ({ icon, text, active, onClick, badge, isNew }) => (
   <button
-    className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors ${
+    className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors relative ${
       active ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
     }`}
     onClick={onClick}
@@ -33,6 +35,11 @@ const NavItem: React.FC<NavItemProps> = ({ icon, text, active, onClick, badge })
     <div className="flex items-center">
       <div className="mr-3">{icon}</div>
       <span className={`text-sm font-medium ${active ? 'font-semibold' : ''}`}>{text}</span>
+      {isNew && (
+        <span className="ml-2 px-1.5 py-0.5 text-xs font-bold bg-green-500 text-white rounded-full">
+          NEW
+        </span>
+      )}
     </div>
     {badge && (
       <span className="px-2 py-0.5 ml-auto text-xs font-medium rounded-full bg-blue-100 text-blue-600">
@@ -47,15 +54,16 @@ interface DropdownNavProps {
   text: string;
   active: boolean;
   children: React.ReactNode;
+  isNew?: boolean;
 }
 
-const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children }) => {
+const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children, isNew }) => {
   const [isOpen, setIsOpen] = useState(active);
 
   return (
     <div>
       <button
-        className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors ${
+        className={`flex items-center justify-between w-full px-3 py-2 rounded-md transition-colors relative ${
           active ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
         }`}
         onClick={() => setIsOpen(!isOpen)}
@@ -63,6 +71,11 @@ const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children 
         <div className="flex items-center">
           <div className="mr-3">{icon}</div>
           <span className={`text-sm font-medium ${active ? 'font-semibold' : ''}`}>{text}</span>
+          {isNew && (
+            <span className="ml-2 px-1.5 py-0.5 text-xs font-bold bg-green-500 text-white rounded-full">
+              NEW
+            </span>
+          )}
         </div>
         <ChevronDown
           size={16}
@@ -97,6 +110,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
 
   const isExercisesActive = (): boolean => {
     return ['exercises', 'routines', 'member-routines'].includes(activePage);
+  };
+
+  // NUEVA FUNCIÓN: Verificar si está en sección financiera
+  const isFinancialActive = (): boolean => {
+    return ['dashboard-financial', 'payments', 'cashier', 'reports'].includes(activePage);
   };
 
   const handleLogout = async () => {
@@ -214,12 +232,21 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
             {/* Admin y User Navigation */}
             {(userRole === 'admin' || userRole === 'user') && (
               <>
-                {/* Dashboard */}
+                {/* Dashboard Original */}
                 <NavItem
                   icon={<LayoutDashboard size={20} />}
                   text="Dashboard"
                   active={isActive('dashboard')}
                   onClick={() => onNavigate('dashboard')}
+                />
+                
+                {/* NUEVO: Dashboard Financiero */}
+                <NavItem
+                  icon={<TrendingUp size={20} />}
+                  text="Dashboard Financiero"
+                  active={isActive('dashboard-financial')}
+                  onClick={() => onNavigate('dashboard-financial')}
+                  isNew={true}
                 />
                 
                 {/* Socios */}
@@ -238,28 +265,40 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('attendance')}
                 />
                 
-              
-                
-                {/* Finanzas - Solo para admins */}
+                {/* NUEVA SECCIÓN: Finanzas - Solo para admins */}
                 {userRole === 'admin' && (
-                  <>
-                    <NavItem
-                      icon={<ShoppingBag size={20} />}
-                      text="Caja Diaria"
-                      active={isActive('cashier')}
-                      onClick={() => onNavigate('cashier')}
-                    />
-                    
-                    <NavItem
-                      icon={<Receipt size={20} />}
-                      text="Reportes"
-                      active={isActive('reports')}
-                      onClick={() => onNavigate('reports')}
-                    />
-                  </>
-                )}
-                  {/* Ejercicios y Rutinas */}
                   <DropdownNav
+                    icon={<Wallet size={20} />}
+                    text="Finanzas"
+                    active={isFinancialActive()}
+                    isNew={true}
+                  >
+                    <div className="space-y-1 py-2">
+                      <NavItem
+                        icon={<CheckCircle size={16} />}
+                        text="Gestión de Pagos"
+                        active={isActive('payments')}
+                        onClick={() => onNavigate('payments')}
+                        isNew={true}
+                      />
+                      <NavItem
+                        icon={<ShoppingBag size={16} />}
+                        text="Caja Diaria"
+                        active={isActive('cashier')}
+                        onClick={() => onNavigate('cashier')}
+                      />
+                      <NavItem
+                        icon={<Receipt size={16} />}
+                        text="Reportes"
+                        active={isActive('reports')}
+                        onClick={() => onNavigate('reports')}
+                      />
+                    </div>
+                  </DropdownNav>
+                )}
+                
+                {/* Ejercicios y Rutinas */}
+                <DropdownNav
                   icon={<Dumbbell size={20} />}
                   text="Ejercicios"
                   active={isExercisesActive()}
@@ -325,6 +364,21 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
             )}
           </nav>
         </div>
+        
+        {/* NUEVA SECCIÓN: Info del sistema financiero */}
+        {userRole === 'admin' && (
+          <div className="border-t border-gray-200 px-4 py-3">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+              <div className="flex items-center">
+                <CheckCircle size={16} className="text-green-600 mr-2" />
+                <span className="text-xs font-medium text-green-800">Sistema Financiero Mejorado</span>
+              </div>
+              <p className="text-xs text-green-700 mt-1">
+                Gestión integral de pagos y caja diaria
+              </p>
+            </div>
+          </div>
+        )}
         
         {/* Botón de Cerrar Sesión (siempre visible al final) */}
         <div className="border-t border-gray-200 px-4 py-4 mt-auto">

@@ -17,6 +17,14 @@ import {
   import { db } from '../config/firebase';
   import { Transaction, DailyCash } from '../types/gym.types';
   import { MembershipAssignment } from '../types/member.types';
+
+  import { 
+  normalizeTransactionForLegacy, 
+  normalizeDailyCashForLegacy,
+  isIncomeTransaction,
+  isExpenseTransaction,
+  calculateCashBalance 
+} from '../utils/compatibility.utils';
   
   interface PaymentRequest {
     gymId: string;
@@ -130,7 +138,7 @@ export const getPendingMemberships = async (gymId: string, memberId: string): Pr
           amount: payment.amount,
           description: `Pago de membresías de ${payment.memberName}`,
           memberId: payment.memberId,
-          membershipId: payment.membershipIds.join(', '),
+          membershipId: payment.membershipIds ? payment.membershipIds.join(', ') : undefined, // ✅ CORRECCIÓN
           date: Timestamp.fromDate(new Date(payment.paymentDate)),
           userId: payment.userId,
           userName: payment.userName,
