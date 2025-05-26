@@ -112,9 +112,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
     return ['exercises', 'routines', 'member-routines'].includes(activePage);
   };
 
-  // NUEVA FUNCIÓN: Verificar si está en sección financiera
+  // NUEVA FUNCIÓN: Verificar si está en sección financiera (SIN dashboard-financial)
   const isFinancialActive = (): boolean => {
-    return ['dashboard-financial', 'payments', 'cashier', 'reports'].includes(activePage);
+    return ['payments', 'cashier'].includes(activePage); // 🔧 SIN dashboard-financial
   };
 
   const handleLogout = async () => {
@@ -240,15 +240,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('dashboard')}
                 />
                 
-                {/* NUEVO: Dashboard Financiero */}
-                <NavItem
-                  icon={<TrendingUp size={20} />}
-                  text="Dashboard Financiero"
-                  active={isActive('dashboard-financial')}
-                  onClick={() => onNavigate('dashboard-financial')}
-                  isNew={true}
-                />
-                
                 {/* Socios */}
                 <NavItem
                   icon={<Users size={20} />}
@@ -265,6 +256,14 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('attendance')}
                 />
                 
+                {/* 🔧 REPORTES FUERA DE FINANZAS */}
+                <NavItem
+                  icon={<Receipt size={20} />}
+                  text="Reportes"
+                  active={isActive('reports')}
+                  onClick={() => onNavigate('reports')}
+                />
+                
                 {/* NUEVA SECCIÓN: Finanzas - Solo para admins */}
                 {userRole === 'admin' && (
                   <DropdownNav
@@ -274,6 +273,13 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                     isNew={true}
                   >
                     <div className="space-y-1 py-2">
+                      <NavItem
+                        icon={<TrendingUp size={16} />}
+                        text="Dashboard Financiero"
+                        active={isActive('dashboard-financial')}
+                        onClick={() => onNavigate('dashboard-financial')}
+                        isNew={true}
+                      />
                       <NavItem
                         icon={<CheckCircle size={16} />}
                         text="Gestión de Pagos"
@@ -286,12 +292,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                         text="Caja Diaria"
                         active={isActive('cashier')}
                         onClick={() => onNavigate('cashier')}
-                      />
-                      <NavItem
-                        icon={<Receipt size={16} />}
-                        text="Reportes"
-                        active={isActive('reports')}
-                        onClick={() => onNavigate('reports')}
                       />
                     </div>
                   </DropdownNav>

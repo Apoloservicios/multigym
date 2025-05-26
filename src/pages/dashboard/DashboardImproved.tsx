@@ -172,10 +172,7 @@ const DashboardImproved: React.FC = () => {
         ))
       ]);
 
-      // Cargar membresías que expiran y pagos pendientes
-      const nextWeek = new Date();
-      nextWeek.setDate(nextWeek.getDate() + 7);
-      
+      // 🔧 CARGAR PAGOS PENDIENTES MEJORADO
       const [expiringMembershipsSnap, pendingPaymentsSnap, overduePaymentsSnap] = await Promise.all([
         getDocs(query(
           collection(db, `gyms/${gymData.id}/membershipAssignments`),
@@ -193,7 +190,7 @@ const DashboardImproved: React.FC = () => {
         ))
       ]);
 
-      // Calcular métricas financieras desde el resumen diario y transacciones
+      // 🔧 CALCULAR MÉTRICAS FINANCIERAS CORREGIDAS
       let todayIncome = 0;
       let todayExpenses = 0;
       let monthlyIncome = 0;
@@ -208,23 +205,25 @@ const DashboardImproved: React.FC = () => {
         refundsToday = dailySummary.refunds;
       }
 
-      // Calcular totales mensuales desde transacciones
+      // Calcular totales mensuales desde transacciones CORREGIDO
       const monthlyTransactions = transactions.filter(t => {
-        const transactionDate = t.createdAt.toDate();
+        const transactionDate = t.createdAt?.toDate ? t.createdAt.toDate() : new Date(t.createdAt);
         return transactionDate >= thisMonth.toDate();
       });
 
       monthlyTransactions.forEach(transaction => {
+        const displayInfo = getTransactionDisplayInfo(transaction);
+        
         if (transaction.status === 'completed') {
-          if (transaction.amount > 0) {
-            monthlyIncome += transaction.amount;
-          } else {
-            monthlyExpenses += Math.abs(transaction.amount);
+          if (displayInfo.isIncome) {
+            monthlyIncome += displayInfo.displayAmount;
+          } else if (displayInfo.isRefund || displayInfo.isExpense) {
+            monthlyExpenses += displayInfo.displayAmount;
           }
         }
       });
 
-      // Calcular monto de pagos pendientes
+      // Calcular monto de pagos pendientes CORREGIDO
       pendingPaymentsSnap.forEach(doc => {
         const data = doc.data();
         pendingAmount += data.cost || 0;
@@ -275,7 +274,34 @@ const DashboardImproved: React.FC = () => {
     setPaymentBreakdown(breakdown);
   }, [dailySummary]);
 
-  // Generar actividades recientes desde transacciones
+  // 🔧 FUNCIÓN MEJORADA PARA DETECTAR TIPO DE TRANSACCIÓN
+  const getTransactionDisplayInfo = (transaction: any) => {
+    // Detectar devoluciones por múltiples criterios
+    const isRefund = transaction.type === 'refund' || 
+                     transaction.category === 'refund' || 
+                     transaction.description?.toLowerCase().includes('devolución') ||
+                     transaction.description?.toLowerCase().includes('devolucion') ||
+                     transaction.amount < 0;
+    
+    // Detectar egresos/gastos
+    const isExpense = !isRefund && (
+      transaction.type === 'expense' || 
+      transaction.category === 'expense' ||
+      transaction.category === 'withdrawal'
+    );
+                     
+    const isIncome = !isRefund && !isExpense;
+    
+    return {
+      isRefund,
+      isIncome,
+      isExpense,
+      displayAmount: Math.abs(transaction.amount),
+      type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
+    };
+  };
+
+  // Generar actividades recientes desde transacciones CORREGIDA
   const generateRecentActivities = useCallback(() => {
     if (!transactions.length) {
       setRecentActivities([]);
@@ -284,15 +310,19 @@ const DashboardImproved: React.FC = () => {
 
     const recentTransactions = transactions
       .slice(0, 10)
-      .map(transaction => ({
-        id: transaction.id || '',
-        type: transaction.amount > 0 ? 'payment' as const : 'refund' as const,
-        memberName: transaction.memberName || 'N/A', // 🔧 VALOR POR DEFECTO
-        amount: Math.abs(transaction.amount),
-        method: transaction.paymentMethod || 'N/A', // 🔧 VALOR POR DEFECTO
-        timestamp: transaction.createdAt,
-        status: transaction.status || 'completed' // 🔧 VALOR POR DEFECTO
-      }));
+      .map(transaction => {
+        const displayInfo = getTransactionDisplayInfo(transaction);
+        
+        return {
+          id: transaction.id || '',
+          type: displayInfo.type,
+          memberName: transaction.memberName || 'N/A',
+          amount: displayInfo.displayAmount,
+          method: transaction.paymentMethod || 'N/A',
+          timestamp: transaction.createdAt,
+          status: transaction.status || 'completed'
+        };
+      });
 
     setRecentActivities(recentTransactions);
   }, [transactions]);
