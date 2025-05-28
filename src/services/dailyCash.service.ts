@@ -1,4 +1,4 @@
-// src/services/dailyCash.service.ts
+// src/services/dailyCash.service.ts - CORREGIDO PARA TIMESTAMPS
 
 import { 
   collection, 
@@ -18,16 +18,10 @@ import { db } from '../config/firebase';
 import { 
   DailyCash, 
   Transaction, 
-  TransactionCategory,  // MANTENER ESTE
+  TransactionCategory,
   TransactionIncomeCategory, 
   TransactionExpenseCategory 
 } from '../types/gym.types';
-
-
-
-
-
-// Elimina getCurrentDailyCash y reemplazamos por getDailyCashByDate
 
 // Obtener registro de caja diaria por fecha
 export const getDailyCashByDate = async (gymId: string, date: string): Promise<DailyCash | null> => {
@@ -81,7 +75,7 @@ export const getDailyCashForDateRange = async (
   }
 };
 
-// Registrar un ingreso extra (no relacionado con membresías)
+// 🔧 REGISTRAR INGRESO EXTRA - CORREGIDO TIMESTAMPS
 export const registerExtraIncome = async (
   gymId: string,
   data: {
@@ -120,25 +114,25 @@ export const registerExtraIncome = async (
     // Validar que la categoría es válida para ingresos
     const category = data.category || 'extra';
     const validCategories: TransactionIncomeCategory[] = ['membership', 'extra', 'penalty', 'product', 'service', 'other'];
-
     
     if (!validCategories.includes(category as TransactionIncomeCategory)) {
       throw new Error(`Categoría inválida para ingresos: ${category}`);
     }
     
-    // Crear transacción
+    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP CORRECTO
+    const now = new Date();
     const transactionData: Partial<Transaction> = {
       type: 'income',
       category: category as TransactionIncomeCategory,
       amount: data.amount,
       description: data.description,
-      date: Timestamp.fromDate(new Date(data.date)),
+      date: Timestamp.now(), // 🔧 USAR TIMESTAMP ACTUAL, NO DE LA FECHA STRING
       userId: data.userId,
       userName: data.userName,
       paymentMethod: data.paymentMethod,
       status: 'completed',
       notes: data.notes,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp() // 🔧 AGREGAR createdAt PARA CONSISTENCIA
     };
     
     // Referencia a la colección de transacciones
@@ -170,7 +164,7 @@ export const registerExtraIncome = async (
   }
 };
 
-// Registrar un gasto o retiro
+// 🔧 REGISTRAR GASTO - CORREGIDO TIMESTAMPS
 export const registerExpense = async (
   gymId: string,
   data: {
@@ -214,19 +208,19 @@ export const registerExpense = async (
       throw new Error(`Categoría inválida para gastos: ${category}`);
     }
     
-    // Crear transacción
+    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP CORRECTO
     const transactionData: Partial<Transaction> = {
       type: 'expense',
       category: category as TransactionExpenseCategory,
-      amount: data.amount,
+      amount: data.amount, // 🔧 MANTENER POSITIVO, EL TIPO INDICA QUE ES EGRESO
       description: data.description,
-      date: Timestamp.fromDate(new Date(data.date)),
+      date: Timestamp.now(), // 🔧 USAR TIMESTAMP ACTUAL
       userId: data.userId,
       userName: data.userName,
       paymentMethod: data.paymentMethod,
       status: 'completed',
       notes: data.notes,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp() // 🔧 AGREGAR createdAt
     };
     
     // Referencia a la colección de transacciones
@@ -382,7 +376,7 @@ export const openDailyCash = async (
   }
 };
 
-// Obtener las transacciones para un día específico
+// 🔧 OBTENER TRANSACCIONES POR FECHA - MEJORADO PARA ORDENAR CORRECTAMENTE
 export const getTransactionsByDate = async (
   gymId: string,
   date: string
@@ -396,22 +390,79 @@ export const getTransactionsByDate = async (
     endDate.setHours(23, 59, 59, 999);
     
     const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-    const q = query(
-      transactionsRef,
-      where('date', '>=', Timestamp.fromDate(startDate)),
-      where('date', '<=', Timestamp.fromDate(endDate)),
-      orderBy('date', 'desc')
-    );
     
-    const querySnapshot = await getDocs(q);
-    const transactions: Transaction[] = [];
+    // 🔧 USAR CONSULTA CON createdAt Y date PARA MAYOR FLEXIBILIDAD
+    let transactions: Transaction[] = [];
     
-    querySnapshot.forEach(doc => {
-      transactions.push({
-        id: doc.id,
-        ...doc.data()
-      } as Transaction);
-    });
+    try {
+      // Primero intentar con createdAt (más preciso)
+      const qCreatedAt = query(
+        transactionsRef,
+        where('createdAt', '>=', Timestamp.fromDate(startDate)),
+        where('createdAt', '<=', Timestamp.fromDate(endDate)),
+        orderBy('createdAt', 'desc')
+      );
+      
+      const createdAtSnapshot = await getDocs(qCreatedAt);
+      createdAtSnapshot.forEach(doc => {
+        transactions.push({
+          id: doc.id,
+          ...doc.data()
+        } as Transaction);
+      });
+      
+    } catch (createdAtError) {
+      console.warn('Error querying by createdAt, trying with date field:', createdAtError);
+      
+      // Fallback: usar campo date
+      try {
+        const qDate = query(
+          transactionsRef,
+          where('date', '>=', Timestamp.fromDate(startDate)),
+          where('date', '<=', Timestamp.fromDate(endDate)),
+          orderBy('date', 'desc')
+        );
+        
+        const dateSnapshot = await getDocs(qDate);
+        dateSnapshot.forEach(doc => {
+          transactions.push({
+            id: doc.id,
+            ...doc.data()
+          } as Transaction);
+        });
+        
+      } catch (dateError) {
+        console.warn('Error querying by date, getting all and filtering:', dateError);
+        
+        // Último recurso: obtener todas y filtrar manualmente
+        const allSnapshot = await getDocs(transactionsRef);
+        allSnapshot.forEach(doc => {
+          const data = doc.data();
+          const txDate = data.createdAt || data.date;
+          
+          if (txDate) {
+            const txJsDate = txDate.toDate ? txDate.toDate() : new Date(txDate);
+            if (txJsDate >= startDate && txJsDate <= endDate) {
+              transactions.push({
+                id: doc.id,
+                ...data
+              } as Transaction);
+            }
+          }
+        });
+        
+        // Ordenar manualmente
+        transactions.sort((a, b) => {
+          const aTime = (a.createdAt || a.date);
+          const bTime = (b.createdAt || b.date);
+          
+          const aSeconds = aTime?.seconds || 0;
+          const bSeconds = bTime?.seconds || 0;
+          
+          return bSeconds - aSeconds; // Descendente (más reciente primero)
+        });
+      }
+    }
     
     return transactions;
   } catch (error) {
@@ -444,9 +495,9 @@ export const getTransactionsSummary = async (
     const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
     const q = query(
       transactionsRef,
-      where('date', '>=', Timestamp.fromDate(start)),
-      where('date', '<=', Timestamp.fromDate(end)),
-      orderBy('date', 'desc')
+      where('createdAt', '>=', Timestamp.fromDate(start)),
+      where('createdAt', '<=', Timestamp.fromDate(end)),
+      orderBy('createdAt', 'desc')
     );
     
     const querySnapshot = await getDocs(q);

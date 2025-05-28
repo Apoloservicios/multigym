@@ -1,4 +1,5 @@
-// src/components/cashier/CashierDashboard.tsx - VERSIÓN CORREGIDA
+// src/components/cashier/CashierDashboard.tsx - FECHAS CORREGIDAS PARA ARGENTINA
+
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar, DollarSign, TrendingUp, TrendingDown, PlusCircle, MinusCircle, 
@@ -29,7 +30,6 @@ import ExpenseForm from './ExpenseForm';
 import CloseBoxForm from './CloseBoxForm';
 import OpenBoxForm from './OpenBoxForm';
 
-// Actualizar tipo para incluir la nueva vista
 type ViewType = 'summary' | 'income' | 'expense' | 'transactions' | 'close' | 'open';
 
 const CashierDashboard: React.FC = () => {
@@ -38,22 +38,54 @@ const CashierDashboard: React.FC = () => {
   const [view, setView] = useState<ViewType>('summary');
   const [dailyCash, setDailyCash] = useState<DailyCash | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
 
-  // 🔧 FUNCIÓN HELPER PARA FECHAS CONSISTENTES
-  const getCurrentDate = (): string => {
+  // 🔧 FUNCIÓN PARA OBTENER FECHA ACTUAL EN ARGENTINA
+  const getCurrentDateInArgentina = (): string => {
     const now = new Date();
-    return now.toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    // Crear fecha en zona horaria de Argentina (UTC-3)
+    const argentinaTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
+    
+    // Formatear como YYYY-MM-DD
+    const year = argentinaTime.getFullYear();
+    const month = String(argentinaTime.getMonth() + 1).padStart(2, '0');
+    const day = String(argentinaTime.getDate()).padStart(2, '0');
+    
+    return `${year}-${month}-${day}`;
   };
+
+  // 🔧 FUNCIÓN PARA OBTENER HORA ACTUAL EN ARGENTINA
+  const getCurrentTimeInArgentina = (): string => {
+    const now = new Date();
+    const argentinaTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
+    
+    return argentinaTime.toLocaleTimeString('es-AR', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: false 
+    });
+  };
+
+  // 🔧 FUNCIÓN PARA VERIFICAR SI UNA FECHA ES HOY EN ARGENTINA
+  const isToday = (dateString: string): boolean => {
+    return dateString === getCurrentDateInArgentina();
+  };
+
+  // 🔧 INICIALIZAR CON FECHA ARGENTINA
+  useEffect(() => {
+    const argentinaDate = getCurrentDateInArgentina();
+    setSelectedDate(argentinaDate);
+  }, []);
 
   // 🔧 FUNCIÓN HELPER PARA MOSTRAR FECHAS
   const getDisplayDate = (date?: string): string => {
     if (!date) {
-      date = getCurrentDate();
+      date = getCurrentDateInArgentina();
     }
     
     try {
@@ -72,12 +104,14 @@ const CashierDashboard: React.FC = () => {
 
   // Cargar los datos al montar el componente o cambiar de fecha
   useEffect(() => {
-    loadDailyCashData();
+    if (selectedDate) {
+      loadDailyCashData();
+    }
   }, [gymData?.id, selectedDate]);
 
   // Función para cargar los datos de la caja diaria y transacciones
   const loadDailyCashData = async () => {
-    if (!gymData?.id) {
+    if (!gymData?.id || !selectedDate) {
       setLoading(false);
       return;
     }
@@ -89,7 +123,6 @@ const CashierDashboard: React.FC = () => {
       // Intentar obtener la caja diaria para la fecha seleccionada
       try {
         const cashData = await getDailyCashByDate(gymData.id, selectedDate);
-        // 🔧 NORMALIZAR DATOS PARA COMPATIBILIDAD
         setDailyCash(cashData ? normalizeDailyCashForLegacy(cashData) : null);
       } catch (error) {
         console.log("No hay caja para esta fecha");
@@ -189,8 +222,6 @@ const CashierDashboard: React.FC = () => {
   // 🔧 FUNCIÓN MEJORADA PARA CALCULAR BALANCE
   const calculateCurrentBalance = (): number => {
     if (!dailyCash) return 0;
-    
-    // Usar función helper que maneja ambos campos
     return calculateCashBalance(dailyCash);
   };
 
@@ -205,7 +236,7 @@ const CashierDashboard: React.FC = () => {
       );
     }
 
-    if (view === 'open' || (!dailyCash && selectedDate === getCurrentDate())) {
+    if (view === 'open' || (!dailyCash && isToday(selectedDate))) {
       return (
         <OpenBoxForm
           selectedDate={selectedDate}
@@ -226,7 +257,7 @@ const CashierDashboard: React.FC = () => {
             </p>
           </div>
           
-          {selectedDate === getCurrentDate() && (
+          {isToday(selectedDate) && (
             <button
               onClick={() => setView('open')}
               className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
@@ -300,21 +331,17 @@ const CashierDashboard: React.FC = () => {
   const canCloseBox = (): boolean => {
     if (!dailyCash) return false;
     if (dailyCash.status !== 'open') return false;
-    
-    const today = getCurrentDate();
-    return dailyCash.date === today;
+    return isToday(dailyCash.date);
   };
 
   // Determinar si se puede abrir/reabrir la caja
   const canOpenBox = (): boolean => {
     if (!dailyCash) {
-      const today = getCurrentDate();
-      return selectedDate === today;
+      return isToday(selectedDate);
     }
     
     if (dailyCash.status === 'closed') {
-      const today = getCurrentDate();
-      return selectedDate === today;
+      return isToday(selectedDate);
     }
     
     return false;
@@ -328,9 +355,13 @@ const CashierDashboard: React.FC = () => {
           <p className="text-gray-600 mt-1">
             Gestiona ingresos, gastos y cierre de caja
           </p>
+          {/* 🔧 MOSTRAR HORA ACTUAL DE ARGENTINA */}
+          <p className="text-sm text-blue-600 mt-1">
+            📍 Hora actual en Argentina: {getCurrentTimeInArgentina()}
+          </p>
         </div>
         
-        {/* 🔧 SELECTOR DE FECHA SIN DUPLICAR */}
+        {/* 🔧 SELECTOR DE FECHA CORREGIDO */}
         <div className="mt-4 md:mt-0 flex items-center space-x-2">
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -340,7 +371,7 @@ const CashierDashboard: React.FC = () => {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              max={getCurrentDate()} // 🔧 No permitir fechas futuras
+              max={getCurrentDateInArgentina()} // 🔧 USAR FECHA ARGENTINA
               className="pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -383,13 +414,18 @@ const CashierDashboard: React.FC = () => {
         </div>
       )}
       
-      {/* 🔧 ESTADO DE LA CAJA MEJORADO */}
+      {/* 🔧 ESTADO DE LA CAJA MEJORADO CON INDICADOR DE FECHA */}
       {dailyCash && dailyCash.id && (
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col md:flex-row justify-between">
             <div className="mb-4 md:mb-0">
               <h2 className="text-lg font-semibold">
                 Estado de Caja - {getDisplayDate(dailyCash.date)}
+                {isToday(dailyCash.date) && (
+                  <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
+                    HOY
+                  </span>
+                )}
               </h2>
               <div className="mt-2 flex items-center">
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -417,7 +453,7 @@ const CashierDashboard: React.FC = () => {
             </div>
           </div>
           
-          {/* 🔧 RESUMEN CON CAMPOS COMPATIBLES */}
+          {/* Resumen con campos compatibles */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
             <div className="p-4 bg-blue-50 rounded-lg border border-blue-100">
               <div className="flex justify-between items-center">
@@ -528,13 +564,16 @@ const CashierDashboard: React.FC = () => {
       )}
       
       {/* 🔧 MENSAJE MEJORADO PARA CAJA NO ABIERTA */}
-      {!dailyCash && selectedDate === getCurrentDate() && view === 'summary' && (
+      {!dailyCash && isToday(selectedDate) && view === 'summary' && (
         <div className="bg-white rounded-lg shadow-md p-6 mb-6 text-center">
           <h2 className="text-lg font-semibold mb-4">
             No hay caja abierta para {getDisplayDate(selectedDate)}
           </h2>
-          <p className="text-gray-600 mb-6">
+          <p className="text-gray-600 mb-2">
             Para registrar ingresos y egresos, primero debe abrir la caja diaria.
+          </p>
+          <p className="text-sm text-blue-600 mb-6">
+            📍 Son las {getCurrentTimeInArgentina()} en Argentina
           </p>
           <button
             onClick={() => setView('open')}

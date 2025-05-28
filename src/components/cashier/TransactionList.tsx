@@ -1,4 +1,4 @@
-// src/components/cashier/TransactionList.tsx
+// src/components/cashier/TransactionList.tsx - CORREGIDO PARA HORAS
 
 import React, { useState } from 'react';
 import { Search, Filter, Download, Check, X, User, Clock, TrendingUp, TrendingDown } from 'lucide-react';
@@ -20,6 +20,40 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  // 🔧 FUNCIÓN MEJORADA PARA FORMATEAR HORA
+  const formatTime = (date: any): string => {
+    if (!date) return 'Sin hora';
+    
+    try {
+      let dateObj: Date;
+      
+      // Manejar diferentes tipos de timestamp
+      if (date && typeof date.toDate === 'function') {
+        dateObj = date.toDate();
+      } else if (date && date.seconds) {
+        dateObj = new Date(date.seconds * 1000);
+      } else if (date instanceof Date) {
+        dateObj = date;
+      } else {
+        dateObj = new Date(date);
+      }
+      
+      // Verificar si la fecha es válida
+      if (isNaN(dateObj.getTime())) {
+        return 'Hora inválida';
+      }
+      
+      return dateObj.toLocaleTimeString('es-AR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch (error) {
+      console.error('Error formatting time:', error);
+      return 'Error';
+    }
+  };
 
   // Filtrar transacciones
   const filteredTransactions = transactions.filter(tx => {
@@ -56,9 +90,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
           tx.date.toDate().toLocaleDateString('es-AR') : 
           new Date(tx.date).toLocaleDateString('es-AR');
         
-        const time = tx.date && tx.date.toDate ? 
-          tx.date.toDate().toLocaleTimeString('es-AR') : 
-          new Date(tx.date).toLocaleTimeString('es-AR');
+        const time = formatTime(tx.date || tx.createdAt);
         
         const description = tx.description.replace(/,/g, ' ');
         const notes = (tx.notes || '').replace(/,/g, ' ');
@@ -83,26 +115,13 @@ const TransactionList: React.FC<TransactionListProps> = ({
     }
   };
 
-  // Formatear hora
-  const formatTime = (date: any): string => {
-    if (!date) return '';
-    
-    try {
-      const dateObj = date.toDate ? date.toDate() : new Date(date);
-      return dateObj.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-    } catch (error) {
-      console.error('Error formatting time:', error);
-      return '';
-    }
-  };
-
   // Obtener el nombre del método de pago
   const getPaymentMethodName = (method: string = ''): string => {
     switch (method.toLowerCase()) {
       case 'cash': return 'Efectivo';
       case 'transfer': return 'Transferencia';
       case 'card': return 'Tarjeta';
-      default: return method;
+      default: return method || 'No especificado';
     }
   };
 
@@ -118,9 +137,38 @@ const TransactionList: React.FC<TransactionListProps> = ({
       case 'services': return 'Servicios';
       case 'maintenance': return 'Mantenimiento';
       case 'salary': return 'Sueldos';
+      case 'expense': return 'Gasto';
+      case 'refund': return 'Devolución';
       case 'other': return 'Otro';
-      default: return category;
+      default: return category || 'Sin categoría';
     }
+  };
+
+  // 🔧 FUNCIÓN MEJORADA PARA DETECTAR TIPO DE TRANSACCIÓN Y MOSTRAR MONTO CORRECTO
+  const getTransactionDisplay = (tx: Transaction) => {
+    // Detectar si es devolución
+    const isRefund = tx.type === 'refund' || 
+                     tx.category === 'refund' || 
+                     tx.description?.toLowerCase().includes('devolución') ||
+                     tx.description?.toLowerCase().includes('devolucion');
+    
+    // Detectar si es gasto/egreso
+    const isExpense = !isRefund && (
+      tx.type === 'expense' || 
+      tx.category === 'expense' ||
+      tx.category === 'withdrawal'
+    );
+    
+    const isIncome = !isRefund && !isExpense;
+    
+    return {
+      isIncome,
+      isExpense,
+      isRefund,
+      displayAmount: Math.abs(tx.amount),
+      colorClass: isIncome ? 'text-green-600' : 'text-red-600',
+      symbol: isIncome ? '+' : '-'
+    };
   };
 
   // Calcular totales
@@ -131,10 +179,11 @@ const TransactionList: React.FC<TransactionListProps> = ({
     };
     
     filteredTransactions.forEach(tx => {
-      if (tx.type === 'income') {
-        totals.income += tx.amount;
-      } else if (tx.type === 'expense') {
-        totals.expense += tx.amount;
+      const display = getTransactionDisplay(tx);
+      if (display.isIncome) {
+        totals.income += display.displayAmount;
+      } else {
+        totals.expense += display.displayAmount;
       }
     });
     
@@ -188,6 +237,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
             <option value="all">Todos los tipos</option>
             <option value="income">Ingresos</option>
             <option value="expense">Egresos</option>
+            <option value="refund">Devoluciones</option>
           </select>
           
           <select
@@ -279,53 +329,55 @@ const TransactionList: React.FC<TransactionListProps> = ({
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredTransactions.map((tx) => (
-                <tr key={tx.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-900">{formatTime(tx.date)}</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-900">{getCategoryName(tx.category)}</span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-900">{tx.description}</div>
-                    {tx.notes && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        Nota: {tx.notes}
+              {filteredTransactions.map((tx) => {
+                const display = getTransactionDisplay(tx);
+                
+                return (
+                  <tr key={tx.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900">{formatTime(tx.date || tx.createdAt)}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900">{getCategoryName(tx.category)}</span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm text-gray-900">{tx.description}</div>
+                      {tx.notes && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          Nota: {tx.notes}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <span className={`text-sm font-medium ${display.colorClass}`}>
+                        {display.symbol}{formatCurrency(display.displayAmount)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="text-sm text-gray-900">{getPaymentMethodName(tx.paymentMethod)}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <User size={16} className="text-gray-400 mr-2" />
+                        <span className="text-sm text-gray-900">{tx.userName || 'N/A'}</span>
                       </div>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right">
-                    <span className={`text-sm font-medium ${
-                      tx.type === 'income' ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="text-sm text-gray-900">{getPaymentMethodName(tx.paymentMethod)}</span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <User size={16} className="text-gray-400 mr-2" />
-                      <span className="text-sm text-gray-900">{tx.userName || 'N/A'}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      tx.status === 'completed' ? 'bg-green-100 text-green-800' : 
-                      tx.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {tx.status === 'completed' ? 
-                        <Check size={12} className="mr-1" /> : 
-                        <X size={12} className="mr-1" />}
-                      {tx.status === 'completed' ? 'Completado' : 
-                       tx.status === 'pending' ? 'Pendiente' : 'Cancelado'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        tx.status === 'completed' ? 'bg-green-100 text-green-800' : 
+                        tx.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {tx.status === 'completed' ? 
+                          <Check size={12} className="mr-1" /> : 
+                          <X size={12} className="mr-1" />}
+                        {tx.status === 'completed' ? 'Completado' : 
+                         tx.status === 'pending' ? 'Pendiente' : 'Cancelado'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

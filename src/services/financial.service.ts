@@ -1,4 +1,4 @@
-// src/services/financial.service.ts - VERSIÓN LIMPIA Y COMPLETA
+// src/services/financial.service.ts - CON TIMEZONE ARGENTINA CORREGIDO
 
 import { 
   collection, 
@@ -15,6 +15,13 @@ import {
 import { db } from '../config/firebase';
 import { Transaction, DailyCash } from '../types/gym.types';
 import { normalizeDailyCashForLegacy, normalizeTransactionForLegacy } from '../utils/compatibility.utils';
+// 🔧 IMPORTAR UTILIDADES DE TIMEZONE
+import { 
+  getCurrentDateInArgentina,
+  getArgentinianDayRange,
+  timestampToArgentinianDate,
+  isTimestampInArgentinianDate
+} from '../utils/timezone.utils';
 
 // ================== TIPOS COMPATIBLES ==================
 
@@ -117,7 +124,7 @@ export class FinancialService {
         }
         
         // 3. Verificar/crear caja diaria
-        const today = new Date().toISOString().split('T')[0];
+        const today = getCurrentDateInArgentina(); // 🔧 USAR FECHA ARGENTINA
         const cashRegisterRef = doc(db, `gyms/${gymId}/dailyCash`, today);
         const cashRegisterSnap = await transaction.get(cashRegisterRef);
         
@@ -291,7 +298,7 @@ export class FinancialService {
         }
         
         // 7. Actualizar caja diaria COMPATIBLE
-        const today = new Date().toISOString().split('T')[0];
+        const today = getCurrentDateInArgentina(); // 🔧 USAR FECHA ARGENTINA
         const cashRegisterRef = doc(db, `gyms/${gymId}/dailyCash`, today);
         const cashRegisterSnap = await transaction.get(cashRegisterRef);
         
@@ -321,22 +328,29 @@ export class FinancialService {
   // ============ CONSULTAS Y REPORTES ============
   
   /**
-   * Obtiene el resumen de caja diaria
+   * 🔧 OBTIENE EL RESUMEN DE CAJA DIARIA CON TIMEZONE ARGENTINA
    */
   static async getDailyCashSummary(
     gymId: string,
     date: string
   ): Promise<DailyCashSummary | null> {
     try {
-      // Obtener transacciones del día
-      const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-      const startOfDay = new Date(`${date}T00:00:00.000Z`);
-      const endOfDay = new Date(`${date}T23:59:59.999Z`);
+      console.log(`🔍 Calculando resumen para fecha argentina: ${date}`);
       
+      // 🔧 OBTENER RANGO DE FECHAS PARA EL DÍA EN ARGENTINA
+      const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
+      
+      console.log(`📅 Rango de consulta:`, {
+        startOfDay: startOfDay.toDate(),
+        endOfDay: endOfDay.toDate()
+      });
+      
+      // Obtener transacciones del día usando rango de fechas argentina
+      const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
       const q = query(
         transactionsRef,
-        where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
-        where('createdAt', '<=', Timestamp.fromDate(endOfDay)),
+        where('createdAt', '>=', startOfDay),
+        where('createdAt', '<=', endOfDay),
         orderBy('createdAt', 'desc')
       );
       
@@ -346,7 +360,9 @@ export class FinancialService {
         ...doc.data() 
       })) as Transaction[];
       
-      // Calcular totales
+      console.log(`💰 Transacciones encontradas para ${date}:`, transactions.length);
+      
+      // 🔧 CALCULAR TOTALES CON LÓGICA MEJORADA
       let totalIncome = 0;
       let totalExpenses = 0;
       let pendingPayments = 0;
@@ -354,9 +370,47 @@ export class FinancialService {
       const paymentMethodBreakdown: { [key: string]: PaymentSummary } = {};
       
       transactions.forEach(transaction => {
+        console.log(`🔍 Procesando transacción:`, {
+          id: transaction.id,
+          amount: transaction.amount,
+          type: transaction.type,
+          category: transaction.category,
+          status: transaction.status,
+          description: transaction.description
+        });
+        
         if (transaction.status === 'completed') {
-          if (transaction.amount > 0) {
-            totalIncome += transaction.amount;
+          // 🔧 LÓGICA MEJORADA PARA DETECTAR INGRESOS VS EGRESOS
+          const isRefund = transaction.type === 'refund' || 
+                          transaction.category === 'refund' || 
+                          transaction.description?.toLowerCase().includes('devolución') ||
+                          transaction.description?.toLowerCase().includes('devolucion');
+          
+          const isExpense = !isRefund && (
+            transaction.type === 'expense' || 
+            transaction.category === 'expense' ||
+            transaction.category === 'withdrawal' ||
+            transaction.category === 'supplier' ||
+            transaction.category === 'services' ||
+            transaction.category === 'maintenance' ||
+            transaction.category === 'salary'
+          );
+          
+          const isIncome = !isRefund && !isExpense && (
+            transaction.type === 'income' ||
+            transaction.category === 'membership' ||
+            transaction.category === 'extra' ||
+            transaction.category === 'penalty' ||
+            transaction.category === 'product' ||
+            transaction.category === 'service' ||
+            transaction.amount > 0
+          );
+          
+          const amount = Math.abs(transaction.amount);
+          
+          if (isIncome) {
+            totalIncome += amount;
+            console.log(`✅ Ingreso detectado: +$${amount}`);
             
             // Agrupar por método de pago
             const method = transaction.paymentMethod || 'other';
@@ -367,12 +421,23 @@ export class FinancialService {
                 count: 0
               };
             }
-            paymentMethodBreakdown[method].totalAmount += transaction.amount;
+            paymentMethodBreakdown[method].totalAmount += amount;
             paymentMethodBreakdown[method].count++;
+          } else if (isRefund) {
+            totalExpenses += amount;
+            refunds++;
+            console.log(`🔄 Devolución detectada: -$${amount}`);
+          } else if (isExpense) {
+            totalExpenses += amount;
+            console.log(`❌ Gasto detectado: -$${amount}`);
           } else {
-            totalExpenses += Math.abs(transaction.amount);
-            if (transaction.type === 'refund') {
-              refunds++;
+            // Caso por defecto - usar el signo del monto
+            if (transaction.amount > 0) {
+              totalIncome += amount;
+              console.log(`➕ Ingreso por monto positivo: +$${amount}`);
+            } else {
+              totalExpenses += amount;
+              console.log(`➖ Gasto por monto negativo: -$${amount}`);
             }
           }
         } else if (transaction.status === 'pending') {
@@ -380,7 +445,7 @@ export class FinancialService {
         }
       });
       
-      return {
+      const summary = {
         date,
         totalIncome,
         totalExpenses,
@@ -390,6 +455,10 @@ export class FinancialService {
         refunds
       };
       
+      console.log(`📊 Resumen calculado para ${date}:`, summary);
+      
+      return summary;
+      
     } catch (error) {
       console.error('Error getting daily cash summary:', error);
       return null;
@@ -397,7 +466,7 @@ export class FinancialService {
   }
   
   /**
-   * Obtiene todas las transacciones de un período
+   * 🔧 OBTIENE TRANSACCIONES CON FILTROS DE TIMEZONE ARGENTINA
    */
   static async getTransactions(
     gymId: string,
@@ -414,7 +483,7 @@ export class FinancialService {
       const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
       let q = query(transactionsRef, orderBy('createdAt', 'desc'));
       
-      // Aplicar filtros
+      // 🔧 APLICAR FILTROS CON TIMEZONE ARGENTINA
       if (filters.startDate) {
         q = query(q, where('createdAt', '>=', Timestamp.fromDate(filters.startDate)));
       }
@@ -459,7 +528,7 @@ export class FinancialService {
   // ============ GESTIÓN DE CAJA ============
   
   /**
-   * Cierra la caja diaria
+   * 🔧 CIERRA LA CAJA DIARIA CON FECHA ARGENTINA
    */
   static async closeDailyCash(
     gymId: string,

@@ -22,7 +22,7 @@ import MemberRoutines from './pages/member-routines/MemberRoutines';
 
 // NUEVOS COMPONENTES del sistema financiero
 import DashboardImproved from './pages/dashboard/DashboardImproved';
-import PaymentManagement from './components/payments/PaymentManagement';
+
 
 // Firebase
 import { auth } from './config/firebase';
@@ -127,9 +127,7 @@ const AppContent: React.FC = () => {
       // NUEVA OPCIÓN: Dashboard mejorado
       case 'dashboard-financial':
         return <DashboardImproved />;
-      // NUEVA OPCIÓN: Gestión de pagos
-      case 'payments':
-        return <PaymentManagement />;
+      
       case 'members':
         return <Members />;
       case 'attendance':

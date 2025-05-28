@@ -280,13 +280,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                         onClick={() => onNavigate('dashboard-financial')}
                         isNew={true}
                       />
-                      <NavItem
-                        icon={<CheckCircle size={16} />}
-                        text="Gestión de Pagos"
-                        active={isActive('payments')}
-                        onClick={() => onNavigate('payments')}
-                        isNew={true}
-                      />
+                   
                       <NavItem
                         icon={<ShoppingBag size={16} />}
                         text="Caja Diaria"

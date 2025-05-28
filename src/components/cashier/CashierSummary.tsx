@@ -1,8 +1,8 @@
-// src/components/cashier/CashierSummary.tsx
+// src/components/cashier/CashierSummary.tsx - CORREGIDO PARA HORAS Y ORDEN
 import React from 'react';
 import { DollarSign, FileText, TrendingUp, TrendingDown, Calendar, Clock } from 'lucide-react';
 import { DailyCash, Transaction } from '../../types/gym.types';
-import { formatCurrency } from '../../utils/formatting.utils';
+import { formatCurrency, toJavaScriptDate, formatTime } from '../../utils/formatting.utils';
 
 interface CashierSummaryProps {
   dailyCash: DailyCash | null;
@@ -19,6 +19,42 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
   isLoading,
   onViewTransactions
 }) => {
+  // 🔧 FUNCIÓN MEJORADA PARA FORMATEAR HORA CORRECTAMENTE
+  const formatTransactionTime = (timestamp: any): string => {
+    if (!timestamp) return 'No disponible';
+    
+    try {
+      // Primero intentar con toDate() si es un Timestamp de Firebase
+      let date: Date;
+      
+      if (timestamp && typeof timestamp.toDate === 'function') {
+        date = timestamp.toDate();
+      } else if (timestamp && timestamp.seconds) {
+        // Si es un timestamp serializado con seconds
+        date = new Date(timestamp.seconds * 1000);
+      } else if (timestamp instanceof Date) {
+        date = timestamp;
+      } else {
+        // Intentar crear Date directamente
+        date = new Date(timestamp);
+      }
+      
+      // Verificar si la fecha es válida
+      if (isNaN(date.getTime())) {
+        return 'Hora inválida';
+      }
+      
+      return date.toLocaleTimeString('es-AR', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: false // Formato 24 horas
+      });
+    } catch (error) {
+      console.error('Error formatting transaction time:', error, timestamp);
+      return 'Error en hora';
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center p-12">
@@ -59,17 +95,13 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
   // Obtener hora de apertura formateada
   const getFormattedOpeningTime = () => {
     if (!dailyCash.openingTime) return 'No disponible';
-    return dailyCash.openingTime.toDate ? 
-      dailyCash.openingTime.toDate().toLocaleTimeString('es-AR') : 
-      new Date(dailyCash.openingTime).toLocaleTimeString('es-AR');
+    return formatTransactionTime(dailyCash.openingTime);
   };
 
   // Obtener hora de cierre formateada
   const getFormattedClosingTime = () => {
     if (!dailyCash.closingTime) return 'No cerrada';
-    return dailyCash.closingTime.toDate ? 
-      dailyCash.closingTime.toDate().toLocaleTimeString('es-AR') : 
-      new Date(dailyCash.closingTime).toLocaleTimeString('es-AR');
+    return formatTransactionTime(dailyCash.closingTime);
   };
 
   return (
@@ -205,27 +237,27 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {/* Mostrar solo los últimos 5 movimientos */}
+                {/* 🔧 MOSTRAR SOLO LOS PRIMEROS 5 MOVIMIENTOS (ya están ordenados por fecha) */}
                 {transactions.slice(0, 5).map((tx) => (
                   <tr key={tx.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {tx.date && tx.date.toDate ? 
-                        tx.date.toDate().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : 
-                        new Date(tx.date).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                      {formatTransactionTime(tx.date || tx.createdAt)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {tx.description}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {tx.category === 'membership' ? 'Membresía' : 
-                        tx.category === 'extra' ? 'Ingreso Extra' : 
+                      {tx.category === 'membership' ? 'Membresía' : 
+                       tx.category === 'extra' ? 'Ingreso Extra' : 
                        tx.category === 'withdrawal' ? 'Retiro' : 
-                        typeof tx.category === 'string' ? tx.category : 'Otro'}
+                       tx.category === 'expense' ? 'Gasto' :
+                       tx.category === 'refund' ? 'Devolución' :
+                       typeof tx.category === 'string' ? tx.category : 'Otro'}
                     </td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium text-right ${
                       tx.type === 'income' ? 'text-green-600' : 'text-red-600'
                     }`}>
-                      {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                      {tx.type === 'income' ? '+' : '-'}{formatCurrency(Math.abs(tx.amount))}
                     </td>
                   </tr>
                 ))}
@@ -269,10 +301,12 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
                       {category === 'membership' ? 'Membresías' : 
                        category === 'extra' ? 'Ingresos Extras' : 
                        category === 'withdrawal' ? 'Retiros' : 
+                       category === 'expense' ? 'Gastos' :
+                       category === 'refund' ? 'Devoluciones' :
                        category}
                     </div>
                     <div className={`font-medium ${isIncome ? 'text-green-600' : 'text-red-600'}`}>
-                      {isIncome ? '+' : '-'}{formatCurrency(total)}
+                      {isIncome ? '+' : '-'}{formatCurrency(Math.abs(total))}
                     </div>
                   </div>
                   <div className="text-xs text-gray-500 mt-1">
