@@ -107,7 +107,12 @@ export const dateToString = (date: FirebaseDate): string => {
   const jsDate = toJsDate(date);
   if (!jsDate) return '';
   
-  return jsDate.toISOString().split('T')[0];
+  // ✅ CORRECCIÓN: Usar fecha local sin conversión de timezone
+  const year = jsDate.getFullYear();
+  const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+  const day = String(jsDate.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
 };
 
 // ========== NUEVAS FUNCIONES AGREGADAS ==========
@@ -118,9 +123,11 @@ export const dateToString = (date: FirebaseDate): string => {
 export const htmlDateToLocalDate = (htmlDate: string): Date => {
   if (!htmlDate) return new Date();
   
+  // ✅ CORRECCIÓN: Asegurar que no haya cambios de timezone
   const [year, month, day] = htmlDate.split('-').map(Number);
-  // Crear fecha local sin cambios de timezone
-  return new Date(year, month - 1, day);
+  // Crear fecha local exacta sin conversión de timezone
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0); // Usar mediodía para evitar cambios de día
+  return date;
 };
 
 /**

@@ -17,6 +17,7 @@ import {
 import { db } from '../config/firebase';
 import { Transaction, DailyCash } from '../types/gym.types';
 import { MembershipAssignment } from '../types/member.types';
+import { safelyConvertToDate, formatDisplayDate } from '../utils/date.utils';
 
 interface PaymentRequest {
   gymId: string;
@@ -65,19 +66,44 @@ export const getPendingMemberships = async (gymId: string, memberId: string): Pr
   }
 };
 
-// Crear descripción detallada para el pago
+// Crear descripción detallada para el pago (MEJORADA)
 const createPaymentDescription = (memberName: string, memberships: MembershipAssignment[]): string => {
   if (memberships.length === 0) {
     return `Pago de membresías de ${memberName}`;
   }
   
   if (memberships.length === 1) {
-    return `Pago de membresía ${memberships[0].activityName} de ${memberName}`;
+    // ✅ DESCRIPCIÓN DETALLADA PARA UNA MEMBRESÍA
+    const membership = memberships[0];
+    const startDate = safelyConvertToDate(membership.startDate);
+    const endDate = safelyConvertToDate(membership.endDate);
+    
+    let dateRange = '';
+    if (startDate && endDate) {
+      const startStr = formatDisplayDate(startDate);
+      const endStr = formatDisplayDate(endDate);
+      dateRange = ` (${startStr} - ${endStr})`;
+    }
+    
+    return `Pago de membresía ${membership.activityName}${dateRange} de ${memberName}`;
   }
   
-  // Múltiples membresías
-  const activities = memberships.map(m => m.activityName).join(', ');
-  return `Pago de membresías (${activities}) de ${memberName}`;
+  // ✅ DESCRIPCIÓN DETALLADA PARA MÚLTIPLES MEMBRESÍAS
+  const activitiesDetail = memberships.map(m => {
+    const startDate = safelyConvertToDate(m.startDate);
+    const endDate = safelyConvertToDate(m.endDate);
+    
+    let dateRange = '';
+    if (startDate && endDate) {
+      const startStr = formatDisplayDate(startDate);
+      const endStr = formatDisplayDate(endDate);
+      dateRange = ` (${startStr} - ${endStr})`;
+    }
+    
+    return `${m.activityName}${dateRange}`;
+  }).join(', ');
+  
+  return `Pago de membresías: ${activitiesDetail} de ${memberName}`;
 };
 
 // Registrar un pago de membresía y actualizar la caja diaria
