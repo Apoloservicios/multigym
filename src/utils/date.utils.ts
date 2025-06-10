@@ -1,8 +1,11 @@
-// src/utils/date.utils.ts
+// src/utils/date.utils.ts - VERSIÓN COMPLETA CON COMPATIBILIDAD
+
+import { Timestamp } from 'firebase/firestore';
 import { FirebaseDate } from '../types/firebase.types';
 
 /**
  * Convierte cualquier fecha de Firebase a un objeto Date estándar
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
  */
 export const toJsDate = (date: FirebaseDate): Date | null => {
   if (!date) return null;
@@ -31,7 +34,10 @@ export const toJsDate = (date: FirebaseDate): Date | null => {
   }
 };
 
-// Función segura para formatear fechas
+/**
+ * Función segura para formatear fechas
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
+ */
 export const formatDate = (date: FirebaseDate): string => {
   if (!date) return '';
   
@@ -51,7 +57,10 @@ export const formatDate = (date: FirebaseDate): string => {
   }
 };
 
-// Función segura para formatear fecha y hora
+/**
+ * Función segura para formatear fecha y hora
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
+ */
 export const formatDateTime = (date: FirebaseDate): string => {
   if (!date) return '';
   
@@ -71,20 +80,29 @@ export const formatDateTime = (date: FirebaseDate): string => {
   }
 };
 
-// Función para agregar días a una fecha
+/**
+ * Función para agregar días a una fecha
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
+ */
 export const addDays = (date: Date, days: number): Date => {
   const result = new Date(date);
   result.setDate(result.getDate() + days);
   return result;
 };
 
-// Función para calcular fecha de finalización basada en una fecha de inicio y duración
+/**
+ * Función para calcular fecha de finalización basada en una fecha de inicio y duración
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
+ */
 export const calculateEndDate = (startDate: Date | string, durationDays: number): Date => {
   const start = typeof startDate === 'string' ? new Date(startDate) : startDate;
   return addDays(start, durationDays);
 };
 
-// Función para convertir fecha a string YYYY-MM-DD (para inputs de tipo date)
+/**
+ * Función para convertir fecha a string YYYY-MM-DD (para inputs de tipo date)
+ * (FUNCIÓN ORIGINAL - MANTENIDA PARA COMPATIBILIDAD)
+ */
 export const dateToString = (date: FirebaseDate): string => {
   const jsDate = toJsDate(date);
   if (!jsDate) return '';
@@ -92,12 +110,161 @@ export const dateToString = (date: FirebaseDate): string => {
   return jsDate.toISOString().split('T')[0];
 };
 
-// Exportaciones por defecto para mantener compatibilidad
+// ========== NUEVAS FUNCIONES AGREGADAS ==========
+
+/**
+ * Convierte una fecha del input HTML date (YYYY-MM-DD) a Date local sin problemas de timezone
+ */
+export const htmlDateToLocalDate = (htmlDate: string): Date => {
+  if (!htmlDate) return new Date();
+  
+  const [year, month, day] = htmlDate.split('-').map(Number);
+  // Crear fecha local sin cambios de timezone
+  return new Date(year, month - 1, day);
+};
+
+/**
+ * Convierte una Date local a formato HTML date (YYYY-MM-DD)
+ */
+export const localDateToHtmlDate = (date: Date): string => {
+  if (!date) return '';
+  
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  
+  return `${year}-${month}-${day}`;
+};
+
+/**
+ * Convierte cualquier timestamp a Date JavaScript de forma segura
+ * (ALIAS MEJORADO DE toJsDate para mayor claridad)
+ */
+export const safelyConvertToDate = (timestamp: any): Date | null => {
+  return toJsDate(timestamp);
+};
+
+/**
+ * Formatea una fecha para mostrar en español (DD/MM/YYYY)
+ * (ALIAS MEJORADO DE formatDate para mayor claridad)
+ */
+export const formatDisplayDate = (dateInput: any): string => {
+  return formatDate(dateInput);
+};
+
+/**
+ * Formatea fecha y hora para mostrar en español
+ * (ALIAS MEJORADO DE formatDateTime para mayor claridad)
+ */
+export const formatDisplayDateTime = (dateInput: any): string => {
+  return formatDateTime(dateInput);
+};
+
+/**
+ * Calcula la edad basada en la fecha de nacimiento
+ */
+export const calculateAge = (birthDateInput: any): number | null => {
+  const birthDate = toJsDate(birthDateInput);
+  
+  if (!birthDate) return null;
+  
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  
+  return age;
+};
+
+/**
+ * Verifica si una fecha está vencida (anterior a hoy)
+ */
+export const isExpired = (dateInput: any): boolean => {
+  const date = toJsDate(dateInput);
+  
+  if (!date) return false;
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Inicio del día
+  
+  const compareDate = new Date(date);
+  compareDate.setHours(0, 0, 0, 0); // Inicio del día
+  
+  return compareDate < today;
+};
+
+/**
+ * Verifica si una fecha vence pronto (en los próximos días especificados)
+ */
+export const isExpiringSoon = (dateInput: any, daysAhead: number = 7): boolean => {
+  const date = toJsDate(dateInput);
+  
+  if (!date) return false;
+  
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const futureDate = new Date(today);
+  futureDate.setDate(today.getDate() + daysAhead);
+  
+  const compareDate = new Date(date);
+  compareDate.setHours(0, 0, 0, 0);
+  
+  return compareDate >= today && compareDate <= futureDate;
+};
+
+/**
+ * Convierte Date a Timestamp de Firebase
+ */
+export const dateToFirebaseTimestamp = (date: Date): Timestamp => {
+  return Timestamp.fromDate(date);
+};
+
+/**
+ * Obtiene la fecha actual en formato YYYY-MM-DD
+ */
+export const getCurrentDateString = (): string => {
+  return localDateToHtmlDate(new Date());
+};
+
+/**
+ * Verifica si dos fechas son el mismo día
+ */
+export const isSameDay = (date1: any, date2: any): boolean => {
+  const d1 = toJsDate(date1);
+  const d2 = toJsDate(date2);
+  
+  if (!d1 || !d2) return false;
+  
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
+};
+
+// ========== EXPORTACIÓN DEFAULT COMPLETA ==========
+
 export default {
+  // Funciones originales (compatibilidad)
   formatDate,
   formatDateTime,
   addDays,
   calculateEndDate,
   toJsDate,
-  dateToString
+  dateToString,
+  
+  // Nuevas funciones
+  htmlDateToLocalDate,
+  localDateToHtmlDate,
+  safelyConvertToDate,
+  formatDisplayDate,
+  formatDisplayDateTime,
+  calculateAge,
+  isExpired,
+  isExpiringSoon,
+  dateToFirebaseTimestamp,
+  getCurrentDateString,
+  isSameDay
 };

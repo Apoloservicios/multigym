@@ -176,11 +176,10 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
     switch (activeView) {
       case 'account':
         return (
-          <MemberAccountStatement 
-            memberId={member.id} 
+          <MemberAccountStatement
+            memberId={member.id}
             memberName={`${member.firstName} ${member.lastName}`}
             totalDebt={member.totalDebt}
-            onRegisterPayment={() => setActiveView('payment')}
           />
         );
       case 'payment':

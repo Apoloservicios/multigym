@@ -4,7 +4,7 @@ import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, Us
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import useAuth from '../../hooks/useAuth';
-import { attendanceService } from '../../services/attendance.service';
+import attendanceService from '../../services/attendance.service';
 import { doc, getDoc, collection, query, where, getDocs, limit, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { debounce } from 'lodash';
@@ -190,7 +190,7 @@ const AttendanceScanner: React.FC = () => {
     try {
       const memberships = await attendanceService.getActiveMemberships(gymData.id, memberId);
       
-      return memberships.map(m => ({
+      return memberships.map((m: any) => ({
         id: m.id,
         activityId: m.activityId,
         activityName: m.activityName,

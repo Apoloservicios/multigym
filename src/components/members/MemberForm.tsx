@@ -1,257 +1,310 @@
-// src/components/members/MemberForm.tsx
+// src/components/members/MemberForm.tsx - CORREGIDO MANEJO DE FECHAS
 
-import React, { useState, useEffect } from 'react';
-import { User, Mail, Phone, Calendar, MapPin, Save, Upload, X } from 'lucide-react';
-import { Member, MemberFormData } from '../../types/member.types';
-import { formatDate, dateToString } from '../../utils/date.utils';
-
-interface FormErrors {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-  phone?: string;
-  photo?: string;
-  form?: string;
-}
+import React, { useState } from 'react';
+import { User, Mail, Phone, MapPin, Calendar, Camera, X } from 'lucide-react';
+import { MemberFormData } from '../../types/member.types';
+import { 
+  htmlDateToLocalDate, 
+  localDateToHtmlDate, 
+  safelyConvertToDate,
+  formatDisplayDate,
+  calculateAge
+} from '../../utils/date.utils';
 
 interface MemberFormProps {
-  isEdit?: boolean;
-  initialData?: Member | null;
-  onSave: (data: MemberFormData) => void;
+  initialData?: Partial<MemberFormData>;
+  onSubmit: (data: MemberFormData) => Promise<void>;
   onCancel: () => void;
+  isLoading?: boolean;
+  title?: string;
 }
 
-const MemberForm: React.FC<MemberFormProps> = ({ isEdit = false, initialData = null, onSave, onCancel }) => {
-  const [formData, setFormData] = useState<MemberFormData>({
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
-    address: '',
-    birthDate: '',
-    photo: null,
-    status: 'active'
-  });
-  
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [errors, setErrors] = useState<FormErrors>({});
-  
-  // Si estamos en modo edición y tenemos datos iniciales, cargarlos
-  useEffect(() => {
-    if (isEdit && initialData) {
-      setFormData({
-        firstName: initialData.firstName || '',
-        lastName: initialData.lastName || '',
-        email: initialData.email || '',
-        phone: initialData.phone || '',
-        address: initialData.address || '',
-        // Usar dateToString para convertir cualquier formato de fecha a string YYYY-MM-DD
-        birthDate: initialData.birthDate ? dateToString(initialData.birthDate) : '',
-        status: initialData.status || 'active',
-        photo: null // No podemos cargar el File original, pero mostramos la vista previa
-      });
-      
-      if (initialData.photo) {
-        setPhotoPreview(initialData.photo);
+const MemberForm: React.FC<MemberFormProps> = ({
+  initialData,
+  onSubmit,
+  onCancel,
+  isLoading = false,
+  title = 'Nuevo Socio'
+}) => {
+  // Inicializar datos del formulario - CORREGIDO PARA FECHAS
+  const [formData, setFormData] = useState<MemberFormData>(() => {
+    const defaultData: MemberFormData = {
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      address: '',
+      birthDate: '', // String en formato YYYY-MM-DD
+      photo: null,
+      status: 'active'
+    };
+
+    if (initialData) {
+      // Si hay fecha de nacimiento, convertirla correctamente
+      let birthDateString = '';
+      if (initialData.birthDate) {
+        if (typeof initialData.birthDate === 'string') {
+          birthDateString = initialData.birthDate;
+        } else {
+          // Convertir desde timestamp/Date a string YYYY-MM-DD
+          const birthDate = safelyConvertToDate(initialData.birthDate);
+          birthDateString = birthDate ? localDateToHtmlDate(birthDate) : '';
+        }
       }
+
+      return {
+        ...defaultData,
+        ...initialData,
+        birthDate: birthDateString
+      };
     }
-  }, [isEdit, initialData]);
-  
+
+    return defaultData;
+  });
+
+  const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  // Manejar cambios en inputs
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value
-    });
     
-    // Limpiar error del campo cuando se edita
-    if (errors[name as keyof FormErrors]) {
-      setErrors({
-        ...errors,
-        [name]: undefined
-      });
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+    
+    // Limpiar error específico
+    if (errors[name]) {
+      setErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
     }
   };
-  
+
+  // Manejar cambio de archivo de foto
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      
-      // Validar tamaño (2MB máximo)
-      if (file.size > 2 * 1024 * 1024) {
-        setErrors({
-          ...errors,
-          photo: 'La imagen no debe superar los 2MB'
-        });
+    const file = e.target.files?.[0];
+    
+    if (file) {
+      // Validar tipo de archivo
+      if (!file.type.startsWith('image/')) {
+        setErrors(prev => ({
+          ...prev,
+          photo: 'Debe seleccionar un archivo de imagen válido'
+        }));
         return;
       }
-      
-      setFormData({
-        ...formData,
+
+      // Validar tamaño (máximo 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        setErrors(prev => ({
+          ...prev,
+          photo: 'La imagen debe ser menor a 5MB'
+        }));
+        return;
+      }
+
+      setFormData(prev => ({
+        ...prev,
         photo: file
-      });
-      
+      }));
+
       // Crear preview
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result as string);
+      reader.onload = (e) => {
+        setPhotoPreview(e.target?.result as string);
       };
       reader.readAsDataURL(file);
-      
+
       // Limpiar error
-      if (errors.photo) {
-        setErrors({
-          ...errors,
-          photo: undefined
-        });
-      }
+      setErrors(prev => ({
+        ...prev,
+        photo: ''
+      }));
     }
   };
-  
-  const validateForm = () => {
-    const newErrors: FormErrors = {};
+
+  // Remover foto
+  const removePhoto = () => {
+    setFormData(prev => ({
+      ...prev,
+      photo: null
+    }));
+    setPhotoPreview(null);
     
+    // Limpiar input de archivo
+    const photoInput = document.getElementById('photo') as HTMLInputElement;
+    if (photoInput) {
+      photoInput.value = '';
+    }
+  };
+
+  // Validación
+  const validateForm = (): boolean => {
+    const newErrors: { [key: string]: string } = {};
+
+    // Nombre requerido
     if (!formData.firstName.trim()) {
-      newErrors.firstName = 'El nombre es obligatorio';
+      newErrors.firstName = 'El nombre es requerido';
     }
-    
+
+    // Apellido requerido
     if (!formData.lastName.trim()) {
-      newErrors.lastName = 'El apellido es obligatorio';
+      newErrors.lastName = 'El apellido es requerido';
     }
-    
-    if (formData.email && !/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'El email no es válido';
+
+    // Email requerido y formato válido
+    if (!formData.email.trim()) {
+      newErrors.email = 'El email es requerido';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+      newErrors.email = 'El formato del email no es válido';
     }
-    
-    if (formData.phone && !/^\d{6,15}$/.test(formData.phone.replace(/\D/g, ''))) {
-      newErrors.phone = 'El teléfono debe tener entre 6 y 15 dígitos';
+
+    // Teléfono requerido
+    if (!formData.phone.trim()) {
+      newErrors.phone = 'El teléfono es requerido';
     }
-    
+
+    // Fecha de nacimiento - validar si se proporciona
+    if (formData.birthDate) {
+      const birthDate = htmlDateToLocalDate(formData.birthDate);
+      const today = new Date();
+      
+      if (birthDate > today) {
+        newErrors.birthDate = 'La fecha de nacimiento no puede ser futura';
+      }
+      
+      const age = calculateAge(birthDate);
+      if (age !== null && age > 120) {
+        newErrors.birthDate = 'La fecha de nacimiento no es válida';
+      }
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
-  
-  // Función handleSubmit completamente:
-const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!validateForm()) {
-    return;
-  }
-  
-  setLoading(true);
-  setErrors({});
-  
-  try {
-    console.log("Formulario validado, intentando guardar...");
-    
-    // Verifica si hay foto y su tamaño
-    if (formData.photo) {
-      console.log("Foto a cargar:", formData.photo.name, "Tamaño:", formData.photo.size);
+
+  // Manejar envío
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      return;
     }
-    
-    // Enviar los datos al callback del componente padre
-    onSave(formData);
-  } catch (error) {
-    console.error('Error al guardar socio:', error);
-    setErrors({
-      ...errors,
-      form: 'Ocurrió un error al guardar. Intente nuevamente.'
-    });
-  } finally {
-    setLoading(false);
-  }
-};
-  
+
+    try {
+      await onSubmit(formData);
+    } catch (error) {
+      console.error('Error submitting form:', error);
+    }
+  };
+
+  // Calcular edad si hay fecha de nacimiento
+  const displayAge = formData.birthDate ? calculateAge(htmlDateToLocalDate(formData.birthDate)) : null;
+
   return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold mb-6">{isEdit ? 'Editar Socio' : 'Nuevo Socio'}</h2>
-      
-      {errors.form && (
-        <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-md">
-          {errors.form}
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Foto */}
-          <div className="md:col-span-2 flex flex-col items-center">
-            <div className="relative">
-              {photoPreview ? (
-                <img 
+    <div className="bg-white rounded-lg shadow-md overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-200">
+        <h2 className="text-xl font-semibold text-gray-900">{title}</h2>
+      </div>
+
+      <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        {/* Foto */}
+        <div className="flex justify-center">
+          <div className="relative">
+            {photoPreview ? (
+              <div className="relative">
+                <img
                   src={photoPreview}
-                  alt="Preview" 
-                  className="h-32 w-32 rounded-full object-cover border-4 border-gray-200"
+                  alt="Preview"
+                  className="w-24 h-24 rounded-full object-cover border-4 border-gray-200"
                 />
-              ) : (
-                <div className="h-32 w-32 rounded-full bg-gray-200 flex items-center justify-center border-4 border-gray-100">
-                  <User size={48} className="text-gray-400" />
-                </div>
-              )}
-              
-              <label className="absolute bottom-0 right-0 bg-blue-600 p-2 rounded-full cursor-pointer text-white hover:bg-blue-700 transition-colors">
-                <Upload size={16} />
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  className="sr-only"
-                />
-              </label>
-            </div>
+                <button
+                  type="button"
+                  onClick={removePhoto}
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <div className="w-24 h-24 rounded-full bg-gray-200 flex items-center justify-center">
+                <Camera size={24} className="text-gray-400" />
+              </div>
+            )}
             
-            {errors.photo && (
-              <p className="mt-1 text-sm text-red-600">{errors.photo}</p>
-            )}
-            <p className="mt-2 text-sm text-gray-500">
-              Foto del socio (opcional)
-            </p>
-          </div>
-          
-          {/* Apellido */}
-          <div>
-            <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-1">
-              Apellido *
-            </label>
             <input
-              type="text"
-              id="lastName"
-              name="lastName"
-              value={formData.lastName}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border ${errors.lastName ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-              placeholder="Apellido del socio"
+              type="file"
+              id="photo"
+              accept="image/*"
+              onChange={handlePhotoChange}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
-            {errors.lastName && (
-              <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
-            )}
           </div>
-          
+        </div>
+        {errors.photo && (
+          <p className="text-center text-sm text-red-600">{errors.photo}</p>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Nombre */}
           <div>
             <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-1">
               Nombre *
             </label>
-            <input
-              type="text"
-              id="firstName"
-              name="firstName"
-              value={formData.firstName}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border ${errors.firstName ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-              placeholder="Nombre del socio"
-            />
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <User size={18} className="text-gray-400" />
+              </div>
+              <input
+                type="text"
+                id="firstName"
+                name="firstName"
+                value={formData.firstName}
+                onChange={handleChange}
+                className={`pl-10 w-full px-4 py-2 border ${
+                  errors.firstName ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                placeholder="Nombre del socio"
+              />
+            </div>
             {errors.firstName && (
               <p className="mt-1 text-sm text-red-600">{errors.firstName}</p>
             )}
           </div>
-          
+
+          {/* Apellido */}
+          <div>
+            <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-1">
+              Apellido *
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <User size={18} className="text-gray-400" />
+              </div>
+              <input
+                type="text"
+                id="lastName"
+                name="lastName"
+                value={formData.lastName}
+                onChange={handleChange}
+                className={`pl-10 w-full px-4 py-2 border ${
+                  errors.lastName ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                placeholder="Apellido del socio"
+              />
+            </div>
+            {errors.lastName && (
+              <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
+            )}
+          </div>
+
           {/* Email */}
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-              Email
+              Email *
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -263,7 +316,9 @@ const handleSubmit = async (e: React.FormEvent) => {
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                className={`pl-10 w-full px-4 py-2 border ${errors.email ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                className={`pl-10 w-full px-4 py-2 border ${
+                  errors.email ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="correo@ejemplo.com"
               />
             </div>
@@ -271,11 +326,11 @@ const handleSubmit = async (e: React.FormEvent) => {
               <p className="mt-1 text-sm text-red-600">{errors.email}</p>
             )}
           </div>
-          
+
           {/* Teléfono */}
           <div>
             <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-              Teléfono
+              Teléfono *
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -287,7 +342,9 @@ const handleSubmit = async (e: React.FormEvent) => {
                 name="phone"
                 value={formData.phone}
                 onChange={handleChange}
-                className={`pl-10 w-full px-4 py-2 border ${errors.phone ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                className={`pl-10 w-full px-4 py-2 border ${
+                  errors.phone ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
                 placeholder="Número de contacto"
               />
             </div>
@@ -295,9 +352,9 @@ const handleSubmit = async (e: React.FormEvent) => {
               <p className="mt-1 text-sm text-red-600">{errors.phone}</p>
             )}
           </div>
-          
+
           {/* Dirección */}
-          <div>
+          <div className="md:col-span-2">
             <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
               Dirección
             </label>
@@ -316,7 +373,7 @@ const handleSubmit = async (e: React.FormEvent) => {
               />
             </div>
           </div>
-          
+
           {/* Fecha de nacimiento */}
           <div>
             <label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-1">
@@ -332,11 +389,22 @@ const handleSubmit = async (e: React.FormEvent) => {
                 name="birthDate"
                 value={formData.birthDate}
                 onChange={handleChange}
-                className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                max={new Date().toISOString().split('T')[0]} // No permitir fechas futuras
+                className={`pl-10 w-full px-4 py-2 border ${
+                  errors.birthDate ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
               />
             </div>
+            {formData.birthDate && displayAge !== null && (
+              <p className="mt-1 text-sm text-gray-600">
+                Edad: {displayAge} años
+              </p>
+            )}
+            {errors.birthDate && (
+              <p className="mt-1 text-sm text-red-600">{errors.birthDate}</p>
+            )}
           </div>
-          
+
           {/* Estado */}
           <div>
             <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">
@@ -354,28 +422,23 @@ const handleSubmit = async (e: React.FormEvent) => {
             </select>
           </div>
         </div>
-        
-        {/* Botones de acción */}
-        <div className="mt-8 flex justify-end space-x-3">
+
+        {/* Botones */}
+        <div className="flex justify-end space-x-3 pt-6 border-t border-gray-200">
           <button
             type="button"
             onClick={onCancel}
-            className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center"
+            disabled={isLoading}
+            className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
           >
-            <X size={18} className="mr-2" />
             Cancelar
           </button>
           <button
             type="submit"
-            disabled={loading}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors flex items-center"
+            disabled={isLoading}
+            className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
           >
-            {loading ? (
-              <span className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-            ) : (
-              <Save size={18} className="mr-2" />
-            )}
-            {loading ? 'Guardando...' : 'Guardar Socio'}
+            {isLoading ? 'Guardando...' : 'Guardar Socio'}
           </button>
         </div>
       </form>

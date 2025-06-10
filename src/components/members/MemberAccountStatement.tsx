@@ -1,71 +1,83 @@
-// src/components/members/MemberAccountStatement.tsx
+// src/components/members/MemberAccountStatement.tsx - CORREGIDO PROPS
+
 import React, { useState, useEffect } from 'react';
-import { Calendar, DollarSign, Download, CreditCard, RefreshCw, AlertCircle } from 'lucide-react';
-// Usar la importación correcta para Transaction
+import { 
+  AlertCircle, RefreshCw, Download, Receipt, Share, 
+  Calendar, Filter, FileSpreadsheet 
+} from 'lucide-react';
 import { Transaction } from '../../types/gym.types';
+import { MembershipAssignment } from '../../types/member.types';
+import { getMemberPaymentHistory, getPendingMemberships } from '../../services/payment.service';
+import { formatDisplayDate } from '../../utils/date.utils';
 import { formatCurrency } from '../../utils/formatting.utils';
-import { getMemberPaymentHistory } from '../../services/payment.service';
+import { exportTransactionsToExcel } from '../../utils/excel.utils';
+import { generateReceiptPDF, generateWhatsAppLink } from '../../utils/receipt.utils';
+import PaymentReceipt from '../payments/PaymentReceipt';
 import useAuth from '../../hooks/useAuth';
 
+// ✅ PROPS CORREGIDAS - SIN onRegisterPayment
 interface MemberAccountStatementProps {
   memberId: string;
   memberName: string;
   totalDebt: number;
-  onRegisterPayment: () => void;
 }
 
-const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({ 
-  memberId, 
+const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
+  memberId,
   memberName,
-  totalDebt,
-  onRegisterPayment
+  totalDebt
 }) => {
   const { gymData } = useAuth();
   
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [period, setPeriod] = useState<string>('all');
-  const [error, setError] = useState<string>('');
-  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [pendingMemberships, setPendingMemberships] = useState<MembershipAssignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [error, setError] = useState('');
+  const [period, setPeriod] = useState('all');
   
-  // Cargar historial de pagos
+  // Estados para comprobante
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [selectedMemberships, setSelectedMemberships] = useState<MembershipAssignment[]>([]);
+
+  // Cargar datos iniciales
   useEffect(() => {
-    const fetchPaymentHistory = async () => {
-      if (!gymData?.id || !memberId) {
-        setLoading(false);
-        return;
-      }
-      
-      setLoading(true);
-      
-      try {
-        const history = await getMemberPaymentHistory(gymData.id, memberId);
-        setTransactions(history);
-      } catch (err: any) {
-        console.error('Error loading payment history:', err);
-        setError(err.message || 'Error al cargar el historial de pagos');
-      } finally {
-        setLoading(false);
-      }
-    };
+    loadData();
+  }, [memberId]);
+
+  const loadData = async () => {
+    if (!gymData?.id) return;
     
-    fetchPaymentHistory();
-  }, [gymData?.id, memberId]);
-  
+    setLoading(true);
+    setError('');
+    
+    try {
+      const [historyData, pendingData] = await Promise.all([
+        getMemberPaymentHistory(gymData.id, memberId),
+        getPendingMemberships(gymData.id, memberId)
+      ]);
+      
+      setTransactions(historyData);
+      setPendingMemberships(pendingData);
+    } catch (err: any) {
+      console.error('Error loading account data:', err);
+      setError(err.message || 'Error al cargar el estado de cuenta');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Filtrar transacciones por período
   const filteredTransactions = () => {
-    if (period === 'all') {
-      return transactions;
-    }
-    
-    const today = new Date();
-    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const lastDayOfPreviousMonth = new Date(today.getFullYear(), today.getMonth(), 0);
-    const firstDayOfPreviousMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    const firstDayOfYear = new Date(today.getFullYear(), 0, 1);
-    
+    const now = new Date();
+    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const firstDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
+
     return transactions.filter(tx => {
-      // Manejar timestamp de Firestore correctamente
       const txDate = tx.date && typeof tx.date === 'object' && 'toDate' in tx.date 
         ? tx.date.toDate() 
         : new Date(tx.date);
@@ -82,22 +94,12 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
       }
     });
   };
-  
-  // Calcular saldo (solo para visualización)
-  const calcBalance = () => {
-    return transactions
-      .filter(tx => tx.status === 'completed')
-      .reduce((acc, tx) => acc + (tx.type === 'income' ? -tx.amount : tx.amount), 0);
-  };
-  
+
   // Formatear fecha
   const formatDate = (date: any) => {
-    const d = date && typeof date === 'object' && 'toDate' in date 
-      ? date.toDate() 
-      : new Date(date);
-    return d.toLocaleDateString('es-AR');
+    return formatDisplayDate(date);
   };
-  
+
   // Obtener el nombre del método de pago
   const getPaymentMethodName = (method: string) => {
     switch (method) {
@@ -107,7 +109,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
       default: return method;
     }
   };
-  
+
   // Obtener el estilo según el estado de la transacción
   const getStatusStyle = (status: string) => {
     switch (status) {
@@ -121,61 +123,94 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
         return 'bg-gray-100 text-gray-800';
     }
   };
-  
+
   // Función para refrescar los datos
   const refreshData = async () => {
-    setLoading(true);
+    setRefreshing(true);
     try {
-      const history = await getMemberPaymentHistory(gymData?.id || '', memberId);
-      setTransactions(history);
-      setError('');
-    } catch (err: any) {
-      console.error('Error refreshing payment history:', err);
-      setError(err.message || 'Error al actualizar el historial de pagos');
+      await loadData();
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   };
-  
-  // Exportar a CSV
-  const exportToCSV = () => {
+
+  // Exportar a Excel
+  const exportToExcel = async () => {
     setIsExporting(true);
     
     try {
-      // Obtener las transacciones filtradas
       const dataToExport = filteredTransactions();
-      
-      // Crear contenido CSV
-      let csvContent = 'Fecha,Concepto,Monto,Método de Pago,Estado\n';
-      
-      dataToExport.forEach(tx => {
-        const date = formatDate(tx.date);
-        const description = tx.description.replace(/,/g, '');
-        const amount = tx.type === 'income' ? -tx.amount : tx.amount;
-        const method = getPaymentMethodName(tx.paymentMethod || '');
-        const status = tx.status === 'completed' ? 'Completado' : 
-                      tx.status === 'pending' ? 'Pendiente' : 'Cancelado';
-        
-        csvContent += `${date},"${description}",${amount},${method},${status}\n`;
-      });
-      
-      // Crear blob y descargar
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `estado-cuenta-${memberName.replace(/\s+/g, '-')}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      await exportTransactionsToExcel(dataToExport, memberName);
     } catch (err) {
-      console.error('Error exporting to CSV:', err);
+      console.error('Error exporting to Excel:', err);
+      setError('Error al exportar a Excel');
     } finally {
       setIsExporting(false);
     }
   };
-  
+
+  // Mostrar comprobante de pago
+  const showPaymentReceipt = async (transaction: Transaction) => {
+    try {
+      // Buscar membresías relacionadas con esta transacción
+      const relatedMemberships: MembershipAssignment[] = [];
+      
+      if (transaction.membershipId) {
+        // Si hay IDs de membresías en la transacción
+        const membershipIds = transaction.membershipId.split(', ');
+        
+        for (const membershipId of membershipIds) {
+          const foundMembership = pendingMemberships.find(m => m.id === membershipId);
+          if (foundMembership) {
+            relatedMemberships.push(foundMembership);
+          }
+        }
+      }
+      
+      setSelectedTransaction(transaction);
+      setSelectedMemberships(relatedMemberships);
+      setShowReceipt(true);
+    } catch (err) {
+      console.error('Error preparing receipt:', err);
+    }
+  };
+
+  // Generar PDF del comprobante
+  const handleDownloadPDF = async () => {
+    if (!selectedTransaction) return;
+    
+    try {
+      await generateReceiptPDF(
+        selectedTransaction,
+        memberName,
+        selectedMemberships,
+        gymData?.name || 'MultiGym'
+      );
+    } catch (err) {
+      console.error('Error generating PDF:', err);
+      setError('Error al generar PDF del comprobante');
+    }
+  };
+
+  // Compartir por WhatsApp
+  const handleShareWhatsApp = () => {
+    if (!selectedTransaction) return;
+    
+    try {
+      const whatsappLink = generateWhatsAppLink(
+        selectedTransaction,
+        memberName,
+        selectedMemberships,
+        gymData?.name || 'MultiGym'
+      );
+      
+      window.open(whatsappLink, '_blank');
+    } catch (err) {
+      console.error('Error generating WhatsApp link:', err);
+      setError('Error al generar enlace de WhatsApp');
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
       <h2 className="text-xl font-semibold mb-2">Estado de Cuenta</h2>
@@ -210,20 +245,21 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
           
           <button 
             onClick={refreshData}
-            disabled={loading}
+            disabled={refreshing}
             className="px-3 py-2 border rounded-md hover:bg-gray-50 text-gray-700"
             title="Actualizar"
           >
-            <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
           </button>
           
           <button
-            onClick={exportToCSV}
+            onClick={exportToExcel}
             disabled={isExporting || transactions.length === 0}
-            className="px-3 py-2 border rounded-md hover:bg-gray-50 text-gray-700"
-            title="Exportar a CSV"
+            className="px-3 py-2 border rounded-md hover:bg-gray-50 text-gray-700 flex items-center"
+            title="Exportar a Excel"
           >
-            <Download size={18} className={isExporting ? 'animate-pulse' : ''} />
+            <FileSpreadsheet size={18} className={isExporting ? 'animate-pulse' : ''} />
+            {!isExporting && <span className="ml-1 hidden sm:inline">Excel</span>}
           </button>
         </div>
       </div>
@@ -247,6 +283,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
                 <th className="px-4 py-3 text-right text-sm font-medium text-gray-600 border-b">Importe</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Método</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Estado</th>
+                <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 border-b">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -266,22 +303,40 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
                        tx.status === 'pending' ? 'Pendiente' : 'Cancelado'}
                     </span>
                   </td>
+                  <td className="px-4 py-3 text-sm text-center">
+                    {tx.status === 'completed' && tx.type === 'income' && (
+                      <button
+                        onClick={() => showPaymentReceipt(tx)}
+                        className="inline-flex items-center px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200"
+                        title="Ver comprobante"
+                      >
+                        <Receipt size={14} className="mr-1" />
+                        Comprobante
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      
-      <div className="mt-6 flex justify-end">
-        <button 
-          onClick={onRegisterPayment}
-          className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center"
-        >
-          <DollarSign size={18} className="mr-2" />
-          Registrar Pago
-        </button>
-      </div>
+
+      {/* Modal de comprobante */}
+      {showReceipt && selectedTransaction && (
+        <PaymentReceipt
+          transaction={selectedTransaction}
+          memberName={memberName}
+          memberships={selectedMemberships}
+          onClose={() => {
+            setShowReceipt(false);
+            setSelectedTransaction(null);
+            setSelectedMemberships([]);
+          }}
+          onDownloadPDF={handleDownloadPDF}
+          onShareWhatsApp={handleShareWhatsApp}
+        />
+      )}
     </div>
   );
 };

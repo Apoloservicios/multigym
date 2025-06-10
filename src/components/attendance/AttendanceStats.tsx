@@ -1,8 +1,10 @@
-// src/components/attendance/AttendanceStats.tsx
+// src/components/attendance/AttendanceStats.tsx - CORREGIDO
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Calendar, Users, TrendingUp, Activity } from 'lucide-react';
-import { attendanceService, AttendanceStats } from '../../services/attendance.service';
+
+import attendanceService from '../../services/attendance.service';
+import { AttendanceStats } from '../../types/attendance.types';
 import useAuth from '../../hooks/useAuth';
 
 interface AttendanceStatsProps {
@@ -52,16 +54,17 @@ const AttendanceStatsComponent: React.FC<AttendanceStatsProps> = ({ refreshTrigg
         const nextDay = new Date(date);
         nextDay.setDate(nextDay.getDate() + 1);
 
+        // ✅ CORREGIDO: Llamar correctamente a getAttendanceByDateRange
         const dayAttendances = await attendanceService.getAttendanceByDateRange(
           gymData.id,
-          date,
-          nextDay
+          date, // ✅ CORREGIDO: pasar Date object, no string
+          nextDay // ✅ CORREGIDO: pasar Date object, no string
         );
 
         data.push({
           date: date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }),
           asistencias: dayAttendances.length,
-          socios: new Set(dayAttendances.map(a => a.memberId)).size
+          socios: new Set(dayAttendances.map((a: any) => a.memberId)).size
         });
       }
 
@@ -173,14 +176,14 @@ const AttendanceStatsComponent: React.FC<AttendanceStatsProps> = ({ refreshTrigg
       )}
 
       {/* Asistencias recientes */}
-      {stats.recentAttendances.length > 0 && (
+      {stats.recentAttendances && stats.recentAttendances.length > 0 && (
         <div>
           <h4 className="text-sm font-medium text-gray-700 mb-3 flex items-center">
             <Users size={16} className="mr-2" />
             Asistencias Recientes
           </h4>
           <div className="space-y-2 max-h-32 overflow-y-auto">
-            {stats.recentAttendances.slice(0, 5).map((attendance) => (
+            {stats.recentAttendances.slice(0, 5).map((attendance: any) => (
               <div
                 key={attendance.id}
                 className="flex items-center justify-between p-2 bg-gray-50 rounded-md text-sm"

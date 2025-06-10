@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, UserCheck, QrCode, Calendar, AlertCircle, CheckCircle } from 'lucide-react';
 import { Member } from '../../types/member.types';
-import { attendanceService } from '../../services/attendance.service';
+import attendanceService from '../../services/attendance.service';
 import useAuth from '../../hooks/useAuth';
 import useFirestore from '../../hooks/useFirestore';
 

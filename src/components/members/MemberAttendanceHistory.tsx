@@ -2,8 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, Clock, Activity, AlertCircle, Filter, Download, UserCheck, Building } from 'lucide-react';
 import { Member } from '../../types/member.types';
-import { AttendanceRecord, getMemberAttendanceHistory } from '../../services/attendance.service';
+import { AttendanceRecord } from '../../types/attendance.types';
+import attendanceService from '../../services/attendance.service';
 import useAuth from '../../hooks/useAuth';
+
+
 
 interface MemberAttendanceHistoryProps {
   member: Member;
@@ -34,10 +37,9 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
       setError('');
       
       // Usar la función corregida del servicio
-      const history = await getMemberAttendanceHistory(gymData.id, member.id, 50);
-      
+      const attendances = await attendanceService.getMemberAttendanceHistory(gymData.id, member.id);      
       // Filtrar según el filtro seleccionado
-      const filteredHistory = filterAttendances(history);
+      const filteredHistory = filterAttendances(attendances);
       setAttendances(filteredHistory);
     } catch (err: any) {
       console.error('Error loading attendance history:', err);

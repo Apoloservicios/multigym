@@ -12,8 +12,9 @@ import { addMember, updateMember } from '../../services/member.service';
 import useFirestore from '../../hooks/useFirestore';
 import useAuth from '../../hooks/useAuth';
 import { AlertCircle, CheckCircle } from 'lucide-react';
-
+import { dateToString } from '../../utils/date.utils';
 type ViewType = 'list' | 'form' | 'detail' | 'qr' | 'membership' | 'payment';
+
 
 const Members: React.FC = () => {
   const { gymData } = useAuth();
@@ -185,12 +186,21 @@ const Members: React.FC = () => {
     switch (view) {
       case 'form':
         return (
-          <MemberForm 
-            isEdit={isEdit}
-            initialData={selectedMember}
-            onSave={handleSaveMember}
-            onCancel={() => setView(selectedMember ? 'detail' : 'list')}
-          />
+        <MemberForm 
+          initialData={selectedMember ? {
+            firstName: selectedMember.firstName,
+            lastName: selectedMember.lastName,
+            email: selectedMember.email,
+            phone: selectedMember.phone,
+            address: selectedMember.address,
+            birthDate: selectedMember.birthDate ? dateToString(selectedMember.birthDate) : '',
+            photo: null,
+            status: selectedMember.status
+          } : undefined}
+          onSubmit={handleSaveMember}
+          onCancel={() => setView(selectedMember ? 'detail' : 'list')}
+          title={selectedMember ? 'Editar Socio' : 'Nuevo Socio'}
+        />
         );
       case 'detail':
         if (!selectedMember) return null;

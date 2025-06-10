@@ -1,4 +1,5 @@
-// src/services/attendance.service.ts
+// src/services/attendance.service.ts - VERSIÓN COMPLETA Y CORREGIDA
+
 import { 
   collection, 
   doc, 
@@ -15,6 +16,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
+import { AttendanceStats } from '../types/attendance.types';
+
 export interface AttendanceRecord {
   id?: string;
   memberId: string;
@@ -30,19 +33,12 @@ export interface AttendanceRecord {
   notes?: string;
   createdAt?: any;
   // NUEVOS CAMPOS
-  registeredBy?: 'gym' | 'member'; // Quién registró la asistencia
-  registeredByUserId?: string; // ID del usuario que registró (si fue el gimnasio)
-  registeredByUserName?: string; // Nombre del usuario que registró
+  registeredBy?: 'gym' | 'member';
+  registeredByUserId?: string;
+  registeredByUserName?: string;
 }
 
-export interface AttendanceStats {
-  totalToday: number;
-  totalThisWeek: number;
-  totalThisMonth: number;
-  uniqueMembersToday: number;
-  uniqueMembersThisWeek: number;
-  recentAttendances: AttendanceRecord[];
-}
+
 
 class AttendanceService {
   // Registrar una asistencia con selección de membresía
@@ -54,11 +50,10 @@ class AttendanceService {
       memberFirstName: string;
       memberLastName: string;
       memberEmail: string;
-      membershipId: string; // REQUERIDO - ID de la membresía específica
+      membershipId: string;
       activityId?: string;
       activityName: string;
       notes?: string;
-      // NUEVOS CAMPOS OPCIONALES
       registeredBy?: 'gym' | 'member';
       registeredByUserId?: string;
       registeredByUserName?: string;
@@ -315,7 +310,7 @@ class AttendanceService {
     return this.getAttendanceByDateRange(gymId, today, tomorrow);
   }
 
-  // Obtener estadísticas de asistencia
+  // ✅ OBTENER ESTADÍSTICAS DE ASISTENCIA (CORREGIDO PARA COINCIDIR CON TIPOS)
   async getAttendanceStats(gymId: string): Promise<AttendanceStats> {
     try {
       const now = new Date();
@@ -340,11 +335,22 @@ class AttendanceService {
       const uniqueMembersToday = new Set(todayAttendances.map(a => a.memberId)).size;
       const uniqueMembersThisWeek = new Set(weekAttendances.map(a => a.memberId)).size;
 
+      // ✅ CORREGIDO: Devolver objeto compatible con AttendanceStats del types
       return {
+        // Propiedades originales del tipo AttendanceStats
+        totalAttendances: monthAttendances.length,
+        todayAttendances: todayAttendances.length,
+        uniqueMembersToday,
+        successfulAttendances: monthAttendances.filter(a => a.status === 'success').length,
+        errorAttendances: monthAttendances.filter(a => a.status === 'failed' || a.status === 'expired').length,
+        averageAttendancesPerDay: Math.round(monthAttendances.length / 30),
+        peakHour: this.calculatePeakHour(monthAttendances),
+        mostActiveMembers: this.getMostActiveMembers(monthAttendances),
+        
+        // Propiedades adicionales para compatibilidad
         totalToday: todayAttendances.length,
         totalThisWeek: weekAttendances.length,
         totalThisMonth: monthAttendances.length,
-        uniqueMembersToday,
         uniqueMembersThisWeek,
         recentAttendances
       };
@@ -353,6 +359,60 @@ class AttendanceService {
       console.error('Error getting attendance stats:', error);
       throw error;
     }
+  }
+
+  // ✅ FUNCIONES AUXILIARES PARA ESTADÍSTICAS
+  private calculatePeakHour(attendances: AttendanceRecord[]): number {
+    const hourCounts: { [hour: number]: number } = {};
+    
+    attendances.forEach(attendance => {
+      try {
+        const date = attendance.timestamp?.toDate ? 
+          attendance.timestamp.toDate() : 
+          new Date(attendance.timestamp);
+        const hour = date.getHours();
+        hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+      } catch (error) {
+        // Ignorar errores de fecha
+      }
+    });
+
+    let peakHour = 9; // Default
+    let maxCount = 0;
+    
+    Object.entries(hourCounts).forEach(([hour, count]) => {
+      if (count > maxCount) {
+        maxCount = count;
+        peakHour = parseInt(hour);
+      }
+    });
+
+    return peakHour;
+  }
+
+  private getMostActiveMembers(attendances: AttendanceRecord[]): Array<{memberId: string, memberName: string, count: number}> {
+    const memberCounts: { [memberId: string]: { name: string, count: number } } = {};
+    
+    attendances.forEach(attendance => {
+      const memberId = attendance.memberId;
+      if (memberCounts[memberId]) {
+        memberCounts[memberId].count++;
+      } else {
+        memberCounts[memberId] = {
+          name: attendance.memberName,
+          count: 1
+        };
+      }
+    });
+
+    return Object.entries(memberCounts)
+      .map(([memberId, data]) => ({
+        memberId,
+        memberName: data.name,
+        count: data.count
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
   }
 
   // Obtener asistencias recientes
@@ -383,8 +443,8 @@ class AttendanceService {
     }
   }
 
-  // Obtener asistencias de un miembro específico
-  async getMemberAttendance(
+  // ✅ OBTENER ASISTENCIAS DE UN MIEMBRO (NOMBRE CORRECTO)
+  async getMemberAttendances(
     gymId: string, 
     memberId: string, 
     limitCount: number = 20
@@ -416,13 +476,13 @@ class AttendanceService {
     }
   }
 
-  // Alias para compatibilidad con código existente
+  // ✅ ALIAS PARA COMPATIBILIDAD CON CÓDIGO EXISTENTE
   async getMemberAttendanceHistory(
     gymId: string, 
     memberId: string, 
     limitCount: number = 20
   ): Promise<AttendanceRecord[]> {
-    return this.getMemberAttendance(gymId, memberId, limitCount);
+    return this.getMemberAttendances(gymId, memberId, limitCount);
   }
 
   // Registrar asistencia por QR - REQUIERE SELECCIÓN DE MEMBRESÍA
