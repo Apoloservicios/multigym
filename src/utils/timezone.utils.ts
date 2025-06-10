@@ -217,9 +217,11 @@ export const getThisMonthStartInArgentina = (): Timestamp => {
  */
 export const formatDateForDisplay = (dateString: string): string => {
   try {
+    if (!dateString) return '';
     const [year, month, day] = dateString.split('-');
     return `${day}/${month}/${year}`;
   } catch (error) {
+    console.error('Error formatting date for display:', error);
     return dateString;
   }
 };

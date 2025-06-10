@@ -21,6 +21,12 @@ import {
   normalizeDailyCashForLegacy,
   calculateCashBalance 
 } from '../../utils/compatibility.utils';
+import { 
+  getCurrentDateInArgentina,
+  getCurrentTimeInArgentina,
+  isTodayInArgentina,
+  formatDateForDisplay 
+} from '../../utils/timezone.utils';
 import { DailyCash, Transaction } from '../../types/gym.types';
 import useAuth from '../../hooks/useAuth';
 import TransactionList from './TransactionList';
@@ -44,96 +50,63 @@ const CashierDashboard: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
 
-  // 🔧 FUNCIÓN PARA OBTENER FECHA ACTUAL EN ARGENTINA
-  const getCurrentDateInArgentina = (): string => {
-    const now = new Date();
-    
-    // Crear fecha en zona horaria de Argentina (UTC-3)
-    const argentinaTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
-    
-    // Formatear como YYYY-MM-DD
-    const year = argentinaTime.getFullYear();
-    const month = String(argentinaTime.getMonth() + 1).padStart(2, '0');
-    const day = String(argentinaTime.getDate()).padStart(2, '0');
-    
-    return `${year}-${month}-${day}`;
-  };
-
-  // 🔧 FUNCIÓN PARA OBTENER HORA ACTUAL EN ARGENTINA
-  const getCurrentTimeInArgentina = (): string => {
-    const now = new Date();
-    const argentinaTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Argentina/Buenos_Aires"}));
-    
-    return argentinaTime.toLocaleTimeString('es-AR', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    });
-  };
-
-  // 🔧 FUNCIÓN PARA VERIFICAR SI UNA FECHA ES HOY EN ARGENTINA
-  const isToday = (dateString: string): boolean => {
-    return dateString === getCurrentDateInArgentina();
-  };
-
-  // 🔧 INICIALIZAR CON FECHA ARGENTINA
-  useEffect(() => {
-    const argentinaDate = getCurrentDateInArgentina();
-    setSelectedDate(argentinaDate);
-  }, []);
-
-  // 🔧 FUNCIÓN HELPER PARA MOSTRAR FECHAS
-  const getDisplayDate = (date?: string): string => {
-    if (!date) {
-      date = getCurrentDateInArgentina();
-    }
-    
-    try {
-      const [year, month, day] = date.split('-');
-      return `${day}/${month}/${year}`;
-    } catch (error) {
-      return formatDate(new Date(date));
-    }
-  };
-
   // 🔧 FUNCIÓN HELPER PARA FORMATEAR TIEMPO SEGURO
   const safeFormatTime = (timestamp: any): string => {
     const jsDate = toJavaScriptDate(timestamp);
     return jsDate ? formatTime(jsDate) : 'No disponible';
   };
 
-  // Cargar los datos al montar el componente o cambiar de fecha
+  // 🔧 INICIALIZAR CON FECHA ARGENTINA AL CARGAR COMPONENTE
   useEffect(() => {
-    if (selectedDate) {
+    const todayInArgentina = getCurrentDateInArgentina();
+    console.log('🚀 Inicializando CashierDashboard con fecha argentina:', todayInArgentina);
+    setSelectedDate(todayInArgentina);
+  }, []);
+
+  // 🔧 CARGAR DATOS CUANDO CAMBIE LA FECHA SELECCIONADA
+  useEffect(() => {
+    if (selectedDate && gymData?.id) {
+      console.log('📅 Fecha seleccionada cambió, cargando datos para:', selectedDate);
       loadDailyCashData();
     }
   }, [gymData?.id, selectedDate]);
 
-  // Función para cargar los datos de la caja diaria y transacciones
+  // 🔧 FUNCIÓN MEJORADA PARA CARGAR DATOS DE CAJA DIARIA
   const loadDailyCashData = async () => {
     if (!gymData?.id || !selectedDate) {
+      console.warn('⚠️ No se puede cargar datos: gymData o selectedDate faltante');
       setLoading(false);
       return;
     }
 
+    console.log('🔄 Cargando datos de caja para:', { gymId: gymData.id, date: selectedDate });
     setLoading(true);
     setError('');
 
     try {
       // Intentar obtener la caja diaria para la fecha seleccionada
+      let cashData = null;
       try {
-        const cashData = await getDailyCashByDate(gymData.id, selectedDate);
-        setDailyCash(cashData ? normalizeDailyCashForLegacy(cashData) : null);
+        cashData = await getDailyCashByDate(gymData.id, selectedDate);
+        console.log('💰 Datos de caja obtenidos:', cashData);
       } catch (error) {
-        console.log("No hay caja para esta fecha");
-        setDailyCash(null);
+        console.log('ℹ️ No hay caja para esta fecha:', selectedDate);
       }
 
+      setDailyCash(cashData ? normalizeDailyCashForLegacy(cashData) : null);
+
       // Cargar transacciones del día (incluso si no hay caja abierta)
-      const dayTransactions = await getTransactionsByDate(gymData.id, selectedDate);
-      setTransactions(dayTransactions);
+      try {
+        const dayTransactions = await getTransactionsByDate(gymData.id, selectedDate);
+        console.log('📊 Transacciones del día cargadas:', dayTransactions.length);
+        setTransactions(dayTransactions);
+      } catch (transactionError) {
+        console.warn('⚠️ Error cargando transacciones:', transactionError);
+        setTransactions([]);
+      }
+
     } catch (err: any) {
-      console.error('Error loading daily cash data:', err);
+      console.error('❌ Error loading daily cash data:', err);
       setError(err.message || 'Error al cargar los datos de caja diaria');
     } finally {
       setLoading(false);
@@ -142,9 +115,18 @@ const CashierDashboard: React.FC = () => {
 
   // Refrescar datos manualmente
   const handleRefresh = async () => {
+    console.log('🔄 Refrescando datos manualmente...');
     setRefreshing(true);
     await loadDailyCashData();
     setRefreshing(false);
+  };
+
+  // 🔧 MANEJAR CAMBIO DE FECHA CON VALIDACIÓN
+  const handleDateChange = (newDate: string) => {
+    console.log('📅 Cambiando fecha de', selectedDate, 'a', newDate);
+    setSelectedDate(newDate);
+    setError(''); // Limpiar errores previos
+    setSuccess(''); // Limpiar mensajes de éxito previos
   };
 
   // Manejar apertura de caja
@@ -154,6 +136,7 @@ const CashierDashboard: React.FC = () => {
       return;
     }
 
+    console.log('🔓 Abriendo caja:', { date: selectedDate, amount: openingAmount });
     setLoading(true);
     setError('');
 
@@ -176,7 +159,7 @@ const CashierDashboard: React.FC = () => {
         throw new Error(result.error || 'Error al abrir la caja');
       }
     } catch (err: any) {
-      console.error('Error opening daily cash:', err);
+      console.error('❌ Error opening daily cash:', err);
       setError(err.message || 'Error al abrir la caja');
     } finally {
       setLoading(false);
@@ -190,6 +173,7 @@ const CashierDashboard: React.FC = () => {
       return;
     }
 
+    console.log('🔒 Cerrando caja:', { date: selectedDate, amount: closingAmount });
     setLoading(true);
     setError('');
 
@@ -212,7 +196,7 @@ const CashierDashboard: React.FC = () => {
         throw new Error(result.error || 'Error al cerrar la caja');
       }
     } catch (err: any) {
-      console.error('Error closing daily cash:', err);
+      console.error('❌ Error closing daily cash:', err);
       setError(err.message || 'Error al cerrar la caja');
     } finally {
       setLoading(false);
@@ -236,7 +220,8 @@ const CashierDashboard: React.FC = () => {
       );
     }
 
-    if (view === 'open' || (!dailyCash && isToday(selectedDate))) {
+    // 🔧 MOSTRAR FORMULARIO DE APERTURA SI NO HAY CAJA Y ES HOY
+    if (view === 'open' || (!dailyCash && isTodayInArgentina(selectedDate))) {
       return (
         <OpenBoxForm
           selectedDate={selectedDate}
@@ -251,19 +236,41 @@ const CashierDashboard: React.FC = () => {
       return (
         <div className="p-6 text-center">
           <div className="mb-4">
-            <h3 className="text-lg font-medium text-gray-900">No hay caja abierta para esta fecha</h3>
+            <h3 className="text-lg font-medium text-gray-900">
+              No hay caja abierta para {formatDateForDisplay(selectedDate)}
+            </h3>
             <p className="mt-2 text-gray-500">
-              No se ha abierto caja para el día {getDisplayDate(selectedDate)}
+              No se ha abierto caja para el día seleccionado
             </p>
           </div>
           
-          {isToday(selectedDate) && (
+          {isTodayInArgentina(selectedDate) && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <p className="text-blue-800 text-sm font-medium">
+                📍 Fecha actual en Argentina: {formatDateForDisplay(getCurrentDateInArgentina())}
+              </p>
+              <p className="text-blue-600 text-sm mt-1">
+                Hora: {getCurrentTimeInArgentina()}
+              </p>
+            </div>
+          )}
+          
+          {isTodayInArgentina(selectedDate) && (
             <button
               onClick={() => setView('open')}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              className="mt-4 px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center mx-auto"
             >
+              <DollarSign size={20} className="mr-2" />
               Abrir Caja
             </button>
+          )}
+          
+          {!isTodayInArgentina(selectedDate) && (
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-yellow-800 text-sm">
+                ⚠️ Solo se puede abrir la caja para el día actual
+              </p>
+            </div>
           )}
         </div>
       );
@@ -331,17 +338,17 @@ const CashierDashboard: React.FC = () => {
   const canCloseBox = (): boolean => {
     if (!dailyCash) return false;
     if (dailyCash.status !== 'open') return false;
-    return isToday(dailyCash.date);
+    return isTodayInArgentina(dailyCash.date);
   };
 
   // Determinar si se puede abrir/reabrir la caja
   const canOpenBox = (): boolean => {
     if (!dailyCash) {
-      return isToday(selectedDate);
+      return isTodayInArgentina(selectedDate);
     }
     
     if (dailyCash.status === 'closed') {
-      return isToday(selectedDate);
+      return isTodayInArgentina(selectedDate);
     }
     
     return false;
@@ -355,13 +362,18 @@ const CashierDashboard: React.FC = () => {
           <p className="text-gray-600 mt-1">
             Gestiona ingresos, gastos y cierre de caja
           </p>
-          {/* 🔧 MOSTRAR HORA ACTUAL DE ARGENTINA */}
-          <p className="text-sm text-blue-600 mt-1">
-            📍 Hora actual en Argentina: {getCurrentTimeInArgentina()}
-          </p>
+          {/* 🔧 MOSTRAR INFORMACIÓN DE TIMEZONE ACTUAL */}
+          <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-sm text-blue-700 font-medium">
+              📍 Fecha actual en Argentina: {formatDateForDisplay(getCurrentDateInArgentina())}
+            </p>
+            <p className="text-sm text-blue-600">
+              ⏰ Hora actual: {getCurrentTimeInArgentina()} (UTC-3)
+            </p>
+          </div>
         </div>
         
-        {/* 🔧 SELECTOR DE FECHA CORREGIDO */}
+        {/* 🔧 SELECTOR DE FECHA CON MÁXIMO EN FECHA ARGENTINA */}
         <div className="mt-4 md:mt-0 flex items-center space-x-2">
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -370,8 +382,8 @@ const CashierDashboard: React.FC = () => {
             <input
               type="date"
               value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              max={getCurrentDateInArgentina()} // 🔧 USAR FECHA ARGENTINA
+              onChange={(e) => handleDateChange(e.target.value)}
+              max={getCurrentDateInArgentina()} // 🔧 USAR FECHA ARGENTINA COMO MÁXIMO
               className="pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -379,7 +391,7 @@ const CashierDashboard: React.FC = () => {
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="p-2 border rounded-md hover:bg-gray-50"
+            className="p-2 border rounded-md hover:bg-gray-50 disabled:opacity-50"
             title="Actualizar datos"
           >
             <RefreshCw size={20} className={refreshing ? 'animate-spin text-blue-500' : 'text-gray-500'} />
@@ -414,16 +426,21 @@ const CashierDashboard: React.FC = () => {
         </div>
       )}
       
-      {/* 🔧 ESTADO DE LA CAJA MEJORADO CON INDICADOR DE FECHA */}
+      {/* 🔧 ESTADO DE LA CAJA MEJORADO CON INDICADORES */}
       {dailyCash && dailyCash.id && (
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col md:flex-row justify-between">
             <div className="mb-4 md:mb-0">
-              <h2 className="text-lg font-semibold">
-                Estado de Caja - {getDisplayDate(dailyCash.date)}
-                {isToday(dailyCash.date) && (
+              <h2 className="text-lg font-semibold flex items-center">
+                Estado de Caja - {formatDateForDisplay(dailyCash.date)}
+                {isTodayInArgentina(dailyCash.date) && (
                   <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
                     HOY
+                  </span>
+                )}
+                {!isTodayInArgentina(dailyCash.date) && (
+                  <span className="ml-2 px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
+                    HISTÓRICO
                   </span>
                 )}
               </h2>
@@ -560,28 +577,6 @@ const CashierDashboard: React.FC = () => {
               </button>
             )}
           </div>
-        </div>
-      )}
-      
-      {/* 🔧 MENSAJE MEJORADO PARA CAJA NO ABIERTA */}
-      {!dailyCash && isToday(selectedDate) && view === 'summary' && (
-        <div className="bg-white rounded-lg shadow-md p-6 mb-6 text-center">
-          <h2 className="text-lg font-semibold mb-4">
-            No hay caja abierta para {getDisplayDate(selectedDate)}
-          </h2>
-          <p className="text-gray-600 mb-2">
-            Para registrar ingresos y egresos, primero debe abrir la caja diaria.
-          </p>
-          <p className="text-sm text-blue-600 mb-6">
-            📍 Son las {getCurrentTimeInArgentina()} en Argentina
-          </p>
-          <button
-            onClick={() => setView('open')}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center mx-auto"
-          >
-            <DollarSign size={18} className="mr-2" />
-            Abrir Caja
-          </button>
         </div>
       )}
       

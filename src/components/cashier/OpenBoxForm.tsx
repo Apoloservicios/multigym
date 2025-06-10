@@ -1,14 +1,16 @@
-// src/components/cashier/OpenBoxForm.tsx
+// src/components/cashier/OpenBoxForm.tsx - CORREGIDO PARA FECHAS ARGENTINA
+
 import React, { useState } from 'react';
 import { CheckCircle, X } from 'lucide-react';
-import { formatCurrency } from '../../utils/formatting.utils';
+import { formatDateForDisplay } from '../../utils/timezone.utils';
 
 interface OpenBoxFormProps {
-    selectedDate: string;
-    isReopening: boolean; // Asegurarnos de que está definido como boolean
-    onOpen: (openingAmount: number, notes: string) => void;
-    onCancel: () => void;
-  }
+  selectedDate: string;
+  isReopening: boolean;
+  onOpen: (openingAmount: number, notes: string) => void;
+  onCancel: () => void;
+}
+
 const OpenBoxForm: React.FC<OpenBoxFormProps> = ({
   selectedDate,
   isReopening,
@@ -18,15 +20,26 @@ const OpenBoxForm: React.FC<OpenBoxFormProps> = ({
   const [openingAmount, setOpeningAmount] = useState<number>(0);
   const [notes, setNotes] = useState<string>('');
 
+  console.log('🔓 OpenBoxForm - Datos recibidos:', {
+    selectedDate,
+    isReopening,
+    formattedDate: formatDateForDisplay(selectedDate)
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('📝 Enviando apertura de caja:', {
+      selectedDate,
+      openingAmount,
+      notes
+    });
     onOpen(openingAmount, notes);
   };
 
   return (
     <div className="p-6">
       <h2 className="text-lg font-semibold mb-4">
-        {isReopening ? 'Reabrir Caja' : 'Abrir Caja'} - {new Date(selectedDate).toLocaleDateString('es-AR')}
+        {isReopening ? 'Reabrir Caja' : 'Abrir Caja'} - {formatDateForDisplay(selectedDate)}
       </h2>
 
       <form onSubmit={handleSubmit}>

@@ -1,4 +1,4 @@
-// src/services/dailyCash.service.ts - CORREGIDO PARA TIMESTAMPS
+// src/services/dailyCash.service.ts - CORREGIDO PARA FECHAS ARGENTINA
 
 import { 
   collection, 
@@ -22,6 +22,11 @@ import {
   TransactionIncomeCategory, 
   TransactionExpenseCategory 
 } from '../types/gym.types';
+import {
+  getCurrentDateInArgentina,
+  isTodayInArgentina,
+  getArgentinianDayRange
+} from '../utils/timezone.utils';
 
 // Obtener registro de caja diaria por fecha
 export const getDailyCashByDate = async (gymId: string, date: string): Promise<DailyCash | null> => {
@@ -30,15 +35,17 @@ export const getDailyCashByDate = async (gymId: string, date: string): Promise<D
     const dailyCashSnap = await getDoc(dailyCashRef);
     
     if (dailyCashSnap.exists()) {
-      return {
+      const data = {
         id: dailyCashSnap.id,
         ...dailyCashSnap.data()
       } as DailyCash;
+      
+      return data;
     }
     
     return null;
   } catch (error) {
-    console.error('Error getting daily cash by date:', error);
+    console.error('❌ Error getting daily cash by date:', error);
     throw error;
   }
 };
@@ -75,7 +82,7 @@ export const getDailyCashForDateRange = async (
   }
 };
 
-// 🔧 REGISTRAR INGRESO EXTRA - CORREGIDO TIMESTAMPS
+// 🔧 REGISTRAR INGRESO EXTRA - CORREGIDO PARA FECHAS ARGENTINA
 export const registerExtraIncome = async (
   gymId: string,
   data: {
@@ -90,6 +97,8 @@ export const registerExtraIncome = async (
   }
 ): Promise<{ success: boolean; transactionId?: string; error?: string }> => {
   try {
+    console.log('💵 Registrando ingreso extra:', data);
+    
     // Referencia al documento de la caja diaria
     const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, data.date);
     const dailyCashSnap = await getDoc(dailyCashRef);
@@ -119,14 +128,14 @@ export const registerExtraIncome = async (
       throw new Error(`Categoría inválida para ingresos: ${category}`);
     }
     
-    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP CORRECTO
-    const now = new Date();
+    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP ACTUAL EN ARGENTINA
+    const now = Timestamp.now();
     const transactionData: Partial<Transaction> = {
       type: 'income',
       category: category as TransactionIncomeCategory,
       amount: data.amount,
       description: data.description,
-      date: Timestamp.now(), // 🔧 USAR TIMESTAMP ACTUAL, NO DE LA FECHA STRING
+      date: now, // 🔧 USAR TIMESTAMP ACTUAL
       userId: data.userId,
       userName: data.userName,
       paymentMethod: data.paymentMethod,
@@ -151,12 +160,14 @@ export const registerExtraIncome = async (
       updatedAt: serverTimestamp()
     });
     
+    console.log('✅ Ingreso extra registrado exitosamente:', transactionRef.id);
+    
     return {
       success: true,
       transactionId: transactionRef.id
     };
   } catch (error: any) {
-    console.error('Error registering extra income:', error);
+    console.error('❌ Error registering extra income:', error);
     return {
       success: false,
       error: error.message || 'Error al registrar el ingreso'
@@ -164,7 +175,7 @@ export const registerExtraIncome = async (
   }
 };
 
-// 🔧 REGISTRAR GASTO - CORREGIDO TIMESTAMPS
+// 🔧 REGISTRAR GASTO - CORREGIDO PARA FECHAS ARGENTINA
 export const registerExpense = async (
   gymId: string,
   data: {
@@ -179,6 +190,8 @@ export const registerExpense = async (
   }
 ): Promise<{ success: boolean; transactionId?: string; error?: string }> => {
   try {
+    console.log('💸 Registrando gasto:', data);
+    
     // Referencia al documento de la caja diaria
     const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, data.date);
     const dailyCashSnap = await getDoc(dailyCashRef);
@@ -208,13 +221,14 @@ export const registerExpense = async (
       throw new Error(`Categoría inválida para gastos: ${category}`);
     }
     
-    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP CORRECTO
+    // 🔧 CREAR TRANSACCIÓN CON TIMESTAMP ACTUAL EN ARGENTINA
+    const now = Timestamp.now();
     const transactionData: Partial<Transaction> = {
       type: 'expense',
       category: category as TransactionExpenseCategory,
       amount: data.amount, // 🔧 MANTENER POSITIVO, EL TIPO INDICA QUE ES EGRESO
       description: data.description,
-      date: Timestamp.now(), // 🔧 USAR TIMESTAMP ACTUAL
+      date: now, // 🔧 USAR TIMESTAMP ACTUAL
       userId: data.userId,
       userName: data.userName,
       paymentMethod: data.paymentMethod,
@@ -237,12 +251,14 @@ export const registerExpense = async (
       updatedAt: serverTimestamp()
     });
     
+    console.log('✅ Gasto registrado exitosamente:', transactionRef.id);
+    
     return {
       success: true,
       transactionId: transactionRef.id
     };
   } catch (error: any) {
-    console.error('Error registering expense:', error);
+    console.error('❌ Error registering expense:', error);
     return {
       success: false,
       error: error.message || 'Error al registrar el gasto'
@@ -250,7 +266,7 @@ export const registerExpense = async (
   }
 };
 
-// Cerrar la caja diaria
+// 🔧 CERRAR CAJA - VALIDACIONES MEJORADAS PARA FECHAS ARGENTINA
 export const closeDailyCash = async (
   gymId: string,
   date: string,
@@ -261,6 +277,8 @@ export const closeDailyCash = async (
   }
 ): Promise<{ success: boolean; error?: string }> => {
   try {
+    console.log('🔒 Cerrando caja diaria:', { gymId, date, ...data });
+    
     const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, date);
     const dailyCashSnap = await getDoc(dailyCashRef);
     
@@ -280,6 +298,14 @@ export const closeDailyCash = async (
       };
     }
     
+    // 🔧 VERIFICAR QUE SOLO SE PUEDA CERRAR LA CAJA DEL DÍA ACTUAL EN ARGENTINA
+    if (!isTodayInArgentina(date)) {
+      return {
+        success: false,
+        error: 'Solo se puede cerrar la caja del día actual'
+      };
+    }
+    
     await updateDoc(dailyCashRef, {
       closingTime: Timestamp.now(),
       closingAmount: data.closingAmount,
@@ -289,11 +315,13 @@ export const closeDailyCash = async (
       updatedAt: serverTimestamp()
     });
     
+    console.log('✅ Caja cerrada exitosamente');
+    
     return {
       success: true
     };
   } catch (error: any) {
-    console.error('Error closing daily cash:', error);
+    console.error('❌ Error closing daily cash:', error);
     return {
       success: false,
       error: error.message || 'Error al cerrar la caja'
@@ -301,7 +329,7 @@ export const closeDailyCash = async (
   }
 };
 
-// Abrir o reabrir la caja diaria
+// 🔧 ABRIR CAJA - VALIDACIONES MEJORADAS PARA FECHAS ARGENTINA
 export const openDailyCash = async (
   gymId: string,
   date: string,
@@ -312,12 +340,13 @@ export const openDailyCash = async (
   }
 ): Promise<{ success: boolean; error?: string }> => {
   try {
+    console.log('🔓 Abriendo/reabriendo caja diaria:', { gymId, date, ...data });
+    
     const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, date);
     const dailyCashSnap = await getDoc(dailyCashRef);
     
-    // Verificar si es hoy
-    const today = new Date().toISOString().split('T')[0];
-    if (date !== today) {
+    // 🔧 VERIFICAR QUE SOLO SE PUEDA ABRIR LA CAJA DEL DÍA ACTUAL EN ARGENTINA
+    if (!isTodayInArgentina(date)) {
       return {
         success: false,
         error: 'Solo se puede abrir o reabrir la caja del día actual'
@@ -346,6 +375,8 @@ export const openDailyCash = async (
         closedBy: null,
         updatedAt: serverTimestamp()
       });
+      
+      console.log('🔄 Caja reabierta exitosamente');
     } else {
       // Crear un nuevo registro de caja diaria
       await setDoc(dailyCashRef, {
@@ -362,13 +393,15 @@ export const openDailyCash = async (
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
+      
+      console.log('🆕 Nueva caja creada exitosamente');
     }
     
     return {
       success: true
     };
   } catch (error: any) {
-    console.error('Error opening daily cash:', error);
+    console.error('❌ Error opening daily cash:', error);
     return {
       success: false,
       error: error.message || 'Error al abrir la caja'
@@ -376,30 +409,33 @@ export const openDailyCash = async (
   }
 };
 
-// 🔧 OBTENER TRANSACCIONES POR FECHA - MEJORADO PARA ORDENAR CORRECTAMENTE
+// 🔧 OBTENER TRANSACCIONES POR FECHA - MEJORADO PARA FECHAS ARGENTINA
 export const getTransactionsByDate = async (
   gymId: string,
   date: string
 ): Promise<Transaction[]> => {
   try {
-    // Convertir la fecha a objetos Date para el inicio y fin del día
-    const startDate = new Date(date);
-    startDate.setHours(0, 0, 0, 0);
+    console.log('🔍 Obteniendo transacciones para fecha:', { gymId, date });
     
-    const endDate = new Date(date);
-    endDate.setHours(23, 59, 59, 999);
+    // 🔧 USAR RANGO DE FECHAS EN ARGENTINA
+    const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
+    
+    console.log('📅 Rango de consulta:', {
+      startOfDay: startOfDay.toDate(),
+      endOfDay: endOfDay.toDate()
+    });
     
     const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
     
-    // 🔧 USAR CONSULTA CON createdAt Y date PARA MAYOR FLEXIBILIDAD
+    // 🔧 USAR CONSULTA CON createdAt Y RANGO DE FECHAS ARGENTINA
     let transactions: Transaction[] = [];
     
     try {
       // Primero intentar con createdAt (más preciso)
       const qCreatedAt = query(
         transactionsRef,
-        where('createdAt', '>=', Timestamp.fromDate(startDate)),
-        where('createdAt', '<=', Timestamp.fromDate(endDate)),
+        where('createdAt', '>=', startOfDay),
+        where('createdAt', '<=', endOfDay),
         orderBy('createdAt', 'desc')
       );
       
@@ -411,15 +447,17 @@ export const getTransactionsByDate = async (
         } as Transaction);
       });
       
+      console.log('📊 Transacciones encontradas (createdAt):', transactions.length);
+      
     } catch (createdAtError) {
-      console.warn('Error querying by createdAt, trying with date field:', createdAtError);
+      console.warn('⚠️ Error querying by createdAt, trying with date field:', createdAtError);
       
       // Fallback: usar campo date
       try {
         const qDate = query(
           transactionsRef,
-          where('date', '>=', Timestamp.fromDate(startDate)),
-          where('date', '<=', Timestamp.fromDate(endDate)),
+          where('date', '>=', startOfDay),
+          where('date', '<=', endOfDay),
           orderBy('date', 'desc')
         );
         
@@ -431,8 +469,10 @@ export const getTransactionsByDate = async (
           } as Transaction);
         });
         
+        console.log('📊 Transacciones encontradas (date):', transactions.length);
+        
       } catch (dateError) {
-        console.warn('Error querying by date, getting all and filtering:', dateError);
+        console.warn('⚠️ Error querying by date, getting all and filtering:', dateError);
         
         // Último recurso: obtener todas y filtrar manualmente
         const allSnapshot = await getDocs(transactionsRef);
@@ -442,7 +482,7 @@ export const getTransactionsByDate = async (
           
           if (txDate) {
             const txJsDate = txDate.toDate ? txDate.toDate() : new Date(txDate);
-            if (txJsDate >= startDate && txJsDate <= endDate) {
+            if (txJsDate >= startOfDay.toDate() && txJsDate <= endOfDay.toDate()) {
               transactions.push({
                 id: doc.id,
                 ...data
@@ -461,12 +501,14 @@ export const getTransactionsByDate = async (
           
           return bSeconds - aSeconds; // Descendente (más reciente primero)
         });
+        
+        console.log('📊 Transacciones encontradas (manual):', transactions.length);
       }
     }
     
     return transactions;
   } catch (error) {
-    console.error('Error getting transactions by date:', error);
+    console.error('❌ Error getting transactions by date:', error);
     throw error;
   }
 };
@@ -485,18 +527,15 @@ export const getTransactionsSummary = async (
   transactionsByCategory: Record<string, number>;
 }> => {
   try {
-    // Convertir las fechas
-    const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // 🔧 USAR RANGOS DE FECHAS EN ARGENTINA
+    const { start } = getArgentinianDayRange(startDate);
+    const { end } = getArgentinianDayRange(endDate);
     
     const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
     const q = query(
       transactionsRef,
-      where('createdAt', '>=', Timestamp.fromDate(start)),
-      where('createdAt', '<=', Timestamp.fromDate(end)),
+      where('createdAt', '>=', start),
+      where('createdAt', '<=', end),
       orderBy('createdAt', 'desc')
     );
     

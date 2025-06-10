@@ -1,4 +1,4 @@
-// src/pages/dashboard/DashboardImproved.tsx - CON TIMEZONE ARGENTINA CORREGIDO COMPLETO
+// src/pages/dashboard/DashboardImproved.tsx - CORREGIDO CÁLCULO "POR COBRAR" - COMPLETO
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -24,7 +24,6 @@ import {
 import useAuth from '../../hooks/useAuth';
 import useFinancial from '../../hooks/useFinancial';
 import { formatCurrency } from '../../utils/formatting.utils';
-// 🔧 IMPORTAR UTILIDADES DE TIMEZONE
 import { 
   getCurrentDateInArgentina,
   getCurrentTimeInArgentina,
@@ -126,7 +125,6 @@ const DashboardImproved: React.FC = () => {
       todayStart: getTodayStartInArgentina(),
       todayEnd: getTodayEndInArgentina(),
       thisMonthStart: getThisMonthStartInArgentina(),
-      // Para próxima semana (vencimientos)
       nextWeek: Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
       todayString: getCurrentDateInArgentina()
     };
@@ -221,7 +219,7 @@ const DashboardImproved: React.FC = () => {
     });
   }, [transactions, getTransactionDisplayInfo, formatPaymentMethodName]);
 
-  // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CON CONTROL DE BUCLES
+  // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO PARA EVITAR DUPLICACIÓN
   const loadEnhancedMetrics = useCallback(async () => {
     if (!gymData?.id || !shouldLoad()) return;
     
@@ -250,16 +248,17 @@ const DashboardImproved: React.FC = () => {
         ))
       ]);
 
-      // 🔧 CARGAR PAGOS PENDIENTES CON FECHAS ARGENTINA
+      // 🔧 CARGAR PAGOS PENDIENTES - CORREGIDO PARA EVITAR DUPLICACIÓN
       let pendingPayments = 0;
       let pendingAmount = 0;
       let overduePayments = 0;
       let overdueAmount = 0;
 
       const payments: PendingPayment[] = [];
+      const processedMembers = new Set<string>(); // 🔧 NUEVO: Evitar duplicación
 
       try {
-        // CONSULTA LIMITADA Y CONTROLADA
+        // CONSULTA LIMITADA - Solo membresías pendientes
         const pendingAssignmentsSnap = await getDocs(query(
           collection(db, `gyms/${gymData.id}/membershipAssignments`),
           where('paymentStatus', '==', 'pending'),
@@ -275,6 +274,10 @@ const DashboardImproved: React.FC = () => {
           const endDate = timestampToArgentinianDate(data.endDate);
           const overdue = endDate ? endDate < nowInArgentina : false;
           const cost = data.cost || 0;
+          const memberId = data.memberId;
+
+          // Marcar miembro como procesado
+          processedMembers.add(memberId);
 
           pendingAmount += cost;
           pendingPayments++;
@@ -300,7 +303,7 @@ const DashboardImproved: React.FC = () => {
           });
         });
 
-        // 🔧 AGREGAR SOCIOS CON DEUDA (LIMITADO)
+        // 🔧 AGREGAR SOCIOS CON DEUDA QUE NO TENGAN MEMBRESÍAS PENDIENTES
         if (membersWithDebtSnap.size > 0 && payments.length < 20) {
           let debtCount = 0;
           membersWithDebtSnap.forEach(doc => {
@@ -308,14 +311,13 @@ const DashboardImproved: React.FC = () => {
             
             const data = doc.data();
             const debt = data.totalDebt || 0;
-            if (debt > 0) {
+            const memberId = doc.id;
+            
+            // 🔧 SOLO AGREGAR SI NO FUE PROCESADO EN MEMBRESÍAS PENDIENTES
+            if (debt > 0 && !processedMembers.has(memberId)) {
               const memberFullName = (data.firstName + ' ' + data.lastName).trim();
-              const existingPayment = payments.find(p => 
-                p.memberName.toLowerCase().includes(memberFullName.toLowerCase()) ||
-                memberFullName.toLowerCase().includes(p.memberName.toLowerCase())
-              );
-
-              if (!existingPayment && memberFullName !== ' ') {
+              
+              if (memberFullName !== ' ') {
                 pendingAmount += debt;
                 pendingPayments++;
                 overduePayments++;
@@ -326,8 +328,8 @@ const DashboardImproved: React.FC = () => {
 
                 payments.push({
                   id: doc.id + '_debt',
-                  memberName: memberFullName || 'Sin nombre',
-                  activityName: 'Deuda pendiente',
+                  memberName: memberFullName,
+                  activityName: 'Deuda acumulada',
                   cost: debt,
                   startDate: data.createdAt || Timestamp.now(),
                   endDate: data.createdAt || Timestamp.now(),
@@ -336,12 +338,26 @@ const DashboardImproved: React.FC = () => {
                 });
                 
                 debtCount++;
+                processedMembers.add(memberId);
               }
             }
           });
         }
 
         setPendingPayments(payments);
+
+        // 🔧 AGREGAR LOGGING PARA DEBUG
+        console.log('💰 Resumen de Por Cobrar:', {
+          pendingPayments,
+          pendingAmount,
+          overduePayments, 
+          overdueAmount,
+          totalProcessedMembers: processedMembers.size,
+          breakdown: {
+            fromMembershipAssignments: pendingAssignmentsSnap.size,
+            fromMemberDebt: payments.filter(p => p.id.includes('_debt')).length
+          }
+        });
 
       } catch (membershipError) {
         console.error('Error loading payments:', membershipError);
@@ -394,7 +410,7 @@ const DashboardImproved: React.FC = () => {
         monthlyExpenses,
         monthlyNet: monthlyIncome - monthlyExpenses,
         pendingPayments,
-        pendingAmount,
+        pendingAmount, // 🔧 AHORA SIN DUPLICACIÓN
         overduePayments,
         overdueAmount,
         refundsToday
@@ -531,7 +547,6 @@ const DashboardImproved: React.FC = () => {
           <p className="text-gray-600 mt-1">
             Gestión integral de {gymData?.name || 'tu gimnasio'}
           </p>
-          {/* 🔧 MOSTRAR FECHA Y HORA ARGENTINA */}
           <p className="text-sm text-blue-600 mt-1">
             📍 {formatDateForDisplay(getCurrentDateInArgentina())} - {getCurrentTimeInArgentina()} (Argentina)
           </p>
@@ -585,7 +600,7 @@ const DashboardImproved: React.FC = () => {
           </div>
         </div>
 
-        {/* Pagos Pendientes - SIN BOTÓN DE COBRAR, SOLO INFORMACIÓN */}
+        {/* Pagos Pendientes */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
@@ -702,12 +717,6 @@ const DashboardImproved: React.FC = () => {
                       <span className="text-sm font-bold text-yellow-700">{metrics.pendingPayments}</span>
                     </div>
                   )}
-                  {metrics.membersWithDebt > 0 && (
-                    <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg">
-                      <span className="text-sm text-orange-700">Socios con deuda</span>
-                      <span className="text-sm font-bold text-orange-700">{metrics.membersWithDebt}</span>
-                    </div>
-                  )}
                   {metrics.refundsToday > 0 && (
                     <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
                       <span className="text-sm text-purple-700">Devoluciones hoy</span>
@@ -789,7 +798,7 @@ const DashboardImproved: React.FC = () => {
                 </button>
               </div>
 
-              {/* Lista de pagos pendientes - SOLO INFORMACIÓN */}
+              {/* Lista de pagos pendientes */}
               <h3 className="text-lg font-medium text-gray-900 mb-4">Información de Pagos Pendientes</h3>
               {filteredPendingPayments.length === 0 ? (
                 <div className="text-center py-8">
@@ -841,7 +850,6 @@ const DashboardImproved: React.FC = () => {
                               {payment.overdue ? 'Vencido' : 'Pendiente'}
                             </div>
                           </div>
-                          {/* ÍCONO INFORMATIVO EN LUGAR DE BOTÓN */}
                           <div className="p-2 bg-gray-100 rounded-lg">
                             <Info size={20} className="text-gray-600" />
                           </div>
@@ -956,7 +964,7 @@ const DashboardImproved: React.FC = () => {
           </div>
           <div className="text-center">
             <div className="text-2xl font-bold text-yellow-600">
-              {formatCurrency(metrics.pendingAmount + metrics.overdueAmount)}
+              {formatCurrency(metrics.pendingAmount)}
             </div>
             <div className="text-sm text-gray-500">Por cobrar</div>
           </div>
@@ -982,3 +990,4 @@ const DashboardImproved: React.FC = () => {
 };
 
 export default DashboardImproved;
+                    
