@@ -275,3 +275,73 @@ export default {
   getCurrentDateString,
   isSameDay
 };
+
+// ✅ AGREGAR ESTAS FUNCIONES AL FINAL DE tu date.utils.ts
+
+/**
+ * Convierte fecha HTML input (YYYY-MM-DD) a Date UTC para guardar en Firebase
+ * Esto evita problemas de timezone
+ */
+export const htmlDateToUTCDate = (htmlDate: string): Date => {
+  if (!htmlDate) return new Date();
+  
+  const [year, month, day] = htmlDate.split('-').map(Number);
+  // Crear fecha en UTC para evitar cambios de timezone
+  const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+  return date;
+};
+
+/**
+ * Convierte un timestamp/fecha de Firebase a string HTML date sin cambios de timezone
+ * ESTA ES LA FUNCIÓN CLAVE PARA SOLUCIONAR EL PROBLEMA
+ */
+export const firebaseDateToHtmlDate = (firebaseDate: any): string => {
+  if (!firebaseDate) return '';
+  
+  try {
+    // ✅ NUEVO: Si ya es un string en formato YYYY-MM-DD, devolverlo tal como está
+    if (typeof firebaseDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(firebaseDate)) {
+      return firebaseDate; // Ya está en el formato correcto
+    }
+    
+    let jsDate: Date | null = null;
+    
+    // Si es un timestamp de Firebase
+    if (firebaseDate?.toDate && typeof firebaseDate.toDate === 'function') {
+      jsDate = firebaseDate.toDate();
+    }
+    // Si es un objeto con seconds (timestamp)
+    else if (firebaseDate?.seconds) {
+      jsDate = new Date(firebaseDate.seconds * 1000);
+    }
+    // Si es una fecha string o Date
+    else {
+      jsDate = new Date(firebaseDate);
+    }
+    
+    if (jsDate && !isNaN(jsDate.getTime())) {
+      // ✅ CLAVE: Usar UTC para mantener consistencia
+      const year = jsDate.getUTCFullYear();
+      const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(jsDate.getUTCDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+    
+    return '';
+  } catch (error) {
+    console.error('Error converting Firebase date to HTML date:', error);
+    return '';
+  }
+};
+
+/**
+ * Función helper para debug de fechas
+ */
+export const debugDateConversions = (originalDate: any) => {
+  console.log('=== DEBUG DATE CONVERSIONS ===');
+  console.log('Original date:', originalDate);
+  console.log('Firebase to HTML:', firebaseDateToHtmlDate(originalDate));
+  console.log('Safe convert:', safelyConvertToDate(originalDate));
+  console.log('Local timezone:', Intl.DateTimeFormat().resolvedOptions().timeZone);
+  console.log('=================================');
+};

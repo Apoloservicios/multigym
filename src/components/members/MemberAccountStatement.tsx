@@ -1,9 +1,9 @@
-// src/components/members/MemberAccountStatement.tsx - CORREGIDO PROPS
+// src/components/members/MemberAccountStatement.tsx - VERSIÓN CORREGIDA COMPLETA CON BOTÓN DE PAGO
 
 import React, { useState, useEffect } from 'react';
 import { 
   AlertCircle, RefreshCw, Download, Receipt, Share, 
-  Calendar, Filter, FileSpreadsheet 
+  Calendar, Filter, FileSpreadsheet, DollarSign 
 } from 'lucide-react';
 import { Transaction } from '../../types/gym.types';
 import { MembershipAssignment } from '../../types/member.types';
@@ -15,17 +15,18 @@ import { generateReceiptPDF, generateWhatsAppLink } from '../../utils/receipt.ut
 import PaymentReceipt from '../payments/PaymentReceipt';
 import useAuth from '../../hooks/useAuth';
 
-// ✅ PROPS CORREGIDAS - SIN onRegisterPayment
 interface MemberAccountStatementProps {
   memberId: string;
   memberName: string;
   totalDebt: number;
+  onPaymentClick?: () => void; // ✅ RESTAURAR PROP PARA PAGO
 }
 
 const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   memberId,
   memberName,
-  totalDebt
+  totalDebt,
+  onPaymentClick // ✅ AGREGAR PROP
 }) => {
   const { gymData } = useAuth();
   
@@ -41,6 +42,46 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   const [showReceipt, setShowReceipt] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [selectedMemberships, setSelectedMemberships] = useState<MembershipAssignment[]>([]);
+
+  // ✅ FUNCIONES PARA MEJORAR LA VISUALIZACIÓN DE MEMBRESÍAS
+  const getMembershipInfo = (transaction: Transaction): string => {
+    if (!transaction.description) return 'Membresía';
+    
+    // Buscar patrones específicos en la descripción
+    const activityMatch = transaction.description.match(/membresía\s+([A-Za-z\s]+?)(?:\s*\(|$)/i);
+    
+    if (activityMatch) {
+      return activityMatch[1].trim();
+    }
+    
+    // Fallback: buscar cualquier palabra después de "membresía"
+    const generalMatch = transaction.description.match(/membresía\s+(\w+)/i);
+    if (generalMatch) {
+      return generalMatch[1];
+    }
+    
+    return 'Membresía';
+  };
+
+  const formatTransactionDescription = (transaction: Transaction): string => {
+    if (!transaction.description) return 'Sin descripción';
+    
+    // Si es un pago de membresía, mostrar versión más limpia
+    if (transaction.description.includes('Pago membresía') || transaction.description.includes('Pago de membresía')) {
+      
+      // Extraer el nombre de la actividad
+      const activityMatch = transaction.description.match(/membresía\s+([^(]+)/i);
+      const activity = activityMatch ? activityMatch[1].trim() : 'Membresía';
+      
+      // Extraer fechas si están disponibles
+      const dateMatch = transaction.description.match(/\(([^)]+)\)/);
+      const dateInfo = dateMatch ? ` | ${dateMatch[1]}` : '';
+      
+      return `💪 Pago ${activity}${dateInfo}`;
+    }
+    
+    return transaction.description;
+  };
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -70,7 +111,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   };
 
   // Filtrar transacciones por período
-  const filteredTransactions = () => {
+  const filteredTransactions = (): Transaction[] => {
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const firstDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -270,31 +311,56 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
           <p className="mt-2 text-gray-500">Cargando transacciones...</p>
         </div>
       ) : filteredTransactions().length === 0 ? (
-        <div className="text-center py-8 bg-gray-50 rounded-lg">
-          <p className="text-gray-500">No hay transacciones en este período</p>
+        <div className="text-center py-6 text-gray-500">
+          <Calendar size={48} className="mx-auto mb-2 text-gray-300" />
+          <p>No hay transacciones en el período seleccionado</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="bg-gray-50">
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Fecha</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Concepto</th>
-                <th className="px-4 py-3 text-right text-sm font-medium text-gray-600 border-b">Importe</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Método</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600 border-b">Estado</th>
-                <th className="px-4 py-3 text-center text-sm font-medium text-gray-600 border-b">Acciones</th>
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Fecha
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Concepto
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actividad/Membresía
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Importe
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Método
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Estado
+                </th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Acciones
+                </th>
               </tr>
             </thead>
-            <tbody>
-              {filteredTransactions().map((tx) => (
-                <tr key={tx.id} className="hover:bg-gray-50 border-b border-gray-100">
-                  <td className="px-4 py-3 text-sm">{formatDate(tx.date)}</td>
-                  <td className="px-4 py-3 text-sm">{tx.description}</td>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredTransactions().map((tx: Transaction) => (
+                <tr key={tx.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    {formatDate(tx.date)}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-900">
+                    {formatTransactionDescription(tx)}
+                  </td>
+                  <td className="px-4 py-3 text-sm">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      {getMembershipInfo(tx)}
+                    </span>
+                  </td>
                   <td className={`px-4 py-3 text-sm text-right font-medium ${
-                    tx.type === 'income' ? 'text-red-600' : 'text-green-600'
+                    tx.type === 'expense' ? 'text-red-600' : 'text-green-600'
                   }`}>
-                    {tx.type === 'income' ? '-' : '+'}{formatCurrency(tx.amount)}
+                    {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
                   </td>
                   <td className="px-4 py-3 text-sm">{getPaymentMethodName(tx.paymentMethod || '')}</td>
                   <td className="px-4 py-3 text-sm">
@@ -321,6 +387,27 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
           </table>
         </div>
       )}
+
+      {/* ✅ AGREGAR BOTONES DE ACCIÓN AL FINAL */}
+      <div className="mt-6 flex justify-between items-center pt-4 border-t border-gray-200">
+        <button
+          onClick={() => window.print()}
+          className="px-4 py-2 border border-gray-300 rounded-md text-sm text-gray-700 hover:bg-gray-50 flex items-center"
+        >
+          <Calendar size={16} className="mr-2" />
+          Imprimir Estado
+        </button>
+        
+        {onPaymentClick && totalDebt > 0 && (
+          <button
+            onClick={onPaymentClick}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700 flex items-center"
+          >
+            <DollarSign size={16} className="mr-2" />
+            Registrar Pago
+          </button>
+        )}
+      </div>
 
       {/* Modal de comprobante */}
       {showReceipt && selectedTransaction && (

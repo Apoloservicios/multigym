@@ -18,6 +18,7 @@ import { db } from '../config/firebase';
 import { Transaction, DailyCash } from '../types/gym.types';
 import { MembershipAssignment } from '../types/member.types';
 import { safelyConvertToDate, formatDisplayDate } from '../utils/date.utils';
+import { formatCurrency } from '../utils/formatting.utils';
 
 interface PaymentRequest {
   gymId: string;
@@ -66,14 +67,16 @@ export const getPendingMemberships = async (gymId: string, memberId: string): Pr
   }
 };
 
-// Crear descripción detallada para el pago (MEJORADA)
+// ✅ MEJORAR la función createPaymentDescription en payment.service.ts
+
+// Crear descripción detallada para el pago (MEJORADA CON MÁS DETALLES)
 const createPaymentDescription = (memberName: string, memberships: MembershipAssignment[]): string => {
   if (memberships.length === 0) {
     return `Pago de membresías de ${memberName}`;
   }
   
   if (memberships.length === 1) {
-    // ✅ DESCRIPCIÓN DETALLADA PARA UNA MEMBRESÍA
+    // ✅ DESCRIPCIÓN MÁS DETALLADA PARA UNA MEMBRESÍA
     const membership = memberships[0];
     const startDate = safelyConvertToDate(membership.startDate);
     const endDate = safelyConvertToDate(membership.endDate);
@@ -85,7 +88,8 @@ const createPaymentDescription = (memberName: string, memberships: MembershipAss
       dateRange = ` (${startStr} - ${endStr})`;
     }
     
-    return `Pago de membresía ${membership.activityName}${dateRange} de ${memberName}`;
+    // ✅ INCLUIR MÁS DETALLES: actividad + período + costo
+    return `Pago membresía ${membership.activityName}${dateRange} - ${formatCurrency(membership.cost)} de ${memberName}`;
   }
   
   // ✅ DESCRIPCIÓN DETALLADA PARA MÚLTIPLES MEMBRESÍAS
@@ -100,10 +104,13 @@ const createPaymentDescription = (memberName: string, memberships: MembershipAss
       dateRange = ` (${startStr} - ${endStr})`;
     }
     
-    return `${m.activityName}${dateRange}`;
+    // ✅ INCLUIR ACTIVIDAD + PERÍODO + COSTO
+    return `${m.activityName}${dateRange} - ${formatCurrency(m.cost)}`;
   }).join(', ');
   
-  return `Pago de membresías: ${activitiesDetail} de ${memberName}`;
+  const totalAmount = memberships.reduce((sum, m) => sum + m.cost, 0);
+  
+  return `Pago membresías: ${activitiesDetail} | Total: ${formatCurrency(totalAmount)} de ${memberName}`;
 };
 
 // Registrar un pago de membresía y actualizar la caja diaria

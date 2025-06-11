@@ -64,61 +64,78 @@ function safelyConvertToDate(dateValue: any): Date | null {
 
 
 // Agregar un nuevo socio
+
 export const addMember = async (gymId: string, memberData: MemberFormData): Promise<Member> => {
   try {
     console.log("Iniciando proceso de agregar miembro con datos:", JSON.stringify({
       ...memberData,
-      photo: memberData.photo ? `[File: ${memberData.photo.name}]` : null
+      photo: memberData.photo ? 'File object' : null
     }));
-    
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    
-    // Si hay foto, intentamos subirla primero
+
+    // Si hay una foto, subirla a Cloudinary
     let photoUrl = null;
-    if (memberData.photo) {
+    if (memberData.photo instanceof File) {
       try {
-        console.log("Intentando subir foto a Cloudinary...");
-        // La ruta de la carpeta debe ser consistente con tu estructura en Cloudinary
+        console.log("Subiendo foto a Cloudinary...");
         photoUrl = await uploadToCloudinary(memberData.photo, "gym_member_photos");
         console.log("Foto subida exitosamente:", photoUrl);
       } catch (uploadError) {
         console.error("Error subiendo foto:", uploadError);
-        // Si falla la carga de la foto, continuamos sin ella
+        // Continuar sin foto si falla la subida
       }
     }
-    
-    // Datos del nuevo miembro
-    const newMember = {
+
+    // ✅ CORRECCIÓN: Preparar la fecha correctamente
+    let birthDateToSave = '';
+    if (memberData.birthDate) {
+      // Guardar la fecha directamente como string en formato YYYY-MM-DD
+      birthDateToSave = memberData.birthDate;
+    }
+
+    // Preparar datos del miembro para Firestore
+    const memberToAdd = {
       firstName: memberData.firstName,
       lastName: memberData.lastName,
       email: memberData.email,
       phone: memberData.phone,
       address: memberData.address || "",
-      birthDate: memberData.birthDate || "",
+      birthDate: birthDateToSave,
       photo: photoUrl,
       status: memberData.status,
       totalDebt: 0,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
-    
-    console.log("Guardando miembro con datos:", JSON.stringify({
-      ...newMember,
+
+    console.log("Guardando miembro en Firestore:", JSON.stringify({
+      ...memberToAdd,
       createdAt: "timestamp",
       updatedAt: "timestamp"
     }));
-    
-    // Agregar a Firestore
-    const docRef = await addDoc(membersRef, newMember);
-    
-    console.log("Miembro creado con ID:", docRef.id);
-    
-    return { 
-      id: docRef.id, 
-      ...newMember,
+
+    // Guardar en Firestore
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    const docRef = await addDoc(membersRef, memberToAdd);
+
+    // ✅ CORRECCIÓN TypeScript: Crear el objeto Member con tipos correctos
+    const newMember: Member = {
+      id: docRef.id,
+      firstName: memberData.firstName,
+      lastName: memberData.lastName,
+      email: memberData.email,
+      phone: memberData.phone,
+      address: memberData.address || "",
+      birthDate: birthDateToSave,
+      photo: photoUrl,
+      status: memberData.status,
+      totalDebt: 0,
+      // Para los timestamps, usar Date actual como fallback para el tipo
       createdAt: new Date(),
       updatedAt: new Date()
-    } as Member;
+    };
+
+    console.log("Miembro agregado exitosamente con ID:", docRef.id);
+    return newMember;
   } catch (error) {
     console.error('Error adding member:', error);
     throw error;
@@ -304,6 +321,8 @@ export const getMemberMemberships = async (gymId: string, memberId: string): Pro
   }
 };
 
+// ✅ REEMPLAZAR la función updateMember en member.service.ts con esta versión corregida:
+
 export const updateMember = async (gymId: string, memberId: string, memberData: MemberFormData): Promise<boolean> => {
   try {
     console.log("Iniciando actualización de miembro:", memberId);
@@ -323,6 +342,14 @@ export const updateMember = async (gymId: string, memberId: string, memberData: 
       }
     }
     
+    // ✅ CORRECCIÓN: Preparar la fecha correctamente para evitar problemas de timezone
+    let birthDateToSave = '';
+    if (memberData.birthDate) {
+      // Guardar la fecha directamente como string en formato YYYY-MM-DD
+      // Esto evita cualquier conversión de timezone
+      birthDateToSave = memberData.birthDate;
+    }
+    
     // Preparar datos para actualizar
     const updateData: any = {
       firstName: memberData.firstName,
@@ -330,7 +357,7 @@ export const updateMember = async (gymId: string, memberId: string, memberData: 
       email: memberData.email,
       phone: memberData.phone,
       address: memberData.address || "",
-      birthDate: memberData.birthDate || "",
+      birthDate: birthDateToSave, // ✅ CORREGIDO: usar la fecha preparada
       status: memberData.status,
       updatedAt: serverTimestamp()
     };

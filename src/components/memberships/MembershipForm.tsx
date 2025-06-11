@@ -5,7 +5,7 @@ import { getMemberships } from '../../services/membership.service';
 import { assignMembership } from '../../services/member.service';
 import useAuth from '../../hooks/useAuth';
 import { formatCurrency } from '../../utils/formatting.utils';
-import { calculateEndDate } from '../../utils/date.utils';
+import { calculateEndDate, getCurrentDateString, htmlDateToLocalDate } from '../../utils/date.utils';
 
 interface FormData {
   membershipId: string;
@@ -91,7 +91,7 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
     fetchMemberships();
     
     // Establecer fecha de inicio al día actual por defecto
-    const today = new Date().toISOString().split('T')[0];
+   const today = getCurrentDateString();
     setFormData({
       ...formData,
       startDate: today
@@ -153,16 +153,14 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
     return Object.keys(newErrors).length === 0;
   };
   
-  const getEndDateString = (): string => {
-    if (!selectedMembership || !formData.startDate) return 'No disponible';
-    
-    const endDate = calculateEndDate(
-      new Date(formData.startDate), 
-      selectedMembership.duration
-    );
-    
-    return endDate.toLocaleDateString('es-AR');
-  };
+const getEndDateString = (): string => {
+  if (!selectedMembership || !formData.startDate) return 'No disponible';
+  
+  const startDate = htmlDateToLocalDate(formData.startDate);
+  const endDate = calculateEndDate(startDate, selectedMembership.duration);
+  
+  return endDate.toLocaleDateString('es-AR');
+};
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -186,7 +184,7 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
         activityName: selectedMembership.activityName,
         startDate: formData.startDate,
         endDate: calculateEndDate(
-          new Date(formData.startDate), 
+          htmlDateToLocalDate(formData.startDate), 
           selectedMembership.duration
         ).toISOString().split('T')[0],
         cost: Number(formData.cost),

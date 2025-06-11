@@ -9,6 +9,7 @@ import { formatCurrency } from '../../utils/formatting.utils';
 import { registerMembershipPayment } from '../../services/payment.service';
 import useAuth from '../../hooks/useAuth';
 import { getPendingMemberships } from '../../services/payment.service';
+import { getCurrentDateString } from '../../utils/date.utils';
 
 
 interface MemberPaymentProps {
@@ -30,7 +31,7 @@ const MemberPayment: React.FC<MemberPaymentProps> = ({ member, onSuccess, onCanc
   const [formData, setFormData] = useState({
     membershipIds: [] as string[],
     paymentMethod: 'cash',
-    paymentDate: new Date().toISOString().split('T')[0],
+    paymentDate: getCurrentDateString(),
     notes: '',
     amount: 0
   });

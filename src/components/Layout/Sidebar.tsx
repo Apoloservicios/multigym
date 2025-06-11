@@ -359,7 +359,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
           </nav>
         </div>
         
-        {/* NUEVA SECCIÓN: Info del sistema financiero */}
+        {/* NUEVA SECCIÓN: Info del sistema financiero 
         {userRole === 'admin' && (
           <div className="border-t border-gray-200 px-4 py-3">
             <div className="bg-green-50 border border-green-200 rounded-lg p-3">
@@ -372,7 +372,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
               </p>
             </div>
           </div>
-        )}
+        )} */}
         
         {/* Botón de Cerrar Sesión (siempre visible al final) */}
         <div className="border-t border-gray-200 px-4 py-4 mt-auto">
