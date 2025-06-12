@@ -430,14 +430,39 @@ export const getMembersWithUpcomingBirthdays = async (
     querySnapshot.forEach(doc => {
       const member = { id: doc.id, ...doc.data() } as Member;
       
-      const birthDate = safelyConvertToDate(member.birthDate);
+      // ✅ CORRECCIÓN: Manejo específico para fechas de cumpleaños
+      let birthDate: Date | null = null;
+      
+      if (member.birthDate) {
+        // Si es un string YYYY-MM-DD (formato del formulario)
+        if (typeof member.birthDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(member.birthDate)) {
+          const [year, month, day] = member.birthDate.split('-').map(Number);
+          birthDate = new Date(year, month - 1, day);
+        }
+        // Si es un timestamp de Firebase
+        else {
+          const convertedDate = safelyConvertToDate(member.birthDate);
+          if (convertedDate) {
+            // Crear fecha usando solo año, mes y día para evitar problemas de timezone
+            birthDate = new Date(
+              convertedDate.getFullYear(),
+              convertedDate.getMonth(),
+              convertedDate.getDate()
+            );
+          }
+        }
+      }
+      
       if (!birthDate) return; // Saltar si no se pudo convertir
       
       const thisYear = today.getFullYear();
       const birthMonth = birthDate.getMonth();
       const birthDay = birthDate.getDate();
       
+      // Crear el cumpleaños de este año
       const thisYearBirthday = new Date(thisYear, birthMonth, birthDay);
+      
+      // Si ya pasó este año, usar el del año que viene
       if (thisYearBirthday < today) {
         thisYearBirthday.setFullYear(thisYear + 1);
       }

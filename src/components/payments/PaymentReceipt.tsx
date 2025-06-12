@@ -7,6 +7,8 @@ import { MembershipAssignment } from '../../types/member.types';
 import { formatDisplayDate, formatDisplayDateTime } from '../../utils/date.utils';
 import useAuth from '../../hooks/useAuth';
 
+
+
 interface PaymentReceiptProps {
   transaction: Transaction;
   memberName: string;
@@ -40,6 +42,12 @@ const PaymentReceipt: React.FC<PaymentReceiptProps> = ({
   const calculateItemsTotal = (): number => {
     return memberships.reduce((total, membership) => total + (membership.cost || 0), 0);
   };
+
+  console.log('🔍 Debug info:', {
+  transactionDescription: transaction.description,
+  memberships: memberships,
+  membershipsLength: memberships.length
+});
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">

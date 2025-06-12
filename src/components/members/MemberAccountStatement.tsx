@@ -1,4 +1,4 @@
-// src/components/members/MemberAccountStatement.tsx - VERSIÓN CORREGIDA COMPLETA CON BOTÓN DE PAGO
+// src/components/members/MemberAccountStatement.tsx - MEJORADO para comprobantes con detalles
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -19,14 +19,14 @@ interface MemberAccountStatementProps {
   memberId: string;
   memberName: string;
   totalDebt: number;
-  onPaymentClick?: () => void; // ✅ RESTAURAR PROP PARA PAGO
+  onPaymentClick?: () => void;
 }
 
 const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   memberId,
   memberName,
   totalDebt,
-  onPaymentClick // ✅ AGREGAR PROP
+  onPaymentClick
 }) => {
   const { gymData } = useAuth();
   
@@ -43,75 +43,37 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [selectedMemberships, setSelectedMemberships] = useState<MembershipAssignment[]>([]);
 
-  // ✅ FUNCIONES PARA MEJORAR LA VISUALIZACIÓN DE MEMBRESÍAS
-  const getMembershipInfo = (transaction: Transaction): string => {
-    if (!transaction.description) return 'Membresía';
-    
-    // Buscar patrones específicos en la descripción
-    const activityMatch = transaction.description.match(/membresía\s+([A-Za-z\s]+?)(?:\s*\(|$)/i);
-    
-    if (activityMatch) {
-      return activityMatch[1].trim();
-    }
-    
-    // Fallback: buscar cualquier palabra después de "membresía"
-    const generalMatch = transaction.description.match(/membresía\s+(\w+)/i);
-    if (generalMatch) {
-      return generalMatch[1];
-    }
-    
-    return 'Membresía';
-  };
-
-  const formatTransactionDescription = (transaction: Transaction): string => {
-    if (!transaction.description) return 'Sin descripción';
-    
-    // Si es un pago de membresía, mostrar versión más limpia
-    if (transaction.description.includes('Pago membresía') || transaction.description.includes('Pago de membresía')) {
-      
-      // Extraer el nombre de la actividad
-      const activityMatch = transaction.description.match(/membresía\s+([^(]+)/i);
-      const activity = activityMatch ? activityMatch[1].trim() : 'Membresía';
-      
-      // Extraer fechas si están disponibles
-      const dateMatch = transaction.description.match(/\(([^)]+)\)/);
-      const dateInfo = dateMatch ? ` | ${dateMatch[1]}` : '';
-      
-      return `💪 Pago ${activity}${dateInfo}`;
-    }
-    
-    return transaction.description;
-  };
-
-  // Cargar datos iniciales
-  useEffect(() => {
-    loadData();
-  }, [memberId]);
-
+  // Cargar datos
   const loadData = async () => {
-    if (!gymData?.id) return;
-    
-    setLoading(true);
-    setError('');
-    
+    if (!gymData?.id || !memberId) {
+      setLoading(false);
+      return;
+    }
+
     try {
-      const [historyData, pendingData] = await Promise.all([
+      const [transactionHistory, pendingMembershipsList] = await Promise.all([
         getMemberPaymentHistory(gymData.id, memberId),
         getPendingMemberships(gymData.id, memberId)
       ]);
-      
-      setTransactions(historyData);
-      setPendingMemberships(pendingData);
-    } catch (err: any) {
+
+      setTransactions(transactionHistory);
+      setPendingMemberships(pendingMembershipsList);
+    } catch (err) {
       console.error('Error loading account data:', err);
-      setError(err.message || 'Error al cargar el estado de cuenta');
+      setError('Error al cargar los datos del estado de cuenta');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    loadData();
+  }, [gymData?.id, memberId]);
+
   // Filtrar transacciones por período
-  const filteredTransactions = (): Transaction[] => {
+  const filteredTransactions = () => {
+    if (period === 'all') return transactions;
+
     const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const firstDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
@@ -119,7 +81,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
     const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
 
     return transactions.filter(tx => {
-      const txDate = tx.date && typeof tx.date === 'object' && 'toDate' in tx.date 
+      const txDate = tx.date && typeof tx.date.toDate === 'function' 
         ? tx.date.toDate() 
         : new Date(tx.date);
       
@@ -136,9 +98,32 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
     });
   };
 
-  // Formatear fecha
+  // 🔧 CORREGIR: Formatear fecha correctamente
   const formatDate = (date: any) => {
-    return formatDisplayDate(date);
+    if (!date) return 'Sin fecha';
+    
+    let actualDate: Date;
+    
+    // Manejar diferentes tipos de fecha
+    if (date && typeof date === 'object' && 'toDate' in date) {
+      // Firebase Timestamp
+      actualDate = date.toDate();
+    } else if (date instanceof Date) {
+      // Objeto Date nativo
+      actualDate = date;
+    } else {
+      // String o cualquier otro formato
+      actualDate = new Date(date);
+    }
+    
+    // 🔧 LOGGING para debug
+    console.log('🔍 Formateo de fecha:', {
+      originalDate: date,
+      convertedDate: actualDate,
+      formatted: actualDate.toLocaleDateString('es-AR')
+    });
+    
+    return actualDate.toLocaleDateString('es-AR');
   };
 
   // Obtener el nombre del método de pago
@@ -190,18 +175,28 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
     }
   };
 
-  // Mostrar comprobante de pago
+  // 🔧 MEJORADA: Mostrar comprobante de pago con mejor manejo de membresías
   const showPaymentReceipt = async (transaction: Transaction) => {
     try {
-      // Buscar membresías relacionadas con esta transacción
-      const relatedMemberships: MembershipAssignment[] = [];
+      // Primero intentar buscar membresías relacionadas con esta transacción
+      let relatedMemberships: MembershipAssignment[] = [];
       
       if (transaction.membershipId) {
-        // Si hay IDs de membresías en la transacción
+        // Si hay IDs de membresías en la transacción, buscar en pendientes Y en historial
         const membershipIds = transaction.membershipId.split(', ');
         
         for (const membershipId of membershipIds) {
-          const foundMembership = pendingMemberships.find(m => m.id === membershipId);
+          // Buscar en membresías pendientes primero
+          let foundMembership = pendingMemberships.find(m => m.id === membershipId);
+          
+          // Si no está en pendientes, crear un objeto de membresía a partir de la descripción
+          if (!foundMembership && transaction.description) {
+            const createdMembership = createMembershipFromDescription(transaction.description, membershipId);
+            if (createdMembership) {
+              foundMembership = createdMembership;
+            }
+          }
+          
           if (foundMembership) {
             relatedMemberships.push(foundMembership);
           }
@@ -214,6 +209,77 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
     } catch (err) {
       console.error('Error preparing receipt:', err);
     }
+  };
+
+  // 🔧 CORREGIDA: Crear objeto de membresía a partir de la descripción
+  const createMembershipFromDescription = (description: string, membershipId: string): MembershipAssignment | null => {
+    console.log('🔍 Creating membership from description:', {
+      description,
+      membershipId
+    });
+    
+    // Extraer información de la descripción para crear un objeto MembershipAssignment
+    if (description.includes('Pago membresías:')) {
+      // Para múltiples membresías
+      const detailMatch = description.match(/Pago membresías: (.+?) \| Total:/);
+      if (detailMatch) {
+        const details = detailMatch[1];
+        const membershipMatches = details.split(', ');
+        
+        // Por simplicidad, tomar la primera membresía (idealmente deberíamos mapear por ID)
+        const firstMembership = membershipMatches[0];
+        // 🔧 CORREGIR REGEX: Permitir espacios opcionales después del $
+        const match = firstMembership.match(/(.+?) - \$\s*([\d,.]+)/);
+        
+        if (match) {
+          const name = match[1].trim();
+          // 🔧 CORREGIR: Manejar formato argentino correctamente
+          const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
+          const amount = parseFloat(cleanAmount);
+          
+          console.log('🔍 Parsed amount (multiple):', {
+            originalMatch: match[2],
+            cleanAmount,
+            finalAmount: amount
+          });
+          
+          return {
+            id: membershipId,
+            activityName: name,
+            cost: amount,
+            paymentStatus: 'paid',
+            status: 'active'
+          } as MembershipAssignment;
+        }
+      }
+    } else if (description.includes('Pago membresía')) {
+      // Para una sola membresía
+      // 🔧 CORREGIR REGEX: Permitir espacios opcionales después del $
+      const match = description.match(/Pago membresía (.+?) - \$\s*([\d,.]+)/);
+      if (match) {
+        const name = match[1].trim();
+        // 🔧 CORREGIR: Manejar formato argentino correctamente
+        const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
+        const amount = parseFloat(cleanAmount);
+        
+        console.log('🔍 Parsed amount (single):', {
+          originalMatch: match[2],
+          cleanAmount,
+          finalAmount: amount
+        });
+        
+        return {
+          id: membershipId,
+          activityName: name,
+          cost: amount,
+          paymentStatus: 'paid',
+          status: 'active'
+        } as MembershipAssignment;
+      }
+    }
+    
+    console.log('🔍 No match found for description:', description);
+    return null;
   };
 
   // Generar PDF del comprobante
@@ -306,59 +372,38 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
       </div>
       
       {loading ? (
-        <div className="text-center py-8">
-          <div className="inline-block h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="mt-2 text-gray-500">Cargando transacciones...</p>
+        <div className="flex justify-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
-      ) : filteredTransactions().length === 0 ? (
-        <div className="text-center py-6 text-gray-500">
-          <Calendar size={48} className="mx-auto mb-2 text-gray-300" />
-          <p>No hay transacciones en el período seleccionado</p>
+      ) : transactions.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <Receipt size={48} className="mx-auto mb-4 text-gray-300" />
+          <p>No hay transacciones registradas</p>
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Fecha
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Concepto
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actividad/Membresía
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Importe
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Método
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Estado
-                </th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Acciones
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Descripción</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Monto</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Método</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredTransactions().map((tx: Transaction) => (
+              {filteredTransactions().map((tx) => (
                 <tr key={tx.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm text-gray-900">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
                     {formatDate(tx.date)}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    {formatTransactionDescription(tx)}
+                    {tx.description || 'Pago de membresía'}
                   </td>
-                  <td className="px-4 py-3 text-sm">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                      {getMembershipInfo(tx)}
-                    </span>
-                  </td>
-                  <td className={`px-4 py-3 text-sm text-right font-medium ${
-                    tx.type === 'expense' ? 'text-red-600' : 'text-green-600'
+                  <td className={`px-4 py-3 whitespace-nowrap text-sm font-medium ${
+                    tx.type === 'income' ? 'text-green-600' : 'text-red-600'
                   }`}>
                     {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
                   </td>
@@ -388,7 +433,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
         </div>
       )}
 
-      {/* ✅ AGREGAR BOTONES DE ACCIÓN AL FINAL */}
+      {/* Botones de acción al final */}
       <div className="mt-6 flex justify-between items-center pt-4 border-t border-gray-200">
         <button
           onClick={() => window.print()}

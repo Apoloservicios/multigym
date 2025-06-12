@@ -28,6 +28,7 @@ import { db } from '../../config/firebase';
 import { getMembersWithUpcomingBirthdays } from '../../services/member.service';
 import QuickAttendanceRegister from '../../components/attendance/QuickAttendanceRegister';
 import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
+import { formatArgentinianDateTime, timestampToArgentinianDate } from '../../utils/timezone.utils';
 
 // Tipos para las métricas del dashboard
 interface DashboardMetrics {
@@ -488,21 +489,12 @@ const Dashboard: React.FC = () => {
   }, [loadDashboardData]);
 
   // Formatear fecha para mostrar
-  const formatDateTime = (timestamp: any) => {
-    if (!timestamp) return 'Fecha no disponible';
-    
-    try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return date.toLocaleString('es-AR', {
-        day: '2-digit',
-        month: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch (error) {
-      return 'Fecha inválida';
-    }
-  };
+const formatDateTime = (timestamp: any) => {
+  if (!timestamp) return 'Fecha no disponible';
+  
+  // ✅ USAR LA FUNCIÓN DE TIMEZONE ARGENTINO
+  return formatArgentinianDateTime(timestamp);
+};
 
   // Función para formatear días hasta cumpleaños
   const formatDaysUntilBirthday = (days: number) => {
@@ -512,19 +504,62 @@ const Dashboard: React.FC = () => {
   };
 
   // Función para obtener fecha de cumpleaños formateada
-  const formatBirthdayDate = (birthDate: any) => {
-    if (!birthDate) return '';
+const formatBirthdayDate = (birthDate: any) => {
+  if (!birthDate) return '';
+  
+  try {
+    // ✅ CORRECCIÓN ESPECÍFICA PARA FECHAS DE CUMPLEAÑOS
+    let dateToFormat: Date | null = null;
     
-    try {
-      const date = birthDate.toDate ? birthDate.toDate() : new Date(birthDate);
-      return date.toLocaleDateString('es-AR', {
-        day: '2-digit',
-        month: '2-digit'
-      });
-    } catch (error) {
+    // Si ya es un string en formato YYYY-MM-DD (como se guarda en el form)
+    if (typeof birthDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+      const [year, month, day] = birthDate.split('-').map(Number);
+      // Crear fecha sin problemas de timezone
+      dateToFormat = new Date(year, month - 1, day);
+    }
+    // Si es un timestamp de Firebase
+    else if (birthDate?.toDate && typeof birthDate.toDate === 'function') {
+      const firebaseDate = birthDate.toDate();
+      // Usar UTC para evitar problemas de timezone
+      dateToFormat = new Date(
+        firebaseDate.getUTCFullYear(),
+        firebaseDate.getUTCMonth(),
+        firebaseDate.getUTCDate()
+      );
+    }
+    // Si es un objeto con seconds (timestamp serializado)
+    else if (birthDate?.seconds) {
+      const firebaseDate = new Date(birthDate.seconds * 1000);
+      dateToFormat = new Date(
+        firebaseDate.getUTCFullYear(),
+        firebaseDate.getUTCMonth(),
+        firebaseDate.getUTCDate()
+      );
+    }
+    // Si es una Date normal
+    else if (birthDate instanceof Date) {
+      dateToFormat = new Date(
+        birthDate.getFullYear(),
+        birthDate.getMonth(),
+        birthDate.getDate()
+      );
+    }
+    
+    if (!dateToFormat || isNaN(dateToFormat.getTime())) {
       return '';
     }
-  };
+    
+    // Formatear solo día y mes
+    return dateToFormat.toLocaleDateString('es-AR', {
+      day: '2-digit',
+      month: '2-digit'
+    });
+    
+  } catch (error) {
+    console.error('Error formatting birthday date:', error);
+    return '';
+  }
+};
 
   if (loading && Object.values(metrics).every(v => v === 0)) {
     return (

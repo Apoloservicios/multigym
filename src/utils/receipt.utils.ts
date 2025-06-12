@@ -1,4 +1,4 @@
-// src/utils/receipt.utils.ts - UTILIDADES PARA GENERAR COMPROBANTES
+// src/utils/receipt.utils.ts - MEJORADO CON DETALLES DE MEMBRESÍAS
 
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -7,7 +7,7 @@ import { MembershipAssignment } from '../types/member.types';
 import { formatDisplayDate, formatDisplayDateTime } from './date.utils';
 
 /**
- * Generar PDF del comprobante
+ * Generar PDF del comprobante con detalles de membresías
  */
 export const generateReceiptPDF = async (
   transaction: Transaction,
@@ -61,55 +61,100 @@ export const generateReceiptPDF = async (
     yPosition += 10;
     
     // Método de pago
-    const paymentMethod = formatPaymentMethod(transaction.paymentMethod || '');
-    pdf.text(`Método de Pago: ${paymentMethod}`, 20, yPosition);
+    pdf.text(`Método: ${formatPaymentMethod(transaction.paymentMethod || '')}`, 20, yPosition);
     yPosition += 20;
     
-    // Detalle de servicios
+    // 🔧 NUEVA SECCIÓN: Detalle de servicios pagados
     if (memberships.length > 0) {
+      pdf.setFontSize(12);
       pdf.setFont('helvetica', 'bold');
-      pdf.text('DETALLE DE SERVICIOS:', 20, yPosition);
-      yPosition += 15;
+      pdf.text('SERVICIOS PAGADOS:', 20, yPosition);
+      yPosition += 10;
       
+      // Línea separadora
+      pdf.setLineWidth(0.3);
+      pdf.line(20, yPosition, pageWidth - 20, yPosition);
+      yPosition += 8;
+      
+      pdf.setFontSize(10);
       pdf.setFont('helvetica', 'normal');
       
-      // Encabezados de tabla
-      pdf.text('Servicio', 20, yPosition);
-      pdf.text('Importe', pageWidth - 60, yPosition, { align: 'right' });
-      yPosition += 5;
-      
-      // Línea de encabezado
-      pdf.line(20, yPosition, pageWidth - 20, yPosition);
-      yPosition += 10;
-      
-      // Items
-      let subtotal = 0;
       memberships.forEach(membership => {
-        const cost = membership.cost || 0;
-        subtotal += cost;
+        // Nombre del servicio
+        pdf.text(membership.activityName, 25, yPosition);
         
-        pdf.text(membership.activityName, 20, yPosition);
-        pdf.text(`${cost.toLocaleString('es-AR')}`, pageWidth - 60, yPosition, { align: 'right' });
+        // Precio alineado a la derecha
+        const priceText = `$${(membership.cost || 0).toLocaleString('es-AR')}`;
+        pdf.text(priceText, pageWidth - 60, yPosition, { align: 'right' });
+        
         yPosition += 8;
+        
+        // Si hay fechas de vigencia, agregarlas
+        if (membership.startDate && membership.endDate) {
+          // Manejar tanto objetos Timestamp como strings/dates
+          let startDate: Date;
+          let endDate: Date;
+          
+          try {
+            startDate = (membership.startDate as any)?.toDate ? (membership.startDate as any).toDate() : new Date(membership.startDate as any);
+            endDate = (membership.endDate as any)?.toDate ? (membership.endDate as any).toDate() : new Date(membership.endDate as any);
+          } catch {
+            startDate = new Date(membership.startDate as any);
+            endDate = new Date(membership.endDate as any);
+          }
+          
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'italic');
+          pdf.text(`   Vigencia: ${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}`, 25, yPosition);
+          pdf.setFontSize(10);
+          pdf.setFont('helvetica', 'normal');
+          yPosition += 6;
+        }
+        
+        yPosition += 3;
       });
       
-      // Línea de subtotal
-      yPosition += 5;
+      // Línea separadora antes del total
+      pdf.setLineWidth(0.3);
       pdf.line(20, yPosition, pageWidth - 20, yPosition);
       yPosition += 10;
+    } else {
+      // 🔧 Si no hay membresías, extraer información de la descripción
+      const extractedMemberships = extractMembershipsFromDescription(transaction.description || '');
       
-      // Subtotal
-      pdf.setFont('helvetica', 'bold');
-      pdf.text('Subtotal:', 20, yPosition);
-      pdf.text(`${subtotal.toLocaleString('es-AR')}`, pageWidth - 60, yPosition, { align: 'right' });
-      yPosition += 15;
+      if (extractedMemberships.length > 0) {
+        pdf.setFontSize(12);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('SERVICIOS PAGADOS:', 20, yPosition);
+        yPosition += 10;
+        
+        // Línea separadora
+        pdf.setLineWidth(0.3);
+        pdf.line(20, yPosition, pageWidth - 20, yPosition);
+        yPosition += 8;
+        
+        pdf.setFontSize(10);
+        pdf.setFont('helvetica', 'normal');
+        
+        extractedMemberships.forEach(membership => {
+          pdf.text(membership.name, 25, yPosition);
+          const priceText = `$${membership.amount.toLocaleString('es-AR')}`;
+          pdf.text(priceText, pageWidth - 60, yPosition, { align: 'right' });
+          yPosition += 8;
+        });
+        
+        // Línea separadora antes del total
+        pdf.setLineWidth(0.3);
+        pdf.line(20, yPosition, pageWidth - 20, yPosition);
+        yPosition += 10;
+      }
     }
     
-    // Total
+    // Total pagado
     pdf.setFontSize(14);
     pdf.setFont('helvetica', 'bold');
     pdf.text('TOTAL PAGADO:', 20, yPosition);
-    pdf.text(`${transaction.amount.toLocaleString('es-AR')}`, pageWidth - 60, yPosition, { align: 'right' });
+    pdf.text(`$${transaction.amount.toLocaleString('es-AR')}`, pageWidth - 60, yPosition, { align: 'right' });
     yPosition += 20;
     
     // Estado del pago
@@ -152,7 +197,49 @@ export const generateReceiptPDF = async (
 };
 
 /**
- * Generar enlace para WhatsApp con el comprobante
+ * 🔧 CORREGIDA: Extraer información de membresías de la descripción
+ */
+const extractMembershipsFromDescription = (description: string): { name: string; amount: number }[] => {
+  const membershipsInfo: { name: string; amount: number }[] = [];
+  
+  if (description.includes('Pago membresías:')) {
+    // Para múltiples membresías: "Pago membresías: Musculación (12/05/2025 - 11/06/2025) - $13.500, Spinning - $16.000"
+    const detailMatch = description.match(/Pago membresías: (.+?) \| Total:/);
+    if (detailMatch) {
+      const details = detailMatch[1];
+      const membershipMatches = details.split(', ').map(item => {
+        // 🔧 CORREGIR REGEX: Permitir espacios opcionales después del $
+        const match = item.match(/(.+?) - \$\s*([\d,.]+)/);
+        if (match) {
+          const name = match[1].trim();
+          // 🔧 CORREGIR: Remover puntos de miles y convertir comas a puntos decimales
+          const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
+          const amount = parseFloat(cleanAmount);
+          return { name, amount };
+        }
+        return null;
+      }).filter(Boolean);
+      
+      membershipsInfo.push(...membershipMatches as { name: string; amount: number }[]);
+    }
+  } else if (description.includes('Pago membresía')) {
+    // Para una sola membresía: "Pago membresía Musculación (12/05/2025 - 11/06/2025) - $ 13.500"
+    // 🔧 CORREGIR REGEX: Permitir espacios opcionales después del $
+    const match = description.match(/Pago membresía (.+?) - \$\s*([\d,.]+)/);
+    if (match) {
+      const name = match[1].trim();
+      // 🔧 CORREGIR: Remover puntos de miles y convertir comas a puntos decimales  
+      const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
+      const amount = parseFloat(cleanAmount);
+      membershipsInfo.push({ name, amount });
+    }
+  }
+  
+  return membershipsInfo;
+};
+
+/**
+ * 🔧 MEJORADA: Generar enlace para WhatsApp con detalles de membresías
  */
 export const generateWhatsAppLink = (
   transaction: Transaction,
@@ -168,17 +255,44 @@ export const generateWhatsAppLink = (
   message += `👤 Socio: ${memberName}\n`;
   message += `🆔 Transacción: #${transaction.id?.slice(-8) || 'N/A'}\n\n`;
   
-  // Detalle de servicios
+  // 🔧 MEJORADO: Detalle de servicios con más información
   if (memberships.length > 0) {
     message += `📋 *SERVICIOS PAGADOS:*\n`;
     memberships.forEach(membership => {
-      message += `• ${membership.activityName}: ${(membership.cost || 0).toLocaleString('es-AR')}\n`;
+      message += `• ${membership.activityName}: $${(membership.cost || 0).toLocaleString('es-AR')}\n`;
+      
+      // Agregar fechas de vigencia si están disponibles
+      if (membership.startDate && membership.endDate) {
+        // Manejar tanto objetos Timestamp como strings/dates
+        let startDate: Date;
+        let endDate: Date;
+        
+        try {
+          startDate = (membership.startDate as any)?.toDate ? (membership.startDate as any).toDate() : new Date(membership.startDate as any);
+          endDate = (membership.endDate as any)?.toDate ? (membership.endDate as any).toDate() : new Date(membership.endDate as any);
+        } catch {
+          startDate = new Date(membership.startDate as any);
+          endDate = new Date(membership.endDate as any);
+        }
+        message += `  ⏰ Vigencia: ${formatDisplayDate(startDate)} - ${formatDisplayDate(endDate)}\n`;
+      }
     });
     message += `\n`;
+  } else {
+    // 🔧 Si no hay membresías, extraer de la descripción
+    const extractedMemberships = extractMembershipsFromDescription(transaction.description || '');
+    
+    if (extractedMemberships.length > 0) {
+      message += `📋 *SERVICIOS PAGADOS:*\n`;
+      extractedMemberships.forEach(membership => {
+        message += `• ${membership.name}: $${membership.amount.toLocaleString('es-AR')}\n`;
+      });
+      message += `\n`;
+    }
   }
   
   // Total
-  message += `💰 *TOTAL PAGADO: ${transaction.amount.toLocaleString('es-AR')}*\n`;
+  message += `💰 *TOTAL PAGADO: $${transaction.amount.toLocaleString('es-AR')}*\n`;
   message += `💳 Método: ${formatPaymentMethod(transaction.paymentMethod || '')}\n`;
   message += `✅ Estado: COMPLETADO\n\n`;
   
@@ -296,12 +410,24 @@ export const generateReceiptText = (
     text += `SERVICIOS PAGADOS:\n`;
     text += `-------------------------------\n`;
     memberships.forEach(membership => {
-      text += `${membership.activityName.padEnd(20)} ${(membership.cost || 0).toLocaleString('es-AR').padStart(8)}\n`;
+      text += `${membership.activityName.padEnd(20)} $${(membership.cost || 0).toLocaleString('es-AR').padStart(8)}\n`;
     });
     text += `-------------------------------\n`;
+  } else {
+    // Extraer de la descripción si no hay membresías
+    const extractedMemberships = extractMembershipsFromDescription(transaction.description || '');
+    
+    if (extractedMemberships.length > 0) {
+      text += `SERVICIOS PAGADOS:\n`;
+      text += `-------------------------------\n`;
+      extractedMemberships.forEach(membership => {
+        text += `${membership.name.padEnd(20)} $${membership.amount.toLocaleString('es-AR').padStart(8)}\n`;
+      });
+      text += `-------------------------------\n`;
+    }
   }
   
-  text += `TOTAL PAGADO: ${transaction.amount.toLocaleString('es-AR')}\n`;
+  text += `TOTAL PAGADO: $${transaction.amount.toLocaleString('es-AR')}\n`;
   text += `ESTADO: COMPLETADO\n\n`;
   
   if (transaction.notes) {

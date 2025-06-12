@@ -1,4 +1,4 @@
-// src/services/payment.service.ts - MEJORADO CON DESCRIPCIÓN DETALLADA
+// src/services/payment.service.ts - CORREGIDO MANTENIENDO TODA LA FUNCIONALIDAD
 
 import { 
   collection, 
@@ -39,6 +39,34 @@ interface PaymentResponse {
   error?: string;
 }
 
+// 🔧 MEJORADA: Función helper para crear fechas en zona horaria argentina
+const createArgentinianDate = (dateString: string): Date => {
+  console.log('🔧 createArgentinianDate input:', dateString);
+  
+  // Si ya es una fecha completa, usarla directamente
+  if (dateString.includes('T') || dateString.includes(' ')) {
+    const date = new Date(dateString);
+    console.log('🔧 Full date conversion:', { input: dateString, output: date });
+    return date;
+  }
+  
+  // Para fechas en formato YYYY-MM-DD, crear fecha local argentina
+  const [year, month, day] = dateString.split('-').map(Number);
+  
+  // Crear fecha en zona horaria local (Argentina)
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+  
+  console.log('🔧 Date conversion:', {
+    input: dateString,
+    parsed: { year, month: month - 1, day },
+    output: date,
+    outputString: date.toString(),
+    localeDateString: date.toLocaleDateString('es-AR')
+  });
+  
+  return date;
+};
+
 // Obtener membresías pendientes de pago de un socio
 export const getPendingMemberships = async (gymId: string, memberId: string): Promise<MembershipAssignment[]> => {
   try {
@@ -67,8 +95,6 @@ export const getPendingMemberships = async (gymId: string, memberId: string): Pr
   }
 };
 
-// ✅ MEJORAR la función createPaymentDescription en payment.service.ts
-
 // Crear descripción detallada para el pago (MEJORADA CON MÁS DETALLES)
 const createPaymentDescription = (memberName: string, memberships: MembershipAssignment[]): string => {
   if (memberships.length === 0) {
@@ -76,35 +102,45 @@ const createPaymentDescription = (memberName: string, memberships: MembershipAss
   }
   
   if (memberships.length === 1) {
-    // ✅ DESCRIPCIÓN MÁS DETALLADA PARA UNA MEMBRESÍA
+    // DESCRIPCIÓN MÁS DETALLADA PARA UNA MEMBRESÍA
     const membership = memberships[0];
-    const startDate = safelyConvertToDate(membership.startDate);
-    const endDate = safelyConvertToDate(membership.endDate);
+    const startDate = membership.startDate ? new Date(membership.startDate + 'T12:00:00') : null;
+    const endDate = membership.endDate ? new Date(membership.endDate + 'T12:00:00') : null;
+
+     // 🔍 DEBUG: Ver qué fechas tienen las membresías
+    console.log('🔍 Fechas de membresía para descripción:', {
+      startDateRaw: membership.startDate,
+      endDateRaw: membership.endDate,
+      startDateConverted: startDate,
+      endDateConverted: endDate,
+      startFormatted: startDate?.toLocaleDateString('es-AR'),
+      endFormatted: endDate?.toLocaleDateString('es-AR')
+    });
     
     let dateRange = '';
     if (startDate && endDate) {
-      const startStr = formatDisplayDate(startDate);
-      const endStr = formatDisplayDate(endDate);
+      const startStr = startDate.toLocaleDateString('es-AR');
+const endStr = endDate.toLocaleDateString('es-AR');
       dateRange = ` (${startStr} - ${endStr})`;
     }
     
-    // ✅ INCLUIR MÁS DETALLES: actividad + período + costo
+    // INCLUIR MÁS DETALLES: actividad + período + costo
     return `Pago membresía ${membership.activityName}${dateRange} - ${formatCurrency(membership.cost)} de ${memberName}`;
   }
   
-  // ✅ DESCRIPCIÓN DETALLADA PARA MÚLTIPLES MEMBRESÍAS
+  // DESCRIPCIÓN DETALLADA PARA MÚLTIPLES MEMBRESÍAS
   const activitiesDetail = memberships.map(m => {
-    const startDate = safelyConvertToDate(m.startDate);
-    const endDate = safelyConvertToDate(m.endDate);
+  const startDate = m.startDate ? new Date(m.startDate + 'T12:00:00') : null;
+  const endDate = m.endDate ? new Date(m.endDate + 'T12:00:00') : null;
     
     let dateRange = '';
     if (startDate && endDate) {
-      const startStr = formatDisplayDate(startDate);
-      const endStr = formatDisplayDate(endDate);
+      const startStr = startDate.toLocaleDateString('es-AR');
+      const endStr = endDate.toLocaleDateString('es-AR');
       dateRange = ` (${startStr} - ${endStr})`;
     }
     
-    // ✅ INCLUIR ACTIVIDAD + PERÍODO + COSTO
+    // INCLUIR ACTIVIDAD + PERÍODO + COSTO
     return `${m.activityName}${dateRange} - ${formatCurrency(m.cost)}`;
   }).join(', ');
   
@@ -113,8 +149,9 @@ const createPaymentDescription = (memberName: string, memberships: MembershipAss
   return `Pago membresías: ${activitiesDetail} | Total: ${formatCurrency(totalAmount)} de ${memberName}`;
 };
 
-// Registrar un pago de membresía y actualizar la caja diaria
+// 🔧 FUNCIÓN CORREGIDA - Registrar un pago de membresía y actualizar la caja diaria
 export const registerMembershipPayment = async (payment: PaymentRequest): Promise<PaymentResponse> => {
+  console.log('🚀 EJECUTANDO registerMembershipPayment con fecha:', payment.paymentDate);
   try {
     // Referencias a documentos y colecciones
     const memberRef = doc(db, `gyms/${payment.gymId}/members`, payment.memberId);
@@ -135,24 +172,52 @@ export const registerMembershipPayment = async (payment: PaymentRequest): Promis
       // Leer datos de caja diaria
       const dailyCashSnap = await transaction.get(dailyCashRef);
       
-      // Leer datos de las membresías
-      const memberships: MembershipAssignment[] = [];
+      // 🔧 CORRECCIÓN: Leer SOLO las membresías seleccionadas y validar su estado
+      const selectedMemberships: MembershipAssignment[] = [];
       for (const membershipId of payment.membershipIds) {
         const membershipRef = doc(db, `gyms/${payment.gymId}/members/${payment.memberId}/memberships`, membershipId);
         const membershipSnap = await transaction.get(membershipRef);
         
         if (membershipSnap.exists()) {
-          memberships.push({
+          const membershipData = membershipSnap.data() as MembershipAssignment;
+          
+          // 🔧 VALIDACIÓN: Verificar que la membresía esté pendiente
+          if (membershipData.paymentStatus !== 'pending') {
+            throw new Error(`La membresía ${membershipData.activityName} ya está pagada`);
+          }
+          
+          selectedMemberships.push({
             id: membershipId,
-            ...membershipSnap.data()
+            ...membershipData
           } as MembershipAssignment);
+        } else {
+          throw new Error(`Membresía con ID ${membershipId} no encontrada`);
         }
       }
       
+      // 🔧 VALIDACIÓN: Verificar que el monto coincida con las membresías seleccionadas
+      const expectedAmount = selectedMemberships.reduce((sum, m) => sum + m.cost, 0);
+      if (Math.abs(payment.amount - expectedAmount) > 0.01) {
+        throw new Error(`El monto del pago (${payment.amount}) no coincide con el costo de las membresías seleccionadas (${expectedAmount})`);
+      }
+      
+      // 🔧 LOGGING para debugging
+      console.log('🔍 Estado antes del pago:', {
+        currentDebt,
+        paymentAmount: payment.amount,
+        selectedMemberships: selectedMemberships.map(m => ({
+          id: m.id,
+          activityName: m.activityName,
+          cost: m.cost,
+          paymentStatus: m.paymentStatus
+        })),
+        expectedNewDebt: currentDebt - payment.amount
+      });
+      
       // 2. ESCRITURAS - Después realizamos todas las escrituras
       
-      // Actualizar el estado de las membresías a 'paid'
-      for (const membership of memberships) {
+      // 🔧 CORRECCIÓN: Actualizar SOLO las membresías seleccionadas como 'paid'
+      for (const membership of selectedMemberships) {
         const membershipRef = doc(db, `gyms/${payment.gymId}/members/${payment.memberId}/memberships`, membership.id || '');
         transaction.update(membershipRef, {
           paymentStatus: 'paid',
@@ -164,31 +229,51 @@ export const registerMembershipPayment = async (payment: PaymentRequest): Promis
       
       // Actualizar la deuda total del socio
       const newDebt = Math.max(0, currentDebt - payment.amount);
+      
+      // 🔧 LOGGING para verificar la actualización de deuda
+      console.log('💰 Actualizando deuda del socio:', {
+        memberId: payment.memberId,
+        currentDebt,
+        paymentAmount: payment.amount,
+        newDebt,
+        calculation: `${currentDebt} - ${payment.amount} = ${newDebt}`
+      });
+      
       transaction.update(memberRef, {
         totalDebt: newDebt,
         updatedAt: serverTimestamp()
       });
       
       // Crear descripción detallada del pago
-      const description = createPaymentDescription(payment.memberName, memberships);
+      const description = createPaymentDescription(payment.memberName, selectedMemberships);
       
       // Crear un registro de transacción
-      const transactionData: Partial<Transaction> = {
-        type: 'income',
-        category: 'membership',
-        amount: payment.amount,
-        description: description, // ✅ DESCRIPCIÓN MEJORADA
-        memberId: payment.memberId,
-        memberName: payment.memberName,
-        membershipId: payment.membershipIds.join(', '),
-        date: Timestamp.fromDate(new Date(payment.paymentDate)),
-        userId: payment.userId,
-        userName: payment.userName,
-        paymentMethod: payment.paymentMethod,
-        status: 'completed',
-        notes: payment.notes,
-        createdAt: serverTimestamp()
-      };
+              // 🔧 LOGGING para debugging de fechas
+        const currentMoment = new Date();
+        console.log('🔍 Fecha del pago - debugging:', {
+          paymentDateOriginal: payment.paymentDate,
+          currentMoment,
+          currentMomentString: currentMoment.toString(),
+          finalTimestamp: Timestamp.fromDate(currentMoment)
+        });
+
+        // Crear un registro de transacción
+        const transactionData: Partial<Transaction> = {
+          type: 'income',
+          category: 'membership',
+          amount: payment.amount,
+          description: description,
+          memberId: payment.memberId,
+          memberName: payment.memberName,
+          membershipId: payment.membershipIds.join(', '),
+          date: Timestamp.fromDate(currentMoment), // 🔧 USAR FECHA ACTUAL DIRECTAMENTE
+          userId: payment.userId,
+          userName: payment.userName,
+          paymentMethod: payment.paymentMethod,
+          status: 'completed',
+          notes: payment.notes,
+          createdAt: serverTimestamp()
+        };
       
       // Actualizar o crear el registro de caja diaria
       if (dailyCashSnap.exists()) {
@@ -226,13 +311,20 @@ export const registerMembershipPayment = async (payment: PaymentRequest): Promis
       const transactionsRef = collection(db, `gyms/${payment.gymId}/transactions`);
       const docRef = await addDoc(transactionsRef, result.transactionData);
       
+      // 🔧 LOGGING para debug
+      console.log('✅ Pago registrado correctamente:', {
+        transactionId: docRef.id,
+        membershipsProcessed: payment.membershipIds.length,
+        amount: payment.amount
+      });
+      
       return {
         success: true,
         transactionId: docRef.id
       };
     });
   } catch (error: any) {
-    console.error('Error registering payment:', error);
+    console.error('❌ Error al registrar el pago:', error);
     return {
       success: false,
       error: error.message || 'Error al registrar el pago'

@@ -137,6 +137,13 @@ const MemberPayment: React.FC<MemberPaymentProps> = ({ member, onSuccess, onCanc
       return;
     }
     
+      console.log('🔍 Fecha enviada desde MemberPayment:', {
+        paymentDate: formData.paymentDate,
+        paymentDateType: typeof formData.paymentDate,
+        currentDate: new Date(),
+        currentDateString: new Date().toLocaleDateString('es-AR')
+      });
+
     setLoading(true);
     setError('');
     
