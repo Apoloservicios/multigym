@@ -131,30 +131,56 @@ const DashboardImproved: React.FC = () => {
   }, []);
 
   // Función para detectar tipo de transacción - MEMOIZADA
-  const getTransactionDisplayInfo = useCallback((transaction: any) => {
-    const isRefund = transaction.type === 'refund' || 
-                     transaction.category === 'refund' || 
-                     transaction.description?.toLowerCase().includes('devolución') ||
-                     transaction.description?.toLowerCase().includes('devolucion') ||
-                     (transaction.amount < 0 && transaction.type !== 'expense');
-    
-    const isExpense = !isRefund && (
-      transaction.type === 'expense' || 
-      transaction.category === 'expense' ||
-      transaction.category === 'withdrawal' ||
-      transaction.amount < 0
-    );
-                     
-    const isIncome = !isRefund && !isExpense && transaction.amount > 0;
-    
-    return {
-      isRefund,
-      isIncome,
-      isExpense,
-      displayAmount: Math.abs(transaction.amount),
-      type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
-    };
-  }, []);
+      const getTransactionDisplayInfo = useCallback((transaction: any) => {
+      // 🔍 DEBUG: Log para transacciones de reintegro
+      if (transaction.type === 'refund' || transaction.category === 'refund' || 
+          transaction.description?.toLowerCase().includes('reintegro')) {
+        console.log('🔍 DETECTANDO TRANSACCIÓN DE REINTEGRO:', {
+          id: transaction.id,
+          type: transaction.type,
+          category: transaction.category,
+          amount: transaction.amount,
+          description: transaction.description?.substring(0, 50) + '...',
+          createdAt: transaction.createdAt,
+          date: transaction.date
+        });
+      }
+
+      const isRefund = transaction.type === 'refund' || 
+                      transaction.category === 'refund' || 
+                      transaction.description?.toLowerCase().includes('devolución') ||
+                      transaction.description?.toLowerCase().includes('devolucion') ||
+                      transaction.description?.toLowerCase().includes('reintegro') || // 🔧 AGREGAR ESTA LÍNEA
+                      (transaction.amount < 0 && transaction.type !== 'expense');
+      
+      const isExpense = !isRefund && (
+        transaction.type === 'expense' || 
+        transaction.category === 'expense' ||
+        transaction.category === 'withdrawal' ||
+        transaction.amount < 0
+      );
+                      
+      const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+      
+      // 🔍 DEBUG: Log resultado de la clasificación
+      if (transaction.type === 'refund' || transaction.category === 'refund' || 
+          transaction.description?.toLowerCase().includes('reintegro')) {
+        console.log('🔍 RESULTADO CLASIFICACIÓN REINTEGRO:', {
+          isRefund,
+          isExpense,
+          isIncome,
+          displayAmount: Math.abs(transaction.amount)
+        });
+      }
+      
+      return {
+        isRefund,
+        isIncome,
+        isExpense,
+        displayAmount: Math.abs(transaction.amount),
+        type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
+      };
+    }, []);
 
   // Función para formatear nombres de métodos de pago - MEMOIZADA
   const formatPaymentMethodName = useCallback((method: string): string => {
@@ -169,55 +195,74 @@ const DashboardImproved: React.FC = () => {
 
   // 🔧 GENERAR ACTIVIDADES RECIENTES CON FECHAS ARGENTINA - MEMOIZADO
   const recentActivities = React.useMemo(() => {
-    if (!transactions.length) return [];
+  if (!transactions.length) return [];
 
-    return transactions.slice(0, 10).map(transaction => {
-      const displayInfo = getTransactionDisplayInfo(transaction);
-      
-      let memberDisplayName = 'Usuario del sistema';
-      let transactionDescription = 'Transacción';
-      
-      if (transaction.memberName && transaction.memberName !== transaction.userName) {
-        memberDisplayName = transaction.memberName;
-      } else if (transaction.description) {
-        const desc = transaction.description.toLowerCase();
-        if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
-          const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
-          if (match && match[1]) {
-            memberDisplayName = match[1].trim();
-          }
+  // 🔍 DEBUG: Verificar transacciones de reintegro
+  const refundTransactions = transactions.filter(t => 
+    t.type === 'refund' || t.category === 'refund' || 
+    t.description?.toLowerCase().includes('reintegro')
+  );
+  
+  if (refundTransactions.length > 0) {
+    console.log('🔍 TRANSACCIONES DE REINTEGRO ENCONTRADAS:', {
+      total: refundTransactions.length,
+      transactions: refundTransactions.map(t => ({
+        id: t.id,
+        type: t.type,
+        category: t.category,
+        amount: t.amount,
+        description: t.description?.substring(0, 30) + '...'
+      }))
+    });
+  }
+
+  return transactions.slice(0, 10).map(transaction => {
+    const displayInfo = getTransactionDisplayInfo(transaction);
+    
+    let memberDisplayName = 'Usuario del sistema';
+    let transactionDescription = 'Transacción';
+    
+    if (transaction.memberName && transaction.memberName !== transaction.userName) {
+      memberDisplayName = transaction.memberName;
+    } else if (transaction.description) {
+      const desc = transaction.description.toLowerCase();
+      if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
+        const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
+        if (match && match[1]) {
+          memberDisplayName = match[1].trim();
         }
       }
-      
-      if (transaction.category === 'membership') {
-        transactionDescription = 'Pago de membresía';
-      } else if (transaction.category === 'extra') {
-        transactionDescription = 'Ingreso extra';
-      } else if (transaction.category === 'refund') {
-        transactionDescription = 'Devolución';
-      } else if (transaction.category === 'withdrawal') {
-        transactionDescription = 'Retiro de caja';
-      } else if (transaction.category === 'expense') {
-        transactionDescription = 'Gasto operativo';
-      } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
-        transactionDescription = transaction.description;
-      }
-      
-      return {
-        id: transaction.id || '',
-        type: displayInfo.type as 'payment' | 'refund' | 'expense',
-        memberName: memberDisplayName,
-        description: transactionDescription,
-        amount: displayInfo.displayAmount,
-        method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
-        timestamp: transaction.createdAt,
-        status: transaction.status || 'completed',
-        color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
-        symbol: displayInfo.isIncome ? '+' : '-',
-        processedBy: transaction.userName || 'Sistema'
-      };
-    });
-  }, [transactions, getTransactionDisplayInfo, formatPaymentMethodName]);
+    }
+    
+    if (transaction.category === 'membership') {
+      transactionDescription = 'Pago de membresía';
+    } else if (transaction.category === 'extra') {
+      transactionDescription = 'Ingreso extra';
+    } else if (transaction.category === 'refund') {
+      transactionDescription = 'Devolución';
+    } else if (transaction.category === 'withdrawal') {
+      transactionDescription = 'Retiro de caja';
+    } else if (transaction.category === 'expense') {
+      transactionDescription = 'Gasto operativo';
+    } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
+      transactionDescription = transaction.description;
+    }
+    
+    return {
+      id: transaction.id || '',
+      type: displayInfo.type as 'payment' | 'refund' | 'expense',
+      memberName: memberDisplayName,
+      description: transactionDescription,
+      amount: displayInfo.displayAmount,
+      method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
+      timestamp: transaction.createdAt,
+      status: transaction.status || 'completed',
+      color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
+      symbol: displayInfo.isIncome ? '+' : '-',
+      processedBy: transaction.userName || 'Sistema'
+    };
+  });
+}, [transactions, getTransactionDisplayInfo, formatPaymentMethodName]);
 
   // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO PARA EVITAR DUPLICACIÓN
   const loadEnhancedMetrics = useCallback(async () => {
@@ -451,19 +496,27 @@ const DashboardImproved: React.FC = () => {
   };
 
   // 🔧 EFECTO PARA SINCRONIZAR CON DATOS DEL HOOK useFinancial
-  useEffect(() => {
-    if (dailySummary && !financialLoading) {
-      console.log('🔄 Sincronizando métricas con dailySummary:', dailySummary);
-      
-      setMetrics(prev => ({
-        ...prev,
-        todayIncome: dailySummary.totalIncome,
-        todayExpenses: dailySummary.totalExpenses,
-        todayNet: dailySummary.totalIncome - dailySummary.totalExpenses,
-        refundsToday: dailySummary.refunds
-      }));
+useEffect(() => {
+  if (dailySummary && !financialLoading) {
+    console.log('🔄 Sincronizando métricas con dailySummary:', dailySummary);
+    
+    // 🔍 DEBUG: Verificar si hay reintegros en el dailySummary
+    if (dailySummary.refunds > 0) {
+      console.log('🔄 REINTEGROS DETECTADOS EN DAILY SUMMARY:', {
+        refunds: dailySummary.refunds,
+        totalExpenses: dailySummary.totalExpenses
+      });
     }
-  }, [dailySummary, financialLoading]);
+    
+    setMetrics(prev => ({
+      ...prev,
+      todayIncome: dailySummary.totalIncome,
+      todayExpenses: dailySummary.totalExpenses,
+      todayNet: dailySummary.totalIncome - dailySummary.totalExpenses,
+      refundsToday: dailySummary.refunds
+    }));
+  }
+}, [dailySummary, financialLoading]);
 
   // Efectos - CONTROLADOS PARA EVITAR BUCLES
   useEffect(() => {

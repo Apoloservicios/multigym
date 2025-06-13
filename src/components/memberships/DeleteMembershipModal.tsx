@@ -22,6 +22,7 @@ const DeleteMembershipModal: React.FC<DeleteMembershipModalProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const handleConfirm = async () => {
+     console.log('🔍 MODAL: Enviando confirmación con withRefund:', withRefund);
     setIsLoading(true);
     try {
       // Procesar la cancelación con o sin reintegro
@@ -51,13 +52,17 @@ const DeleteMembershipModal: React.FC<DeleteMembershipModalProps> = ({
         {isPaid && (
           <div className="mb-4 p-4 bg-yellow-50 rounded-md">
             <div className="flex items-center mb-2">
-              <input
-                type="checkbox"
-                id="withRefund"
-                checked={withRefund}
-                onChange={(e) => setWithRefund(e.target.checked)}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
+                < input
+                  type="checkbox"
+                  id="withRefund"
+                  checked={withRefund}
+                  onChange={(e) => {
+                    const newValue = e.target.checked;
+                    console.log('🔍 MODAL: Checkbox cambiado a:', newValue);
+                    setWithRefund(newValue);
+                  }}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
               <label htmlFor="withRefund" className="ml-2 text-sm font-medium text-gray-700 flex items-center">
                 Realizar reintegro <DollarSign size={16} className="ml-1 text-green-600" />
               </label>

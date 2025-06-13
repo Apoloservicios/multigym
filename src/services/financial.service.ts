@@ -331,139 +331,187 @@ export class FinancialService {
    * 🔧 OBTIENE EL RESUMEN DE CAJA DIARIA CON TIMEZONE ARGENTINA
    */
   static async getDailyCashSummary(
-    gymId: string,
-    date: string
-  ): Promise<DailyCashSummary | null> {
-    try {
-      console.log(`🔍 Calculando resumen para fecha argentina: ${date}`);
-      
-      // 🔧 OBTENER RANGO DE FECHAS PARA EL DÍA EN ARGENTINA
-      const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
-      
-      console.log(`📅 Rango de consulta:`, {
-        startOfDay: startOfDay.toDate(),
-        endOfDay: endOfDay.toDate()
+  gymId: string,
+  date: string
+): Promise<DailyCashSummary | null> {
+  try {
+    console.log(`🔍 Calculando resumen para fecha argentina: ${date}`);
+    console.log('🔧 FUNCIÓN ACTUALIZADA - USANDO CONSULTA COMBINADA'); // 🔧 AGREGAR ESTA LÍNEA
+    
+    const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
+    
+    console.log(`📅 Rango de consulta:`, {
+      startOfDay: startOfDay.toDate(),
+      endOfDay: endOfDay.toDate()
+    });
+    
+    const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
+    
+    // 🔧 HACER DOS CONSULTAS PARA CAPTURAR TODAS LAS TRANSACCIONES
+    console.log('🔍 EJECUTANDO CONSULTAS COMBINADAS (createdAt + date)'); // 🔧 AGREGAR ESTA LÍNEA
+    // Consulta 1: Por createdAt (transacciones normales)
+    const q1 = query(
+      transactionsRef,
+      where('createdAt', '>=', startOfDay),
+      where('createdAt', '<=', endOfDay),
+      orderBy('createdAt', 'desc')
+    );
+    
+    // Consulta 2: Por date (reintegros y otras que usan campo 'date')
+    const q2 = query(
+      transactionsRef,
+      where('date', '>=', startOfDay),
+      where('date', '<=', endOfDay),
+      orderBy('date', 'desc')
+    );
+    
+    // Ejecutar ambas consultas
+    const [snap1, snap2] = await Promise.all([
+      getDocs(q1),
+      getDocs(q2)
+    ]);
+    
+    // Combinar resultados y eliminar duplicados
+    const transactionMap = new Map();
+    
+    // Procesar primera consulta
+    snap1.forEach(doc => {
+      transactionMap.set(doc.id, {
+        id: doc.id,
+        ...doc.data()
+      } as Transaction);
+    });
+    
+    // Procesar segunda consulta (puede sobrescribir, está bien)
+    snap2.forEach(doc => {
+      transactionMap.set(doc.id, {
+        id: doc.id,
+        ...doc.data()
+      } as Transaction);
+    });
+    
+    const transactions = Array.from(transactionMap.values());
+    
+    console.log(`💰 Transacciones encontradas para ${date} (consulta combinada):`, transactions.length);
+    
+
+
+    console.log('🔍 EJECUTANDO CONSULTAS COMBINADAS (createdAt + date)');
+
+    
+    // 🔧 AGREGAR LOG ESPECÍFICO PARA REINTEGROS
+    const refundTransactions = transactions.filter(t => 
+      t.type === 'refund' || t.category === 'refund'
+    );
+    
+    if (refundTransactions.length > 0) {
+      console.log(`🔄 REINTEGROS ENCONTRADOS EN RESUMEN DIARIO:`, {
+        total: refundTransactions.length,
+        amounts: refundTransactions.map(t => t.amount),
+        ids: refundTransactions.map(t => t.id)
       });
-      
-      // Obtener transacciones del día usando rango de fechas argentina
-      const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-      const q = query(
-        transactionsRef,
-        where('createdAt', '>=', startOfDay),
-        where('createdAt', '<=', endOfDay),
-        orderBy('createdAt', 'desc')
-      );
-      
-      const transactionsSnap = await getDocs(q);
-      const transactions = transactionsSnap.docs.map(doc => ({ 
-        id: doc.id, 
-        ...doc.data() 
-      })) as Transaction[];
-      
-      console.log(`💰 Transacciones encontradas para ${date}:`, transactions.length);
-      
-      // 🔧 CALCULAR TOTALES CON LÓGICA MEJORADA
-      let totalIncome = 0;
-      let totalExpenses = 0;
-      let pendingPayments = 0;
-      let refunds = 0;
-      const paymentMethodBreakdown: { [key: string]: PaymentSummary } = {};
-      
-      transactions.forEach(transaction => {
-        console.log(`🔍 Procesando transacción:`, {
-          id: transaction.id,
-          amount: transaction.amount,
-          type: transaction.type,
-          category: transaction.category,
-          status: transaction.status,
-          description: transaction.description
-        });
-        
-        if (transaction.status === 'completed') {
-          // 🔧 LÓGICA MEJORADA PARA DETECTAR INGRESOS VS EGRESOS
-          const isRefund = transaction.type === 'refund' || 
-                          transaction.category === 'refund' || 
-                          transaction.description?.toLowerCase().includes('devolución') ||
-                          transaction.description?.toLowerCase().includes('devolucion');
-          
-          const isExpense = !isRefund && (
-            transaction.type === 'expense' || 
-            transaction.category === 'expense' ||
-            transaction.category === 'withdrawal' ||
-            transaction.category === 'supplier' ||
-            transaction.category === 'services' ||
-            transaction.category === 'maintenance' ||
-            transaction.category === 'salary'
-          );
-          
-          const isIncome = !isRefund && !isExpense && (
-            transaction.type === 'income' ||
-            transaction.category === 'membership' ||
-            transaction.category === 'extra' ||
-            transaction.category === 'penalty' ||
-            transaction.category === 'product' ||
-            transaction.category === 'service' ||
-            transaction.amount > 0
-          );
-          
-          const amount = Math.abs(transaction.amount);
-          
-          if (isIncome) {
-            totalIncome += amount;
-            console.log(`✅ Ingreso detectado: +$${amount}`);
-            
-            // Agrupar por método de pago
-            const method = transaction.paymentMethod || 'other';
-            if (!paymentMethodBreakdown[method]) {
-              paymentMethodBreakdown[method] = {
-                totalAmount: 0,
-                paymentMethod: method,
-                count: 0
-              };
-            }
-            paymentMethodBreakdown[method].totalAmount += amount;
-            paymentMethodBreakdown[method].count++;
-          } else if (isRefund) {
-            totalExpenses += amount;
-            refunds++;
-            console.log(`🔄 Devolución detectada: -$${amount}`);
-          } else if (isExpense) {
-            totalExpenses += amount;
-            console.log(`❌ Gasto detectado: -$${amount}`);
-          } else {
-            // Caso por defecto - usar el signo del monto
-            if (transaction.amount > 0) {
-              totalIncome += amount;
-              console.log(`➕ Ingreso por monto positivo: +$${amount}`);
-            } else {
-              totalExpenses += amount;
-              console.log(`➖ Gasto por monto negativo: -$${amount}`);
-            }
-          }
-        } else if (transaction.status === 'pending') {
-          pendingPayments++;
-        }
-      });
-      
-      const summary = {
-        date,
-        totalIncome,
-        totalExpenses,
-        netAmount: totalIncome - totalExpenses,
-        paymentBreakdown: Object.values(paymentMethodBreakdown),
-        pendingPayments,
-        refunds
-      };
-      
-      console.log(`📊 Resumen calculado para ${date}:`, summary);
-      
-      return summary;
-      
-    } catch (error) {
-      console.error('Error getting daily cash summary:', error);
-      return null;
     }
+    
+    // Resto de la función igual...
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    let pendingPayments = 0;
+    let refunds = 0;
+    const paymentMethodBreakdown: { [key: string]: PaymentSummary } = {};
+    
+    transactions.forEach(transaction => {
+      console.log(`🔍 Procesando transacción:`, {
+        id: transaction.id,
+        amount: transaction.amount,
+        type: transaction.type,
+        category: transaction.category,
+        status: transaction.status,
+        description: transaction.description?.substring(0, 30) + '...'
+      });
+      
+      if (transaction.status === 'completed') {
+        const isRefund = transaction.type === 'refund' || 
+                        transaction.category === 'refund' || 
+                        transaction.description?.toLowerCase().includes('devolución') ||
+                        transaction.description?.toLowerCase().includes('devolucion') ||
+                        transaction.description?.toLowerCase().includes('reintegro');
+        
+        const isExpense = !isRefund && (
+          transaction.type === 'expense' || 
+          transaction.category === 'expense' ||
+          transaction.category === 'withdrawal' ||
+          transaction.category === 'supplier' ||
+          transaction.category === 'services' ||
+          transaction.category === 'maintenance' ||
+          transaction.category === 'salary'
+        );
+        
+        const isIncome = !isRefund && !isExpense && (
+          transaction.type === 'income' ||
+          transaction.category === 'membership' ||
+          transaction.category === 'extra' ||
+          transaction.category === 'penalty' ||
+          transaction.category === 'product' ||
+          transaction.category === 'service' ||
+          transaction.amount > 0
+        );
+        
+        const amount = Math.abs(transaction.amount);
+        
+        if (isIncome) {
+          totalIncome += amount;
+          console.log(`✅ Ingreso detectado: +$${amount}`);
+          
+          const method = transaction.paymentMethod || 'other';
+          if (!paymentMethodBreakdown[method]) {
+            paymentMethodBreakdown[method] = {
+              totalAmount: 0,
+              paymentMethod: method,
+              count: 0
+            };
+          }
+          paymentMethodBreakdown[method].totalAmount += amount;
+          paymentMethodBreakdown[method].count++;
+        } else if (isRefund) {
+          totalExpenses += amount;
+          refunds++;
+          console.log(`🔄 Devolución detectada: -$${amount}`);
+        } else if (isExpense) {
+          totalExpenses += amount;
+          console.log(`❌ Gasto detectado: -$${amount}`);
+        } else {
+          if (transaction.amount > 0) {
+            totalIncome += amount;
+            console.log(`➕ Ingreso por monto positivo: +$${amount}`);
+          } else {
+            totalExpenses += amount;
+            console.log(`➖ Gasto por monto negativo: -$${amount}`);
+          }
+        }
+      } else if (transaction.status === 'pending') {
+        pendingPayments++;
+      }
+    });
+    
+    const summary = {
+      date,
+      totalIncome,
+      totalExpenses,
+      netAmount: totalIncome - totalExpenses,
+      paymentBreakdown: Object.values(paymentMethodBreakdown),
+      pendingPayments,
+      refunds
+    };
+    
+    console.log(`📊 Resumen calculado para ${date}:`, summary);
+    
+    return summary;
+    
+  } catch (error) {
+    console.error('Error getting daily cash summary:', error);
+    return null;
   }
+}
   
   /**
    * 🔧 OBTIENE TRANSACCIONES CON FILTROS DE TIMEZONE ARGENTINA
