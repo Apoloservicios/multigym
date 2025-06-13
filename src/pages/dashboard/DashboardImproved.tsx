@@ -266,12 +266,23 @@ const DashboardImproved: React.FC = () => {
 
   // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO PARA EVITAR DUPLICACIÓN
   const loadEnhancedMetrics = useCallback(async () => {
+
     if (!gymData?.id || !shouldLoad()) return;
+
+     if (transactions.length === 0) {
+        console.log('⏳ Esperando a que las transacciones se carguen...', {
+          transactionCount: transactions.length,
+          financialLoading,
+          dailySummary: !!dailySummary
+        });
+        return; // No calcular métricas si no hay transacciones aún
+      }
+      console.log('🚀 INICIANDO CÁLCULO DE MÉTRICAS CON TRANSACCIONES:', transactions.length);
     
     try {
       setLastLoadTime(Date.now());
-      
-      // Cargar métricas de socios
+    
+      // Cargar métricas de socios (resto del código igual hasta las métricas financieras)
       const [
         totalMembersSnap,
         activeMembersSnap,
@@ -430,6 +441,67 @@ const DashboardImproved: React.FC = () => {
         return transactionDateArg && thisMonthStartArg && transactionDateArg >= thisMonthStartArg;
       });
 
+
+              // 🔍 AGREGAR ESTOS LOGS PARA DEBUG
+        console.log('🔍 DEBUG MÉTRICAS MENSUALES:', {
+          totalTransactions: transactions.length,
+          thisMonthStart: dateRanges.thisMonthStart,
+          thisMonthStartConverted: timestampToArgentinianDate(dateRanges.thisMonthStart),
+          monthlyTransactionsFound: monthlyTransactions.length,
+          sampleTransaction: transactions[0] ? {
+            id: transactions[0].id,
+            createdAt: transactions[0].createdAt,
+            convertedDate: timestampToArgentinianDate(transactions[0].createdAt),
+            amount: transactions[0].amount,
+            type: transactions[0].type
+          } : 'No transactions'
+        });
+
+        if (monthlyTransactions.length > 0) {
+          console.log('🔍 TRANSACCIONES MENSUALES ENCONTRADAS:', 
+            monthlyTransactions.map(t => ({
+              id: t.id,
+              amount: t.amount,
+              type: t.type,
+              category: t.category,
+              date: timestampToArgentinianDate(t.createdAt)
+            }))
+          );
+        }
+
+        monthlyTransactions.forEach(transaction => {
+          const displayInfo = getTransactionDisplayInfo(transaction);
+          
+          console.log('🔍 PROCESANDO TRANSACCIÓN MENSUAL:', {
+            id: transaction.id,
+            amount: transaction.amount,
+            displayAmount: displayInfo.displayAmount,
+            isIncome: displayInfo.isIncome,
+            isRefund: displayInfo.isRefund,
+            isExpense: displayInfo.isExpense,
+            status: transaction.status
+          });
+          
+          if (transaction.status === 'completed') {
+            if (displayInfo.isIncome) {
+              monthlyIncome += displayInfo.displayAmount;
+              console.log('✅ SUMANDO A INGRESOS MENSUALES:', displayInfo.displayAmount, 'Total:', monthlyIncome);
+            } else if (displayInfo.isRefund || displayInfo.isExpense) {
+              monthlyExpenses += displayInfo.displayAmount;
+              console.log('❌ SUMANDO A EGRESOS MENSUALES:', displayInfo.displayAmount, 'Total:', monthlyExpenses);
+            }
+          }
+        });
+
+        console.log('📊 RESULTADO FINAL MÉTRICAS MENSUALES:', {
+          monthlyIncome,
+          monthlyExpenses,
+          monthlyNet: monthlyIncome - monthlyExpenses
+        });
+
+
+
+
       monthlyTransactions.forEach(transaction => {
         const displayInfo = getTransactionDisplayInfo(transaction);
         
@@ -465,7 +537,7 @@ const DashboardImproved: React.FC = () => {
       console.error('Error loading enhanced metrics:', err);
       setError('Error al cargar las métricas del dashboard');
     }
-  }, [gymData?.id, shouldLoad, dateRanges.thisMonthStart, dailySummary, transactions, getTransactionDisplayInfo]);
+  }, [gymData?.id, shouldLoad, transactions, dateRanges.thisMonthStart, dailySummary, getTransactionDisplayInfo]);
 
   // Cargar todos los datos - CON CONTROL DE BUCLES
   const loadDashboardData = useCallback(async () => {
@@ -518,12 +590,23 @@ useEffect(() => {
   }
 }, [dailySummary, financialLoading]);
 
-  // Efectos - CONTROLADOS PARA EVITAR BUCLES
-  useEffect(() => {
-    if (gymData?.id) {
-      loadDashboardData();
-    }
-  }, [gymData?.id]);
+      useEffect(() => {
+      if (gymData?.id && transactions.length > 0) { // 🔧 AGREGAR CONDICIÓN DE TRANSACCIONES
+        console.log('🔄 INICIANDO CARGA DE DASHBOARD CON TRANSACCIONES:', transactions.length);
+        loadDashboardData();
+      } else if (gymData?.id && transactions.length === 0) {
+        console.log('⏳ Esperando transacciones para cargar dashboard...');
+      }
+    }, [gymData?.id, transactions.length]);
+
+          // 🔧 NUEVO useEffect para manejar la carga inicial
+      useEffect(() => {
+        // Cargar datos cuando las transacciones estén disponibles por primera vez
+        if (gymData?.id && transactions.length > 0 && Object.values(metrics).every(v => v === 0)) {
+          console.log('🎯 PRIMERA CARGA DE MÉTRICAS CON TRANSACCIONES DISPONIBLES');
+          loadEnhancedMetrics();
+        }
+      }, [gymData?.id, transactions.length, metrics, loadEnhancedMetrics]);
 
   // Auto-refresh cada 15 minutos
   useEffect(() => {
@@ -579,17 +662,25 @@ useEffect(() => {
     }
   };
 
-  if (loading && Object.values(metrics).every(v => v === 0) && !dailySummary) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-gray-600">Cargando dashboard financiero...</p>
-          <p className="text-sm text-gray-500 mt-2">Obteniendo datos del día {formatDateForDisplay(getCurrentDateInArgentina())}</p>
+    if (loading && Object.values(metrics).every(v => v === 0) && !dailySummary) {
+      return (
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-gray-600">Cargando dashboard financiero...</p>
+            <p className="text-sm text-gray-500 mt-2">
+              {transactions.length === 0 
+                ? 'Cargando transacciones...' 
+                : `Procesando ${transactions.length} transacciones...`
+              }
+            </p>
+            <p className="text-sm text-gray-500 mt-1">
+              Fecha: {formatDateForDisplay(getCurrentDateInArgentina())}
+            </p>
+          </div>
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
