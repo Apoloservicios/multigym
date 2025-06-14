@@ -3,6 +3,10 @@ import React from 'react';
 import { DollarSign, FileText, TrendingUp, TrendingDown, Calendar, Clock } from 'lucide-react';
 import { DailyCash, Transaction } from '../../types/gym.types';
 import { formatCurrency, toJavaScriptDate, formatTime } from '../../utils/formatting.utils';
+import { 
+  getCurrentDateInArgentina,
+  formatDateForDisplay 
+} from '../../utils/timezone.utils';
 
 interface CashierSummaryProps {
   dailyCash: DailyCash | null;
@@ -10,6 +14,7 @@ interface CashierSummaryProps {
   currentBalance: number;
   isLoading: boolean;
   onViewTransactions: () => void;
+  selectedDate?: string; // 🆕 AGREGAR ESTA PROP
 }
 
 const CashierSummary: React.FC<CashierSummaryProps> = ({
@@ -17,7 +22,8 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
   transactions,
   currentBalance,
   isLoading,
-  onViewTransactions
+  onViewTransactions,
+  selectedDate // 🆕 RECIBIR LA FECHA SELECCIONADA
 }) => {
   // 🔧 FUNCIÓN MEJORADA PARA FORMATEAR HORA CORRECTAMENTE
   const formatTransactionTime = (timestamp: any): string => {
@@ -72,6 +78,17 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
     );
   }
 
+  const getDisplayDate = (): string => {
+  // 🔧 USAR selectedDate SI ESTÁ DISPONIBLE, sino usar fecha actual argentina
+  if (selectedDate) {
+    return formatDateForDisplay(selectedDate);
+  }
+  
+  // Si no hay selectedDate, usar fecha argentina actual
+  const currentArgentina = getCurrentDateInArgentina();
+  return formatDateForDisplay(currentArgentina);
+};
+
   // Agrupar transacciones por tipo
   const incomeTransactions = transactions.filter(tx => tx.type === 'income');
   const expenseTransactions = transactions.filter(tx => tx.type === 'expense');
@@ -108,7 +125,7 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
     <div className="p-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
         <h2 className="text-lg font-semibold">
-          Resumen del Día {new Date(dailyCash.date).toLocaleDateString('es-AR')}
+          Resumen del Día {getDisplayDate()}
         </h2>
         
         <button
@@ -130,7 +147,7 @@ const CashierSummary: React.FC<CashierSummaryProps> = ({
                 <Calendar size={16} className="mr-2" />
                 <span>Fecha:</span>
               </div>
-              <span>{new Date(dailyCash.date).toLocaleDateString('es-AR')}</span>
+              <span>{getDisplayDate()}</span>
             </div>
             
             <div className="flex justify-between">

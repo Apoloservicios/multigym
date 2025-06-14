@@ -1,8 +1,10 @@
-// src/components/cashier/CloseBoxForm.tsx
+// src/components/cashier/CloseBoxForm.tsx - CORREGIDO PARA FECHAS ARGENTINA
+
 import React, { useState } from 'react';
 import { DollarSign, AlignLeft, CheckCircle, X, AlertCircle, Info, Calculator } from 'lucide-react';
 import { DailyCash } from '../../types/gym.types';
 import { formatCurrency } from '../../utils/formatting.utils';
+import { formatDateForDisplay } from '../../utils/timezone.utils';
 
 interface CloseBoxFormProps {
   dailyCash: DailyCash;
@@ -26,6 +28,16 @@ const CloseBoxForm: React.FC<CloseBoxFormProps> = ({
   const [error, setError] = useState('');
   const [showDiscrepancy, setShowDiscrepancy] = useState(false);
 
+  // 🔧 FUNCIÓN PARA FORMATEAR FECHA ARGENTINA
+  const getFormattedDate = (): string => {
+    try {
+      return formatDateForDisplay(dailyCash.date);
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dailyCash.date;
+    }
+  };
+
   // Calcular diferencia entre balance calculado y cierre ingresado
   const calculateDifference = (): number => {
     const closingAmount = parseFloat(formData.closingAmount) || 0;
@@ -40,7 +52,6 @@ const CloseBoxForm: React.FC<CloseBoxFormProps> = ({
       [name]: value
     });
     
-    // Mostrar advertencia de discrepancia si el monto de cierre es diferente al balance calculado
     if (name === 'closingAmount') {
       const closingAmount = parseFloat(value) || 0;
       setShowDiscrepancy(closingAmount !== currentBalance);
@@ -53,7 +64,6 @@ const CloseBoxForm: React.FC<CloseBoxFormProps> = ({
       setError('El monto de cierre no puede ser negativo');
       return false;
     }
-
     return true;
   };
 
@@ -68,7 +78,6 @@ const CloseBoxForm: React.FC<CloseBoxFormProps> = ({
     setLoading(true);
     
     try {
-      // Llamar a la función onClose del componente padre
       onClose(parseFloat(formData.closingAmount), formData.notes);
     } catch (err: any) {
       console.error('Error closing daily cash:', err);
@@ -77,7 +86,7 @@ const CloseBoxForm: React.FC<CloseBoxFormProps> = ({
     }
   };
 
-  // Calcular el estado de la diferencia (positiva, negativa o cero)
+  // Calcular el estado de la diferencia
   const getDifferenceStatus = () => {
     const difference = calculateDifference();
     if (difference > 0) return 'positive';

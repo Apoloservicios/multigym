@@ -1,10 +1,10 @@
-// src/components/Layout/Sidebar.tsx - ACTUALIZADA
+// src/components/Layout/Sidebar.tsx - ACTUALIZADA CON RENOVACIONES AUTOMÁTICAS
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
-  Wallet, ArrowUpRight, CheckCircle
+  Wallet, ArrowUpRight, CheckCircle, RefreshCw // 🆕 NUEVO ICONO
 } from 'lucide-react';
 import { logoutUser } from '../../services/auth.service';
 import { navigateTo } from '../../services/navigation.service';
@@ -96,8 +96,6 @@ const DropdownNav: React.FC<DropdownNavProps> = ({ icon, text, active, children,
 const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const { gymData } = useAuth();
-  // The logo URL is coming from Firebase but might have a different property name 
-  // in the GymData type. Access it safely to avoid TypeScript errors
   const logoUrl = gymData ? (gymData.logo || (gymData as any).logoUrl || '') : '';
 
   const isActive = (page: string): boolean => {
@@ -112,16 +110,20 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
     return ['exercises', 'routines', 'member-routines'].includes(activePage);
   };
 
-  // NUEVA FUNCIÓN: Verificar si está en sección financiera (SIN dashboard-financial)
+  // 🆕 NUEVA FUNCIÓN: Verificar si está en sección de membresías
+  const isMembershipManagementActive = (): boolean => {
+    return ['memberships-config', 'auto-renewals'].includes(activePage);
+  };
+
   const isFinancialActive = (): boolean => {
-    return ['payments', 'cashier'].includes(activePage); // 🔧 SIN dashboard-financial
+    return ['payments', 'cashier'].includes(activePage);
   };
 
   const handleLogout = async () => {
     try {
       await logoutUser();
       navigateTo('/');
-      window.location.reload(); // Forzar recarga para reiniciar el estado
+      window.location.reload();
     } catch (error) {
       console.error('Error logging out:', error);
     }
@@ -179,7 +181,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
           </div>
         </div>
         
-        {/* Área scrollable para el menú de navegación */}
         <div className="flex-1 overflow-y-auto px-4 pb-6">
           <nav className="space-y-1">
             {/* Panel de Superadmin */}
@@ -232,7 +233,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
             {/* Admin y User Navigation */}
             {(userRole === 'admin' || userRole === 'user') && (
               <>
-                {/* Dashboard Original */}
                 <NavItem
                   icon={<LayoutDashboard size={20} />}
                   text="Dashboard"
@@ -240,7 +240,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('dashboard')}
                 />
                 
-                {/* Socios */}
                 <NavItem
                   icon={<Users size={20} />}
                   text="Socios"
@@ -248,7 +247,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('members')}
                 />
                 
-                {/* Asistencias */}
                 <NavItem
                   icon={<Calendar size={20} />}
                   text="Asistencias"
@@ -256,7 +254,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('attendance')}
                 />
                 
-                {/* 🔧 REPORTES FUERA DE FINANZAS */}
                 <NavItem
                   icon={<Receipt size={20} />}
                   text="Reportes"
@@ -264,13 +261,38 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                   onClick={() => onNavigate('reports')}
                 />
                 
-                {/* NUEVA SECCIÓN: Finanzas - Solo para admins */}
+                {/* 🆕 NUEVA SECCIÓN: Gestión de Membresías - Solo para admins */}
+                {userRole === 'admin' && (
+                  <DropdownNav
+                    icon={<CreditCard size={20} />}
+                    text="Membresías"
+                    active={isMembershipManagementActive()}
+                    isNew={true}
+                  >
+                    <div className="space-y-1 py-2">
+                      <NavItem
+                        icon={<Settings size={16} />}
+                        text="Configurar Membresías"
+                        active={isActive('memberships-config')}
+                        onClick={() => onNavigate('memberships-config')}
+                      />
+                      <NavItem
+                        icon={<RefreshCw size={16} />}
+                        text="Renovaciones Automáticas"
+                        active={isActive('auto-renewals')}
+                        onClick={() => onNavigate('auto-renewals')}
+                        isNew={true}
+                      />
+                    </div>
+                  </DropdownNav>
+                )}
+                
+                {/* Finanzas - Solo para admins */}
                 {userRole === 'admin' && (
                   <DropdownNav
                     icon={<Wallet size={20} />}
                     text="Finanzas"
                     active={isFinancialActive()}
-                    isNew={true}
                   >
                     <div className="space-y-1 py-2">
                       <NavItem
@@ -278,7 +300,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                         text="Dashboard Financiero"
                         active={isActive('dashboard-financial')}
                         onClick={() => onNavigate('dashboard-financial')}
-                        isNew={true}
                       />
                    
                       <NavItem
@@ -334,12 +355,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
                         onClick={() => onNavigate('business')}
                       />
                       <NavItem
-                        icon={<CreditCard size={16} />}
-                        text="Membresías"
-                        active={isActive('memberships')}
-                        onClick={() => onNavigate('memberships')}
-                      />
-                      <NavItem
                         icon={<Activity size={16} />}
                         text="Actividades"
                         active={isActive('activities')}
@@ -359,22 +374,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate, userRole }) =
           </nav>
         </div>
         
-        {/* NUEVA SECCIÓN: Info del sistema financiero 
-        {userRole === 'admin' && (
-          <div className="border-t border-gray-200 px-4 py-3">
-            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-              <div className="flex items-center">
-                <CheckCircle size={16} className="text-green-600 mr-2" />
-                <span className="text-xs font-medium text-green-800">Sistema Financiero Mejorado</span>
-              </div>
-              <p className="text-xs text-green-700 mt-1">
-                Gestión integral de pagos y caja diaria
-              </p>
-            </div>
-          </div>
-        )} */}
-        
-        {/* Botón de Cerrar Sesión (siempre visible al final) */}
         <div className="border-t border-gray-200 px-4 py-4 mt-auto">
           <button
             onClick={handleLogout}

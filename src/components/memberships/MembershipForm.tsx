@@ -163,60 +163,65 @@ const getEndDateString = (): string => {
 };
   
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm() || !gymData?.id) {
-      return;
+  e.preventDefault();
+  
+  if (!validateForm() || !gymData?.id) {
+    return;
+  }
+  
+  setLoading(true);
+  setErrors({});
+  
+  try {
+    if (!selectedMembership) {
+      throw new Error('No se ha seleccionado una membresía válida');
     }
     
-    setLoading(true);
-    setErrors({});
+    // 🔧 CORREGIDO: Incluir autoRenewal y paymentFrequency
+    const membershipData = {
+      memberId,
+      activityId: selectedMembership.activityId,
+      activityName: selectedMembership.activityName,
+      startDate: formData.startDate,
+      endDate: calculateEndDate(
+        htmlDateToLocalDate(formData.startDate), 
+        selectedMembership.duration
+      ).toISOString().split('T')[0],
+      cost: Number(formData.cost),
+      paymentStatus: formData.paymentStatus as 'paid' | 'pending',
+      status: 'active' as 'active' | 'expired' | 'cancelled',
+      maxAttendances: selectedMembership.maxAttendances,
+      currentAttendances: 0,
+      description: formData.notes || selectedMembership.description,
+      // 🆕 AGREGAR ESTOS CAMPOS QUE FALTABAN:
+      autoRenewal: formData.autoRenewal,
+      paymentFrequency: formData.paymentFrequency
+    };
     
-    try {
-      if (!selectedMembership) {
-        throw new Error('No se ha seleccionado una membresía válida');
-      }
+    console.log('🔍 Datos enviados:', membershipData); // Debug
+    
+    // Asignar membresía al socio
+    const result = await assignMembership(gymData.id, memberId, membershipData);
+    
+    if (result) {
+      setSuccess(true);
       
-      // Preparar datos de la membresía para asignar al socio
-      const membershipData = {
-        memberId,
-        activityId: selectedMembership.activityId,
-        activityName: selectedMembership.activityName,
-        startDate: formData.startDate,
-        endDate: calculateEndDate(
-          htmlDateToLocalDate(formData.startDate), 
-          selectedMembership.duration
-        ).toISOString().split('T')[0],
-        cost: Number(formData.cost),
-        paymentStatus: formData.paymentStatus as 'paid' | 'pending',
-        status: 'active' as 'active' | 'expired' | 'cancelled',
-        maxAttendances: selectedMembership.maxAttendances,
-        currentAttendances: 0,
-        description: formData.notes || selectedMembership.description
-      };
-      
-      // Asignar membresía al socio
-      const result = await assignMembership(gymData.id, memberId, membershipData);
-      
-      if (result) {
-        setSuccess(true);
-        
-        // Esperar un momento antes de cerrar
-        setTimeout(() => {
-          if (onSave) {
-            onSave(membershipData);
-          }
-        }, 1500);
-      }
-    } catch (error: any) {
-      console.error('Error assigning membership:', error);
-      setErrors({
-        form: error.message || 'Error al asignar membresía. Intente nuevamente.'
-      });
-    } finally {
-      setLoading(false);
+      // Esperar un momento antes de cerrar
+      setTimeout(() => {
+        if (onSave) {
+          onSave(membershipData);
+        }
+      }, 1500);
     }
-  };
+  } catch (error: any) {
+    console.error('Error assigning membership:', error);
+    setErrors({
+      form: error.message || 'Error al asignar membresía. Intente nuevamente.'
+    });
+  } finally {
+    setLoading(false);
+  }
+};
   
   return (
     <div className="bg-white rounded-lg shadow-md p-6">

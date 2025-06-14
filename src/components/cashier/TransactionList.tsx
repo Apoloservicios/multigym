@@ -1,9 +1,11 @@
-// src/components/cashier/TransactionList.tsx - CORREGIDO PARA HORAS
+// src/components/cashier/TransactionList.tsx - CORREGIDO PARA FECHAS ARGENTINA
 
 import React, { useState } from 'react';
 import { Search, Filter, Download, Check, X, User, Clock, TrendingUp, TrendingDown } from 'lucide-react';
 import { Transaction, TransactionCategory } from '../../types/gym.types';
 import { formatCurrency } from '../../utils/formatting.utils';
+import { formatDateForDisplay } from '../../utils/timezone.utils';
+import { exportTransactionsToExcel } from '../../utils/excel.utils';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -20,6 +22,16 @@ const TransactionList: React.FC<TransactionListProps> = ({
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [isExporting, setIsExporting] = useState<boolean>(false);
+
+  // 🔧 FUNCIÓN PARA FORMATEAR FECHA ARGENTINA
+  const formatSelectedDate = (): string => {
+    try {
+      return formatDateForDisplay(selectedDate);
+    } catch (error) {
+      console.error('Error formatting selected date:', error);
+      return selectedDate;
+    }
+  };
 
   // 🔧 FUNCIÓN MEJORADA PARA FORMATEAR HORA
   const formatTime = (date: any): string => {
@@ -44,7 +56,12 @@ const TransactionList: React.FC<TransactionListProps> = ({
         return 'Hora inválida';
       }
       
-      return dateObj.toLocaleTimeString('es-AR', { 
+      // Convertir a hora argentina
+      const argentinaDate = new Date(dateObj.toLocaleString("en-US", {
+        timeZone: "America/Argentina/Buenos_Aires"
+      }));
+      
+      return argentinaDate.toLocaleTimeString('es-AR', { 
         hour: '2-digit', 
         minute: '2-digit',
         hour12: false
@@ -57,16 +74,12 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   // Filtrar transacciones
   const filteredTransactions = transactions.filter(tx => {
-    // Filtrar por término de búsqueda
     const matchesSearch = 
       tx.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (tx.notes || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
       (tx.userName || '').toLowerCase().includes(searchTerm.toLowerCase());
     
-    // Filtrar por tipo
     const matchesType = typeFilter === 'all' || tx.type === typeFilter;
-    
-    // Filtrar por categoría
     const matchesCategory = categoryFilter === 'all' || tx.category === categoryFilter;
     
     return matchesSearch && matchesType && matchesCategory;
@@ -77,39 +90,34 @@ const TransactionList: React.FC<TransactionListProps> = ({
     new Set(transactions.map(tx => tx.category || 'other'))
   );
 
-  // Exportar a CSV
-  const handleExportCSV = () => {
+  // 🆕 EXPORTAR A EXCEL (en lugar de CSV)
+  const handleExportExcel = async () => {
+    if (!filteredTransactions.length) {
+      return;
+    }
+
     setIsExporting(true);
     
     try {
-      // Crear contenido CSV
-      let csvContent = 'Fecha,Hora,Tipo,Categoría,Descripción,Monto,Método de Pago,Usuario,Notas\n';
+      const displayDate = formatSelectedDate();
+      const fileName = `movimientos-${selectedDate.replace(/-/g, '')}.xlsx`;
       
-      filteredTransactions.forEach(tx => {
-        const date = tx.date && tx.date.toDate ? 
-          tx.date.toDate().toLocaleDateString('es-AR') : 
-          new Date(tx.date).toLocaleDateString('es-AR');
-        
-        const time = formatTime(tx.date || tx.createdAt);
-        
-        const description = tx.description.replace(/,/g, ' ');
-        const notes = (tx.notes || '').replace(/,/g, ' ');
-        
-        csvContent += `${date},${time},${tx.type},${tx.category || ''},${description},${tx.amount},${tx.paymentMethod || ''},${tx.userName || ''},${notes}\n`;
+      console.log('📊 Exportando movimientos a Excel:', {
+        date: selectedDate,
+        count: filteredTransactions.length,
+        fileName
       });
       
-      // Crear blob y descargar
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `transacciones_${selectedDate}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error('Error exporting to CSV:', err);
+      // Usar la utilidad de Excel existente
+      exportTransactionsToExcel(
+        filteredTransactions, 
+        `Movimientos ${displayDate}`, 
+        fileName
+      );
+      
+      console.log('✅ Movimientos exportados exitosamente');
+    } catch (error) {
+      console.error('❌ Error exporting to Excel:', error);
     } finally {
       setIsExporting(false);
     }
@@ -146,13 +154,11 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   // 🔧 FUNCIÓN MEJORADA PARA DETECTAR TIPO DE TRANSACCIÓN Y MOSTRAR MONTO CORRECTO
   const getTransactionDisplay = (tx: Transaction) => {
-    // Detectar si es devolución
     const isRefund = tx.type === 'refund' || 
                      tx.category === 'refund' || 
                      tx.description?.toLowerCase().includes('devolución') ||
                      tx.description?.toLowerCase().includes('devolucion');
     
-    // Detectar si es gasto/egreso
     const isExpense = !isRefund && (
       tx.type === 'expense' || 
       tx.category === 'expense' ||
@@ -173,10 +179,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
 
   // Calcular totales
   const calculateTotals = () => {
-    const totals = {
-      income: 0,
-      expense: 0
-    };
+    const totals = { income: 0, expense: 0 };
     
     filteredTransactions.forEach(tx => {
       const display = getTransactionDisplay(tx);
@@ -196,11 +199,11 @@ const TransactionList: React.FC<TransactionListProps> = ({
     <div className="p-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
         <h2 className="text-lg font-semibold mb-4 md:mb-0">
-          Movimientos del {new Date(selectedDate).toLocaleDateString('es-AR')}
+          Movimientos del {formatSelectedDate()}
         </h2>
         
         <button
-          onClick={handleExportCSV}
+          onClick={handleExportExcel}
           disabled={isExporting || filteredTransactions.length === 0}
           className={`px-4 py-2 rounded-md flex items-center ${
             isExporting || filteredTransactions.length === 0
@@ -209,7 +212,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
           }`}
         >
           <Download size={18} className="mr-2" />
-          {isExporting ? 'Exportando...' : 'Exportar a CSV'}
+          {isExporting ? 'Exportando...' : 'Exportar a Excel'}
         </button>
       </div>
       

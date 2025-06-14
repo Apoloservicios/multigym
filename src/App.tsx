@@ -1,4 +1,4 @@
-// src/App.tsx - ACTUALIZADA CON SISTEMA FINANCIERO
+// src/App.tsx - ACTUALIZADA CON RENOVACIONES AUTOMÁTICAS
 import { BrowserRouter as Router, useLocation, useNavigate } from 'react-router-dom';
 import React, { useState, useEffect } from 'react';
 import RouterProvider from './components/common/RouterProvider';
@@ -20,9 +20,11 @@ import Exercises from './pages/exercises/Exercises';
 import Routines from './pages/routines/Routines';
 import MemberRoutines from './pages/member-routines/MemberRoutines';
 
-// NUEVOS COMPONENTES del sistema financiero
+// COMPONENTES del sistema financiero
 import DashboardImproved from './pages/dashboard/DashboardImproved';
 
+// 🆕 NUEVOS COMPONENTES para renovaciones automáticas
+import AutoRenewalDashboard from './components/memberships/AutoRenewalDashboard';
 
 // Firebase
 import { auth } from './config/firebase';
@@ -37,6 +39,9 @@ import SubscriptionsManager from './pages/superadmin/Subscriptions';
 import RevenueManager from './pages/superadmin/Revenue';
 import GymAccountDetails from './pages/superadmin/GymAccountDetails';
 import GlobalExercises from './pages/superadmin/GlobalExercises';
+
+// 🆕 NUEVO: Hook para ejecutar renovaciones automáticas
+import useAutoRenewalScheduler from './hooks/useAutoRenewalScheduler';
 
 // Tipo para los datos del usuario autenticado
 type UserData = {
@@ -55,6 +60,9 @@ const AppContent: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  
+  // 🆕 NUEVO: Activar el scheduler automático de renovaciones
+  useAutoRenewalScheduler(userData?.gymId || undefined);
   
   // Actualizar la página actual basada en la ruta
   useEffect(() => {
@@ -123,11 +131,9 @@ const AppContent: React.FC = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard />;
-      // NUEVA OPCIÓN: Dashboard mejorado
+      return <Dashboard onNavigate={handleNavigate} />;
       case 'dashboard-financial':
         return <DashboardImproved />;
-      
       case 'members':
         return <Members />;
       case 'attendance':
@@ -144,8 +150,11 @@ const AppContent: React.FC = () => {
         return <MemberRoutines />;
       case 'business':
         return <BusinessProfile />;
-      case 'memberships':
+      // 🆕 NUEVAS PÁGINAS: Gestión de membresías separada
+      case 'memberships-config':
         return <Memberships />;
+      case 'auto-renewals':
+        return <AutoRenewalDashboard />;
       case 'activities':
         return <Activities />;
       case 'users':
@@ -200,17 +209,18 @@ const AppContent: React.FC = () => {
     
     if (userData.role === 'admin') {
       const adminPages = [
-        'dashboard', 'dashboard-financial', 'payments', // NUEVAS PÁGINAS
+        'dashboard', 'dashboard-financial', 'payments',
         'members', 'attendance', 'cashier', 'reports',
         'exercises', 'routines', 'member-routines',
-        'business', 'memberships', 'activities', 'users'
+        'business', 'memberships-config', 'auto-renewals', // 🆕 NUEVAS PÁGINAS
+        'activities', 'users'
       ];
       return adminPages.includes(page);
     }
     
     if (userData.role === 'user') {
       const allowedPages = [
-        'dashboard', 'dashboard-financial', // Usuario puede ver dashboards
+        'dashboard', 'dashboard-financial',
         'members', 'attendance', 'exercises', 
         'routines', 'member-routines'
       ];
@@ -230,7 +240,6 @@ const AppContent: React.FC = () => {
     
     // Si es una navegación especial, usar el router
     if (page === 'superadmin-gym-account') {
-      // No hacer nada, la navegación se maneja con el botón
       return;
     }
   };

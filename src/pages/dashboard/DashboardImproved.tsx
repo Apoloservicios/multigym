@@ -45,6 +45,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { exportTransactionsToExcel } from '../../utils/excel.utils';
 
 // Interfaces
 interface EnhancedDashboardMetrics {
@@ -85,6 +86,8 @@ const DashboardImproved: React.FC = () => {
     error: financialError,
     refreshData: refreshFinancialData 
   } = useFinancial();
+
+
   
   // Estados principales
   const [metrics, setMetrics] = useState<EnhancedDashboardMetrics>({
@@ -113,6 +116,10 @@ const DashboardImproved: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number>(0);
 
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string>('');
+  const [success, setSuccess] = useState<string>('');
+
   // 🔧 FUNCIÓN PARA EVITAR BUCLES - COOLDOWN DE 3 SEGUNDOS
   const shouldLoad = useCallback(() => {
     const now = Date.now();
@@ -131,7 +138,7 @@ const DashboardImproved: React.FC = () => {
   }, []);
 
   // Función para detectar tipo de transacción - MEMOIZADA
-      const getTransactionDisplayInfo = useCallback((transaction: any) => {
+          const getTransactionDisplayInfo = useCallback((transaction: any) => {
       // 🔍 DEBUG: Log para transacciones de reintegro
       if (transaction.type === 'refund' || transaction.category === 'refund' || 
           transaction.description?.toLowerCase().includes('reintegro')) {
@@ -146,13 +153,12 @@ const DashboardImproved: React.FC = () => {
         });
       }
 
+      // 🆕 LÓGICA CORREGIDA: Priorizar tipo 'refund' para reintegros
       const isRefund = transaction.type === 'refund' || 
                       transaction.category === 'refund' || 
-                      transaction.description?.toLowerCase().includes('devolución') ||
-                      transaction.description?.toLowerCase().includes('devolucion') ||
-                      transaction.description?.toLowerCase().includes('reintegro') || // 🔧 AGREGAR ESTA LÍNEA
-                      (transaction.amount < 0 && transaction.type !== 'expense');
+                      transaction.description?.toLowerCase().includes('reintegro');
       
+      // Solo si NO es reintegro, verificar si es gasto
       const isExpense = !isRefund && (
         transaction.type === 'expense' || 
         transaction.category === 'expense' ||
@@ -160,16 +166,26 @@ const DashboardImproved: React.FC = () => {
         transaction.amount < 0
       );
                       
-      const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+      // Solo si NO es reintegro NI gasto, es ingreso
+      const isIncome = !isRefund && !isExpense && (
+        transaction.type === 'income' ||
+        transaction.category === 'membership' ||
+        transaction.category === 'extra' ||
+        transaction.category === 'penalty' ||
+        transaction.category === 'product' ||
+        transaction.category === 'service' ||
+        transaction.amount > 0
+      );
       
-      // 🔍 DEBUG: Log resultado de la clasificación
+      // 🔍 DEBUG: Log resultado de la clasificación para reintegros
       if (transaction.type === 'refund' || transaction.category === 'refund' || 
           transaction.description?.toLowerCase().includes('reintegro')) {
         console.log('🔍 RESULTADO CLASIFICACIÓN REINTEGRO:', {
           isRefund,
           isExpense,
           isIncome,
-          displayAmount: Math.abs(transaction.amount)
+          displayAmount: Math.abs(transaction.amount),
+          originalAmount: transaction.amount
         });
       }
       
@@ -181,6 +197,140 @@ const DashboardImproved: React.FC = () => {
         type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
       };
     }, []);
+
+
+    // ***************************************************
+
+
+// 🆕 FUNCIÓN PARA EXPORTAR TRANSACCIONES RECIENTES A EXCEL
+const handleExportRecentTransactions = async () => {
+  if (!transactions.length) {
+    setExportError('No hay transacciones para exportar');
+    setTimeout(() => setExportError(''), 3000);
+    return;
+  }
+
+  setIsExporting(true);
+  setExportError('');
+
+  try {
+    // Filtrar las últimas 50 transacciones
+    const recentTransactions = transactions.slice(0, 50);
+    
+    // Generar nombre de archivo con fecha
+    const today = getCurrentDateInArgentina();
+    const fileName = `dashboard-transacciones-${today.replace(/-/g, '')}.xlsx`;
+    
+    console.log('📊 Exportando transacciones del dashboard:', {
+      count: recentTransactions.length,
+      fileName
+    });
+    
+    // Exportar usando la utilidad existente
+    exportTransactionsToExcel(
+      recentTransactions, 
+      gymData?.name || 'Dashboard Financiero', 
+      fileName
+    );
+
+    console.log('✅ Transacciones exportadas exitosamente');
+    
+    // Mostrar mensaje de éxito
+    setSuccess('Transacciones exportadas exitosamente');
+    setTimeout(() => setSuccess(''), 3000);
+    
+  } catch (err: any) {
+    console.error('❌ Error exportando transacciones:', err);
+    setExportError(err.message || 'Error al exportar transacciones');
+    setTimeout(() => setExportError(''), 5000);
+  } finally {
+    setIsExporting(false);
+  }
+};
+
+const handleExportPendingPayments = async () => {
+  if (!pendingPayments.length) {
+    setExportError('No hay pagos pendientes para exportar');
+    setTimeout(() => setExportError(''), 3000);
+    return;
+  }
+
+  setIsExporting(true);
+  setExportError('');
+
+  try {
+    // Preparar datos para Excel usando SheetJS directamente
+    const XLSX = await import('xlsx');
+    
+    const excelData = pendingPayments.map((payment, index) => ({
+      '#': index + 1,
+      'Socio': payment.memberName,
+      'Actividad/Membresía': payment.activityName,
+      'Monto Adeudado': payment.cost,
+      'Fecha de Inicio': formatSafeDate(payment.startDate),
+      'Fecha de Vencimiento': formatSafeDate(payment.endDate),
+      'Estado': payment.overdue ? 'Vencido' : 'Pendiente',
+      'Días de Atraso': payment.daysOverdue || 0,
+      'Observaciones': payment.overdue ? `Vencido hace ${payment.daysOverdue} días` : 'Al día'
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    
+    // Configurar anchos de columna
+    worksheet['!cols'] = [
+      { wch: 5 },  // #
+      { wch: 25 }, // Socio
+      { wch: 20 }, // Actividad
+      { wch: 15 }, // Monto
+      { wch: 15 }, // Fecha Inicio
+      { wch: 15 }, // Fecha Venc
+      { wch: 12 }, // Estado
+      { wch: 12 }, // Días Atraso
+      { wch: 30 }  // Observaciones
+    ];
+    
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Pagos Pendientes');
+    
+    // Agregar hoja de resumen
+    const totalAmount = pendingPayments.reduce((sum, p) => sum + p.cost, 0);
+    const overdueCount = pendingPayments.filter(p => p.overdue).length;
+    
+    const summaryData = [
+      { 'Concepto': 'RESUMEN DE PAGOS PENDIENTES', 'Valor': '' },
+      { 'Concepto': 'Gimnasio', 'Valor': gymData?.name || 'Sin nombre' },
+      { 'Concepto': 'Fecha del reporte', 'Valor': formatDateForDisplay(getCurrentDateInArgentina()) },
+      { 'Concepto': '', 'Valor': '' },
+      { 'Concepto': 'Total de socios con deuda', 'Valor': pendingPayments.length },
+      { 'Concepto': 'Socios con pagos vencidos', 'Valor': overdueCount },
+      { 'Concepto': 'Socios con pagos al día', 'Valor': pendingPayments.length - overdueCount },
+      { 'Concepto': 'Monto total adeudado', 'Valor': `$${totalAmount.toLocaleString('es-AR')}` }
+    ];
+
+    const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+    summarySheet['!cols'] = [{ wch: 25 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
+
+    const today = getCurrentDateInArgentina().replace(/-/g, '');
+    const fileName = `pagos-pendientes-${today}.xlsx`;
+    
+    XLSX.writeFile(workbook, fileName);
+    
+    console.log('✅ Pagos pendientes exportados:', fileName);
+    setSuccess('Pagos pendientes exportados exitosamente');
+    setTimeout(() => setSuccess(''), 3000);
+    
+  } catch (err: any) {
+    console.error('❌ Error exportando pagos pendientes:', err);
+    setExportError(err.message || 'Error al exportar pagos pendientes');
+    setTimeout(() => setExportError(''), 5000);
+  } finally {
+    setIsExporting(false);
+  }
+};
+
+
+     // ***************************************************
 
   // Función para formatear nombres de métodos de pago - MEMOIZADA
   const formatPaymentMethodName = useCallback((method: string): string => {
@@ -722,6 +872,24 @@ useEffect(() => {
         </div>
       )}
 
+        {exportError && (
+          <div className="mb-6 p-4 bg-yellow-100 border border-yellow-300 rounded-lg">
+            <div className="flex items-center">
+              <AlertTriangle size={20} className="text-yellow-600 mr-2" />
+              <span className="text-yellow-700">{exportError}</span>
+            </div>
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-6 p-4 bg-green-100 border border-green-300 rounded-lg">
+            <div className="flex items-center">
+              <CheckCircle size={20} className="text-green-600 mr-2" />
+              <span className="text-green-700">{success}</span>
+            </div>
+          </div>
+        )}
+
       {/* Métricas principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {/* Ingresos Hoy */}
@@ -943,7 +1111,19 @@ useEffect(() => {
               </div>
 
               {/* Lista de pagos pendientes */}
-              <h3 className="text-lg font-medium text-gray-900 mb-4">Información de Pagos Pendientes</h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium text-gray-900">Información de Pagos Pendientes</h3>
+                <button
+                  onClick={handleExportPendingPayments}
+                  disabled={isExporting || filteredPendingPayments.length === 0}
+                  className="flex items-center px-3 py-1 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Exportar pagos pendientes a Excel"
+                >
+                  <Download size={14} className={isExporting ? 'animate-pulse mr-1' : 'mr-1'} />
+                  {isExporting ? 'Exportando...' : 'Exportar Excel'}
+                </button>
+              </div>
+
               {filteredPendingPayments.length === 0 ? (
                 <div className="text-center py-8">
                   <CheckCircle size={48} className="mx-auto text-green-300 mb-3" />
@@ -1008,11 +1188,15 @@ useEffect(() => {
 
           {activeTab === 'transactions' && (
             <div>
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium text-gray-900">Actividad Financiera Reciente</h3>
-                <button className="flex items-center px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200">
-                  <Download size={14} className="mr-1" />
-                  Exportar
+              <div className="flex space-x-2">
+                <button
+                  onClick={handleExportRecentTransactions}
+                  disabled={isExporting || recentActivities.length === 0}
+                  className="flex items-center px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Exportar transacciones recientes a Excel"
+                >
+                  <Download size={14} className={isExporting ? 'animate-pulse mr-1' : 'mr-1'} />
+                  {isExporting ? 'Exportando...' : 'Transacciones'}
                 </button>
               </div>
               

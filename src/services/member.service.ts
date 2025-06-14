@@ -1,4 +1,5 @@
-// src/services/member.service.ts - LIMPIO CON LOGS ESPECÍFICOS PARA REINTEGRO
+// src/services/member.service.ts - TRANSACCIONES DE REINTEGRO CORREGIDAS
+
 import { 
   collection, 
   doc, 
@@ -119,6 +120,8 @@ export const assignMembership = async (
   membershipData: Omit<MembershipAssignment, 'id'>
 ): Promise<MembershipAssignment> => {
   try {
+    console.log('🔍 ASSIGN MEMBERSHIP - Datos recibidos:', membershipData);
+    
     const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
     
     const membershipWithDefaults = {
@@ -128,7 +131,11 @@ export const assignMembership = async (
       createdAt: serverTimestamp()
     };
     
+    console.log('🔍 ASSIGN MEMBERSHIP - Datos finales a guardar:', membershipWithDefaults);
+    
     const docRef = await addDoc(membershipsRef, membershipWithDefaults);
+    
+    console.log('✅ ASSIGN MEMBERSHIP - Guardado exitoso con ID:', docRef.id);
     
     if (membershipData.cost > 0 && membershipData.paymentStatus === 'pending') {
       const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
@@ -153,24 +160,56 @@ export const assignMembership = async (
   }
 };
 
-// Eliminar una membresía de un socio
+// 🔧 FUNCIÓN LEGACY PARA COMPATIBILIDAD
 export const deleteMembership = async (
   gymId: string,
   memberId: string,
-  membershipId: string,
-  withRefund: boolean = false
+  membershipId: string
 ): Promise<boolean> => {
   try {
+    console.log('🚀 DELETE MEMBERSHIP (Legacy):', {
+      gymId,
+      memberId,
+      membershipId
+    });
 
-      // 🔧 AGREGAR ESTE LOG BÁSICO PARA CONFIRMAR QUE LA FUNCIÓN SE EJECUTA
-    console.log('🚀 DELETE MEMBERSHIP EJECUTÁNDOSE:', {
+    return await deleteMembershipEnhanced(
       gymId,
       memberId,
       membershipId,
-      withRefund
+      {
+        handleDebt: 'keep',
+        cancelReason: 'Membresía eliminada (legacy)',
+        forceDelete: true
+      }
+    );
+    
+  } catch (error) {
+    console.error('❌ Error en deleteMembership (legacy):', error);
+    throw error;
+  }
+};
+
+// Función mejorada para eliminar membresías
+export const deleteMembershipEnhanced = async (
+  gymId: string,
+  memberId: string,
+  membershipId: string,
+  options: {
+    withRefund?: boolean;
+    cancelReason?: string;
+    handleDebt?: 'keep' | 'cancel' | 'ask';
+    forceDelete?: boolean;
+  } = {}
+): Promise<boolean> => {
+  try {
+    console.log('🚀 DELETE MEMBERSHIP ENHANCED:', {
+      gymId,
+      memberId,
+      membershipId,
+      options
     });
 
-    
     const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
     const memberSnap = await getDoc(memberRef);
     
@@ -193,39 +232,112 @@ export const deleteMembership = async (
       throw new Error('Esta membresía ya ha sido cancelada previamente');
     }
 
-    // 🔍 DEBUG: Si hay reintegro, procesar
-    if (withRefund && membershipData.paymentStatus === 'paid') {
-      console.log('🔄 INICIANDO PROCESO DE REINTEGRO:', {
+    const hasDebt = membershipData.paymentStatus === 'pending' && membershipData.cost > 0;
+    let debtAction = options.handleDebt || 'ask';
+    
+    if (hasDebt && debtAction === 'ask') {
+      throw new Error(`DEBT_CONFIRMATION_NEEDED|Esta membresía tiene una deuda pendiente de $${membershipData.cost.toLocaleString('es-AR')}. ¿Desea mantener la deuda o anularla?`);
+    }
+
+    return await confirmMembershipCancellation(
+      gymId,
+      memberId,
+      membershipId,
+      debtAction as 'keep' | 'cancel',
+      options.cancelReason || 'Membresía eliminada'
+    );
+    
+  } catch (error) {
+    console.error('❌ Error en deleteMembershipEnhanced:', error);
+    throw error;
+  }
+};
+
+// 🆕 FUNCIÓN CORREGIDA: Confirmar cancelación con reintegro adecuado
+export const confirmMembershipCancellation = async (
+  gymId: string,
+  memberId: string,
+  membershipId: string,
+  debtAction: 'keep' | 'cancel',
+  cancelReason?: string
+): Promise<boolean> => {
+  try {
+    console.log('🚀 CANCEL MEMBERSHIP WITH DEBT MANAGEMENT:', {
+      gymId,
+      memberId,
+      membershipId,
+      debtAction,
+      cancelReason
+    });
+
+    const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+    const memberSnap = await getDoc(memberRef);
+    
+    if (!memberSnap.exists()) {
+      throw new Error('El socio no existe');
+    }
+    
+    const memberData = memberSnap.data() as Member;
+    
+    const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
+    const membershipSnap = await getDoc(membershipRef);
+    
+    if (!membershipSnap.exists()) {
+      throw new Error('La membresía no existe');
+    }
+
+    const membershipData = membershipSnap.data() as MembershipAssignment;
+    
+    if (membershipData.status === 'cancelled') {
+      throw new Error('Esta membresía ya ha sido cancelada previamente');
+    }
+
+    // Manejar deuda pendiente
+    const hasDebt = membershipData.paymentStatus === 'pending' && membershipData.cost > 0;
+    
+    if (hasDebt && debtAction === 'cancel') {
+      const currentDebt = memberData.totalDebt || 0;
+      await updateDoc(memberRef, {
+        totalDebt: Math.max(0, currentDebt - membershipData.cost),
+        updatedAt: serverTimestamp()
+      });
+      console.log(`💳 Deuda anulada: $${membershipData.cost}`);
+    }
+
+    // 🆕 PROCESAR REINTEGRO PARA MEMBRESÍAS PAGADAS
+    if (membershipData.paymentStatus === 'paid') {
+      console.log('🔄 PROCESANDO REINTEGRO:', {
         memberName: `${memberData.firstName} ${memberData.lastName}`,
-        membershipName: membershipData.activityName,
-        amount: membershipData.cost
+        amount: membershipData.cost,
+        activity: membershipData.activityName
       });
 
+      // 🔧 CREAR TRANSACCIÓN DE REINTEGRO CORREGIDA
       const today = new Date().toISOString().split('T')[0];
       
-        const refundTransactionData = {
-          gymId: gymId,
-          type: 'refund',
-          category: 'refund',
-          amount: membershipData.cost,
-          description: `Reintegro por cancelación de membresía: ${membershipData.activityName} para ${memberData.firstName} ${memberData.lastName}`,
-          paymentMethod: 'cash',
-          date: Timestamp.now(),
-          userId: 'system',
-          userName: 'Sistema',
-          status: 'completed',
-          memberId: memberId,
-          memberName: `${memberData.firstName} ${memberData.lastName}`,
-          membershipId: membershipId,
-          notes: `Reintegro por cancelación de membresía ID: ${membershipId}`,
-          createdAt: serverTimestamp(),
-          originalTransactionId: membershipData.id || membershipId // 🔧 CAMBIAR ESTA LÍNEA
-        };
+      const refundTransactionData = {
+        gymId: gymId,
+        type: 'refund',
+        category: 'refund',
+        amount: -Math.abs(membershipData.cost), // 🆕 MONTO NEGATIVO PARA GASTOS
+        description: `Reintegro por cancelación de membresía: ${membershipData.activityName} para ${memberData.firstName} ${memberData.lastName}`,
+        paymentMethod: 'cash',
+        date: serverTimestamp(),
+        userId: 'system',
+        userName: 'Sistema',
+        status: 'completed',
+        memberId: memberId,
+        memberName: `${memberData.firstName} ${memberData.lastName}`,
+        membershipId: membershipId,
+        notes: `Reintegro por cancelación de membresía ID: ${membershipId}`,
+        createdAt: serverTimestamp(),
+        originalTransactionId: membershipId
+      };
       
       console.log('💾 GUARDANDO TRANSACCIÓN DE REINTEGRO:', {
         type: refundTransactionData.type,
         category: refundTransactionData.category,
-        amount: refundTransactionData.amount,
+        amount: refundTransactionData.amount, // Debe ser negativo
         gymId: refundTransactionData.gymId
       });
       
@@ -237,7 +349,7 @@ export const deleteMembership = async (
         path: `gyms/${gymId}/transactions/${transactionRef.id}`
       });
       
-      // Actualizar caja diaria
+      // 🔧 ACTUALIZAR CAJA DIARIA CORRECTAMENTE
       const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, today);
       const dailyCashSnap = await getDoc(dailyCashRef);
       
@@ -253,51 +365,59 @@ export const deleteMembership = async (
           updatedAt: serverTimestamp()
         });
         
-        console.log('📊 CAJA DIARIA ACTUALIZADA:', {
-          fecha: today,
-          totalExpenseAnterior: currentTotalExpense,
-          totalExpenseNuevo: currentTotalExpense + membershipData.cost,
-          montoReintegro: membershipData.cost
-        });
+        console.log('💰 Caja diaria actualizada con reintegro');
       } else {
-        await setDoc(dailyCashRef, {
-          date: today,
+        // Crear nueva entrada de caja diaria
+      // 🔧 CREAR NUEVA ENTRADA DE CAJA DIARIA CON CAMPOS VÁLIDOS
+        const newDailyCash: Partial<DailyCash> = {
           gymId: gymId,
-          openingTime: Timestamp.now(),
-          openingAmount: 0,
+          date: today,
+          openingAmount: 0,    // ✅ Campo válido en DailyCash
           totalIncome: 0,
-          totalExpense: membershipData.cost,
-          totalExpenses: membershipData.cost,
-          membershipIncome: 0,
-          otherIncome: 0,
-          status: 'open',
+          totalExpense: membershipData.cost,    // ✅ Campo válido (singular)
+          totalExpenses: membershipData.cost,   // ✅ Campo válido (plural)
           openedBy: 'system',
-          notes: 'Creado automáticamente para registrar reintegro',
-          lastUpdated: serverTimestamp(),
-          createdAt: serverTimestamp()
-        });
+          openedAt: serverTimestamp(),
+          openingTime: serverTimestamp(),  // ✅ Campo válido en DailyCash
+          status: 'open',
+          lastUpdated: serverTimestamp()   // ✅ Campo válido en DailyCash
+        };
         
-        console.log('🆕 CAJA DIARIA CREADA:', {
-          fecha: today,
-          totalExpense: membershipData.cost
-        });
+        await setDoc(dailyCashRef, newDailyCash);
+        console.log('💰 Nueva caja diaria creada con reintegro');
       }
+
+      // Reducir deuda del socio (el reintegro reduce la deuda)
+      const currentDebt = memberData.totalDebt || 0;
+      await updateDoc(memberRef, {
+        totalDebt: Math.max(0, currentDebt - membershipData.cost),
+        updatedAt: serverTimestamp()
+      });
+
+      console.log(`💰 Reintegro procesado: $${membershipData.cost}`);
     }
 
-    // Actualizar estado de la membresía a "cancelled"
+    // Marcar membresía como cancelada
     await updateDoc(membershipRef, {
       status: 'cancelled',
+      cancelDate: serverTimestamp(),
+      cancelledAt: serverTimestamp(),
+      cancelReason: cancelReason || 'Cancelación solicitada',
+      cancelledBy: 'admin',
+      debtAction: debtAction,
       updatedAt: serverTimestamp()
     });
-    
+
+    console.log('✅ Membresía cancelada exitosamente');
     return true;
+    
   } catch (error) {
-    console.error('Error deleting membership:', error);
+    console.error('❌ Error cancelando membresía:', error);
     throw error;
   }
 };
 
-// Generar código QR para socio
+// Resto de funciones sin cambios...
 export const generateMemberQR = async (gymId: string, memberId: string): Promise<string> => {
   try {
     const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
@@ -322,7 +442,6 @@ export const generateMemberQR = async (gymId: string, memberId: string): Promise
   }
 };
 
-// Obtener todas las membresías de un socio
 export const getMemberMemberships = async (gymId: string, memberId: string): Promise<MembershipAssignment[]> => {
   try {
     const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
@@ -354,7 +473,6 @@ export const getMemberMemberships = async (gymId: string, memberId: string): Pro
   }
 };
 
-// Actualizar un miembro
 export const updateMember = async (gymId: string, memberId: string, memberData: MemberFormData): Promise<boolean> => {
   try {
     const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
@@ -397,7 +515,6 @@ export const updateMember = async (gymId: string, memberId: string, memberData: 
   }
 };
 
-// Obtener miembros recientes
 export const getRecentMembers = async (gymId: string, limit: number = 5): Promise<Member[]> => {
   try {
     const membersRef = collection(db, `gyms/${gymId}/members`);
@@ -424,7 +541,6 @@ export const getRecentMembers = async (gymId: string, limit: number = 5): Promis
   }
 };
 
-// Obtener miembros con cumpleaños próximos
 export const getMembersWithUpcomingBirthdays = async (
   gymId: string, 
   daysAhead: number = 30,
@@ -490,7 +606,6 @@ export const getMembersWithUpcomingBirthdays = async (
   }
 };
 
-// Obtener membresías vencidas o por vencer
 export const getExpiredMemberships = async (
   gymId: string,
   limit: number = 5
@@ -551,6 +666,8 @@ export default {
   addMember,
   assignMembership,
   deleteMembership,
+  deleteMembershipEnhanced,
+  confirmMembershipCancellation,
   generateMemberQR,
   getMemberMemberships,
   updateMember,

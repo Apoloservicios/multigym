@@ -1,4 +1,4 @@
-// src/types/member.types.ts
+// src/types/member.types.ts - ACTUALIZADO SIN PERDER FUNCIONALIDADES
 
 import { FirebaseDate as CentralFirebaseDate } from './firebase.types';
 
@@ -24,7 +24,6 @@ export interface Member {
   daysUntilBirthday?: number;
 }
 
-
 export interface MemberFormData {
   firstName: string;
   lastName: string;
@@ -35,6 +34,7 @@ export interface MemberFormData {
   photo: File | null;
   status: 'active' | 'inactive';
 }
+
 export interface MembershipAssignment {
   id?: string;
   memberId: string;
@@ -55,6 +55,18 @@ export interface MembershipAssignment {
   paymentFrequency?: 'single' | 'monthly';
   lastRenewalDate?: string;
   
+  // 🆕 PROPIEDADES AGREGADAS PARA RENOVACIONES AUTOMÁTICAS
+  renewedAutomatically?: boolean;  // Si fue renovada automáticamente
+  renewedManually?: boolean;       // Si fue renovada manualmente
+  previousMembershipId?: string;   // ID de la membresía anterior (para renovaciones)
+  renewalDate?: any;               // Firebase Timestamp - fecha de renovación
+  
+  // 🆕 PROPIEDADES AGREGADAS PARA CANCELACIONES MEJORADAS
+  cancelReason?: string;           // Motivo de cancelación
+  cancelDate?: any;                // Firebase Timestamp - fecha de cancelación (alias para cancelledAt)
+  cancelledBy?: string;            // Quién canceló la membresía
+  debtAction?: 'keep' | 'cancel';  // Qué se hizo con la deuda al cancelar
+  
   // Nuevos campos para el sistema financiero mejorado
   paidAmount?: number; // Cuánto se ha pagado
   paidAt?: any; // Timestamp cuando se pagó completamente
@@ -64,9 +76,9 @@ export interface MembershipAssignment {
     transactionId: string;
   }[]; // Para pagos parciales
   
-  // Para cancelaciones
-  cancelledAt?: any;
-  cancellationReason?: string;
+  // Para cancelaciones (mantener nombres originales por compatibilidad)
+  cancelledAt?: any;               // Firebase Timestamp - mantener por compatibilidad
+  cancellationReason?: string;     // Mantener por compatibilidad (alias de cancelReason)
   
   // Timestamps
   createdAt?: any;
@@ -110,7 +122,10 @@ const memberTypes = {
     description: '',
     // Agregamos valores por defecto para los nuevos campos
     autoRenewal: false,
-    paymentFrequency: 'single'
+    paymentFrequency: 'single',
+    // 🆕 Valores por defecto para las nuevas propiedades
+    renewedAutomatically: false,
+    renewedManually: false
   })
 };
 

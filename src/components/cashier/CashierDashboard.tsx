@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar, DollarSign, TrendingUp, TrendingDown, PlusCircle, MinusCircle, 
-  RefreshCw, AlertCircle, XCircle, CheckCircle, FileText
+  RefreshCw, AlertCircle, XCircle, CheckCircle, FileText , AlertTriangle,FileSpreadsheet
 } from 'lucide-react';
 import { 
   getDailyCashByDate, 
@@ -21,12 +21,18 @@ import {
   normalizeDailyCashForLegacy,
   calculateCashBalance 
 } from '../../utils/compatibility.utils';
+
+
 import { 
   getCurrentDateInArgentina,
   getCurrentTimeInArgentina,
+  formatDateForDisplay,
   isTodayInArgentina,
-  formatDateForDisplay 
+  formatArgentinianDateTime,
+  formatArgentinianTime
 } from '../../utils/timezone.utils';
+import { exportTransactionsToExcel } from '../../utils/excel.utils';
+
 import { DailyCash, Transaction } from '../../types/gym.types';
 import useAuth from '../../hooks/useAuth';
 import TransactionList from './TransactionList';
@@ -44,24 +50,94 @@ const CashierDashboard: React.FC = () => {
   const [view, setView] = useState<ViewType>('summary');
   const [dailyCash, setDailyCash] = useState<DailyCash | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>('');
+
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
 
-  // 🔧 FUNCIÓN HELPER PARA FORMATEAR TIEMPO SEGURO
-  const safeFormatTime = (timestamp: any): string => {
-    const jsDate = toJavaScriptDate(timestamp);
-    return jsDate ? formatTime(jsDate) : 'No disponible';
-  };
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string>('');
 
-  // 🔧 INICIALIZAR CON FECHA ARGENTINA AL CARGAR COMPONENTE
-  useEffect(() => {
-    const todayInArgentina = getCurrentDateInArgentina();
-    console.log('🚀 Inicializando CashierDashboard con fecha argentina:', todayInArgentina);
-    setSelectedDate(todayInArgentina);
-  }, []);
+  const [selectedDate, setSelectedDate] = useState<string>(() => {
+  // 🔧 FUNCIÓN PARA OBTENER FECHA ARGENTINA CORRECTA
+  const now = new Date();
+  const argentinaTime = new Date(now.toLocaleString("en-US", {
+    timeZone: "America/Argentina/Buenos_Aires"
+  }));
+  
+  const year = argentinaTime.getFullYear();
+  const month = String(argentinaTime.getMonth() + 1).padStart(2, '0');
+  const day = String(argentinaTime.getDate()).padStart(2, '0');
+  
+  const todayArgentina = `${year}-${month}-${day}`;
+  console.log('🇦🇷 Fecha inicial Argentina:', todayArgentina);
+  
+  return todayArgentina;
+});
+
+  // 🔧 FUNCIÓN PARA VERIFICAR SI LA FECHA SELECCIONADA ES HOY
+const isToday = (): boolean => {
+  return isTodayInArgentina(selectedDate);
+};
+
+  // 🔧 FUNCIÓN HELPER PARA FORMATEAR TIEMPO SEGURO
+const safeFormatTime = (timestamp: any): string => {
+  if (!timestamp) return 'Sin hora';
+  
+  try {
+    return formatArgentinianTime(timestamp);
+  } catch (error) {
+    console.error('Error formatting time:', error);
+    return 'Error en hora';
+  }
+};
+
+
+useEffect(() => {
+  // 🔧 FORZAR ACTUALIZACIÓN DE FECHA ARGENTINA
+  const updateArgentinaDate = () => {
+    const now = new Date();
+    const argentinaTime = new Date(now.toLocaleString("en-US", {
+      timeZone: "America/Argentina/Buenos_Aires"
+    }));
+    
+    const year = argentinaTime.getFullYear();
+    const month = String(argentinaTime.getMonth() + 1).padStart(2, '0');
+    const day = String(argentinaTime.getDate()).padStart(2, '0');
+    
+    const todayArgentina = `${year}-${month}-${day}`;
+    
+    console.log('🔄 Actualizando fecha argentina:', {
+      utc: now.toISOString(),
+      argentina: argentinaTime.toLocaleString(),
+      formatted: todayArgentina
+    });
+    
+    setSelectedDate(todayArgentina);
+  };
+  
+  updateArgentinaDate();
+  
+  // 🔧 ACTUALIZAR CADA MINUTO PARA DETECTAR CAMBIO DE DÍA
+  const interval = setInterval(updateArgentinaDate, 60000);
+  
+  return () => clearInterval(interval);
+}, []);
+
+
+const formatDisplayDateArgentina = (dateString: string): string => {
+  try {
+    if (!dateString) return 'Sin fecha';
+    const [year, month, day] = dateString.split('-');
+    return `${day}/${month}/${year}`;
+  } catch (error) {
+    console.error('Error formatting date:', error);
+    return dateString;
+  }
+};
+
+
 
   // 🔧 CARGAR DATOS CUANDO CAMBIE LA FECHA SELECCIONADA
   useEffect(() => {
@@ -70,6 +146,50 @@ const CashierDashboard: React.FC = () => {
       loadDailyCashData();
     }
   }, [gymData?.id, selectedDate]);
+
+
+
+        // 🆕 4. FUNCIÓN PARA EXPORTAR TRANSACCIONES A EXCEL
+      const handleExportDailyTransactions = async () => {
+        if (!transactions.length) {
+          setExportError('No hay transacciones para exportar en esta fecha');
+          setTimeout(() => setExportError(''), 3000);
+          return;
+        }
+
+        setIsExporting(true);
+        setExportError('');
+
+        try {
+          // Generar nombre de archivo con fecha
+          const dateForFileName = selectedDate.replace(/-/g, '');
+          const displayDate = formatDateForDisplay(selectedDate);
+          const fileName = `caja-diaria-${dateForFileName}.xlsx`;
+          
+          console.log('📊 Exportando transacciones de caja diaria:', {
+            date: selectedDate,
+            count: transactions.length,
+            fileName
+          });
+          
+          // Exportar usando la utilidad existente
+          exportTransactionsToExcel(
+            transactions, 
+            `Caja Diaria ${displayDate}`, 
+            fileName
+          );
+
+          setSuccess(`✅ Transacciones del ${displayDate} exportadas exitosamente`);
+          setTimeout(() => setSuccess(''), 3000);
+          
+        } catch (err: any) {
+          console.error('❌ Error exportando transacciones de caja:', err);
+          setExportError(err.message || 'Error al exportar transacciones');
+          setTimeout(() => setExportError(''), 5000);
+        } finally {
+          setIsExporting(false);
+        }
+      };
 
   // 🔧 FUNCIÓN MEJORADA PARA CARGAR DATOS DE CAJA DIARIA
   const loadDailyCashData = async () => {
@@ -122,12 +242,13 @@ const CashierDashboard: React.FC = () => {
   };
 
   // 🔧 MANEJAR CAMBIO DE FECHA CON VALIDACIÓN
-  const handleDateChange = (newDate: string) => {
-    console.log('📅 Cambiando fecha de', selectedDate, 'a', newDate);
-    setSelectedDate(newDate);
-    setError(''); // Limpiar errores previos
-    setSuccess(''); // Limpiar mensajes de éxito previos
-  };
+    const handleDateChange = (newDate: string) => {
+      console.log('📅 Cambiando fecha de', selectedDate, 'a', newDate);
+      setSelectedDate(newDate);
+      setError(''); // Limpiar errores previos
+      setSuccess(''); // Limpiar mensajes de éxito previos
+      setExportError(''); // Limpiar errores de exportación
+    };
 
   // Manejar apertura de caja
   const handleOpenBox = async (openingAmount: number, notes: string) => {
@@ -323,13 +444,14 @@ const CashierDashboard: React.FC = () => {
       case 'summary':
       default:
         return (
-          <CashierSummary
-            dailyCash={dailyCash}
-            transactions={transactions}
-            currentBalance={calculateCurrentBalance()}
-            isLoading={loading}
-            onViewTransactions={() => setView('transactions')}
-          />
+            <CashierSummary
+              dailyCash={dailyCash}
+              transactions={transactions}
+              currentBalance={calculateCurrentBalance()}
+              isLoading={loading}
+              onViewTransactions={() => setView('transactions')}
+              selectedDate={selectedDate} // 🆕 PASAR LA FECHA SELECCIONADA
+            />
         );
     }
   };
@@ -357,20 +479,31 @@ const CashierDashboard: React.FC = () => {
   return (
     <div className="p-6">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-bold">Caja Diaria</h1>
-          <p className="text-gray-600 mt-1">
+        
+
+
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">
             Gestiona ingresos, gastos y cierre de caja
-          </p>
-          {/* 🔧 MOSTRAR INFORMACIÓN DE TIMEZONE ACTUAL */}
-          <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-sm text-blue-700 font-medium">
-              📍 Fecha actual en Argentina: {formatDateForDisplay(getCurrentDateInArgentina())}
-            </p>
-            <p className="text-sm text-blue-600">
-              ⏰ Hora actual: {getCurrentTimeInArgentina()} (UTC-3)
-            </p>
-          </div>
+          </h1>
+       {/*    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-blue-50 p-4 rounded-lg">
+            <div>
+              <p className="text-blue-800 font-medium">
+                📍 Fecha actual en Argentina: {formatDateForDisplay(getCurrentDateInArgentina())}
+              </p>
+              <p className="text-blue-600 text-sm">
+                🕐 Hora actual: {getCurrentTimeInArgentina()} (UTC-3)
+              </p>
+            </div>
+            <div className="mt-3 sm:mt-0">
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div> */}
         </div>
         
         {/* 🔧 SELECTOR DE FECHA CON MÁXIMO EN FECHA ARGENTINA */}
@@ -412,6 +545,15 @@ const CashierDashboard: React.FC = () => {
           </button>
         </div>
       )}
+
+      {exportError && (
+        <div className="mb-4 p-4 bg-yellow-100 border border-yellow-300 rounded-lg">
+          <div className="flex items-center">
+            <AlertTriangle size={20} className="text-yellow-600 mr-2" />
+            <span className="text-yellow-700">{exportError}</span>
+          </div>
+        </div>
+      )}
       
       {success && (
         <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md flex items-center">
@@ -431,18 +573,8 @@ const CashierDashboard: React.FC = () => {
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex flex-col md:flex-row justify-between">
             <div className="mb-4 md:mb-0">
-              <h2 className="text-lg font-semibold flex items-center">
-                Estado de Caja - {formatDateForDisplay(dailyCash.date)}
-                {isTodayInArgentina(dailyCash.date) && (
-                  <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">
-                    HOY
-                  </span>
-                )}
-                {!isTodayInArgentina(dailyCash.date) && (
-                  <span className="ml-2 px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">
-                    HISTÓRICO
-                  </span>
-                )}
+              <h2 className="text-xl font-bold text-gray-900">
+  Estado de Caja - {formatDateForDisplay(selectedDate)} {isToday() ? '(HOY)' : ''}
               </h2>
               <div className="mt-2 flex items-center">
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -576,6 +708,16 @@ const CashierDashboard: React.FC = () => {
                 Cerrar Caja
               </button>
             )}
+
+            <button
+              onClick={handleExportDailyTransactions}
+              disabled={isExporting || transactions.length === 0 || loading}
+              className="flex-1 sm:flex-none bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+              title="Exportar transacciones a Excel"
+            >
+              <FileSpreadsheet size={16} className={isExporting ? 'animate-pulse mr-2' : 'mr-2'} />
+              {isExporting ? 'Exportando...' : 'Excel'}
+            </button>
           </div>
         </div>
       )}

@@ -1,4 +1,4 @@
-// src/pages/dashboard/Dashboard.tsx
+// src/pages/dashboard/Dashboard.tsx - ACTUALIZADO CON RENOVACIONES AUTOMÁTICAS
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -29,6 +29,14 @@ import { getMembersWithUpcomingBirthdays } from '../../services/member.service';
 import QuickAttendanceRegister from '../../components/attendance/QuickAttendanceRegister';
 import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
 import { formatArgentinianDateTime, timestampToArgentinianDate } from '../../utils/timezone.utils';
+
+// 🆕 NUEVO: Importar el card de renovaciones automáticas
+import RenewalManagementCard from '../../components/dashboard/RenewalManagementCard';
+
+// 🆕 NUEVO: Props para navegación
+interface DashboardProps {
+  onNavigate?: (page: string) => void;
+}
 
 // Tipos para las métricas del dashboard
 interface DashboardMetrics {
@@ -70,7 +78,7 @@ interface UpcomingBirthday {
   photo?: string;
 }
 
-const Dashboard: React.FC = () => {
+const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const { gymData } = useAuth();
   
   // Estados principales
@@ -94,6 +102,13 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🆕 NUEVA FUNCIÓN: Navegar al dashboard de renovaciones automáticas
+  const handleNavigateToRenewals = () => {
+    if (onNavigate) {
+      onNavigate('auto-renewals');
+    }
+  };
 
   // Obtener fechas para filtros temporales
   const getDateRanges = useCallback(() => {
@@ -489,12 +504,12 @@ const Dashboard: React.FC = () => {
   }, [loadDashboardData]);
 
   // Formatear fecha para mostrar
-const formatDateTime = (timestamp: any) => {
-  if (!timestamp) return 'Fecha no disponible';
-  
-  // ✅ USAR LA FUNCIÓN DE TIMEZONE ARGENTINO
-  return formatArgentinianDateTime(timestamp);
-};
+  const formatDateTime = (timestamp: any) => {
+    if (!timestamp) return 'Fecha no disponible';
+    
+    // ✅ USAR LA FUNCIÓN DE TIMEZONE ARGENTINO
+    return formatArgentinianDateTime(timestamp);
+  };
 
   // Función para formatear días hasta cumpleaños
   const formatDaysUntilBirthday = (days: number) => {
@@ -504,62 +519,62 @@ const formatDateTime = (timestamp: any) => {
   };
 
   // Función para obtener fecha de cumpleaños formateada
-const formatBirthdayDate = (birthDate: any) => {
-  if (!birthDate) return '';
-  
-  try {
-    // ✅ CORRECCIÓN ESPECÍFICA PARA FECHAS DE CUMPLEAÑOS
-    let dateToFormat: Date | null = null;
+  const formatBirthdayDate = (birthDate: any) => {
+    if (!birthDate) return '';
     
-    // Si ya es un string en formato YYYY-MM-DD (como se guarda en el form)
-    if (typeof birthDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
-      const [year, month, day] = birthDate.split('-').map(Number);
-      // Crear fecha sin problemas de timezone
-      dateToFormat = new Date(year, month - 1, day);
-    }
-    // Si es un timestamp de Firebase
-    else if (birthDate?.toDate && typeof birthDate.toDate === 'function') {
-      const firebaseDate = birthDate.toDate();
-      // Usar UTC para evitar problemas de timezone
-      dateToFormat = new Date(
-        firebaseDate.getUTCFullYear(),
-        firebaseDate.getUTCMonth(),
-        firebaseDate.getUTCDate()
-      );
-    }
-    // Si es un objeto con seconds (timestamp serializado)
-    else if (birthDate?.seconds) {
-      const firebaseDate = new Date(birthDate.seconds * 1000);
-      dateToFormat = new Date(
-        firebaseDate.getUTCFullYear(),
-        firebaseDate.getUTCMonth(),
-        firebaseDate.getUTCDate()
-      );
-    }
-    // Si es una Date normal
-    else if (birthDate instanceof Date) {
-      dateToFormat = new Date(
-        birthDate.getFullYear(),
-        birthDate.getMonth(),
-        birthDate.getDate()
-      );
-    }
-    
-    if (!dateToFormat || isNaN(dateToFormat.getTime())) {
+    try {
+      // ✅ CORRECCIÓN ESPECÍFICA PARA FECHAS DE CUMPLEAÑOS
+      let dateToFormat: Date | null = null;
+      
+      // Si ya es un string en formato YYYY-MM-DD (como se guarda en el form)
+      if (typeof birthDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(birthDate)) {
+        const [year, month, day] = birthDate.split('-').map(Number);
+        // Crear fecha sin problemas de timezone
+        dateToFormat = new Date(year, month - 1, day);
+      }
+      // Si es un timestamp de Firebase
+      else if (birthDate?.toDate && typeof birthDate.toDate === 'function') {
+        const firebaseDate = birthDate.toDate();
+        // Usar UTC para evitar problemas de timezone
+        dateToFormat = new Date(
+          firebaseDate.getUTCFullYear(),
+          firebaseDate.getUTCMonth(),
+          firebaseDate.getUTCDate()
+        );
+      }
+      // Si es un objeto con seconds (timestamp serializado)
+      else if (birthDate?.seconds) {
+        const firebaseDate = new Date(birthDate.seconds * 1000);
+        dateToFormat = new Date(
+          firebaseDate.getUTCFullYear(),
+          firebaseDate.getUTCMonth(),
+          firebaseDate.getUTCDate()
+        );
+      }
+      // Si es una Date normal
+      else if (birthDate instanceof Date) {
+        dateToFormat = new Date(
+          birthDate.getFullYear(),
+          birthDate.getMonth(),
+          birthDate.getDate()
+        );
+      }
+      
+      if (!dateToFormat || isNaN(dateToFormat.getTime())) {
+        return '';
+      }
+      
+      // Formatear solo día y mes
+      return dateToFormat.toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit'
+      });
+      
+    } catch (error) {
+      console.error('Error formatting birthday date:', error);
       return '';
     }
-    
-    // Formatear solo día y mes
-    return dateToFormat.toLocaleDateString('es-AR', {
-      day: '2-digit',
-      month: '2-digit'
-    });
-    
-  } catch (error) {
-    console.error('Error formatting birthday date:', error);
-    return '';
-  }
-};
+  };
 
   if (loading && Object.values(metrics).every(v => v === 0)) {
     return (
@@ -708,6 +723,13 @@ const formatBirthdayDate = (birthDate: any) => {
               <AlertTriangle size={24} className="text-yellow-600" />
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* 🆕 NUEVA SECCIÓN: Card de Renovaciones Automáticas */}
+      <div className="mb-8">
+        <div className="max-w-md">
+          <RenewalManagementCard onNavigateToRenewals={handleNavigateToRenewals} />
         </div>
       </div>
 
