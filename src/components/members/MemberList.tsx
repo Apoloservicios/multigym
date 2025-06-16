@@ -55,55 +55,55 @@ const MemberList: React.FC<MemberListProps> = ({
   const endIndex = startIndex + itemsPerPage;
 
   // Función debounced para búsqueda
-  const debouncedSearch = useMemo(
-    () => debounce(async (term: string) => {
-      if (!term.trim()) {
-        return;
-      }
-      
-      setSearching(true);
-      setError('');
-      
-      try {
-        const searchResults = await membersFirestore.search(
-          term.trim(), 
-          ['firstName', 'lastName', 'email', 'phone'],
-          100
-        );
+    const debouncedSearch = useMemo(
+      () => debounce(async (term: string) => {
+        if (!term.trim()) {
+          return;
+        }
         
-        setAllMembers(searchResults);
-      } catch (error) {
-        console.error('Error en búsqueda:', error);
-        setError('Error al buscar miembros. Inténtalo de nuevo.');
-        setAllMembers([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 300),
-    [membersFirestore]
-  );
+        setSearching(true);
+        setError('');
+        
+        try {
+          const searchResults = await membersFirestore.search(
+            term.trim(), 
+            ['firstName', 'lastName', 'email', 'phone'],
+            500 // ← CAMBIO: de 100 a 500
+          );
+          
+          setAllMembers(searchResults);
+        } catch (error) {
+          console.error('Error en búsqueda:', error);
+          setError('Error al buscar miembros. Inténtalo de nuevo.');
+          setAllMembers([]);
+        } finally {
+          setSearching(false);
+        }
+      }, 300),
+      [membersFirestore]
+    );
 
   // Cargar todos los miembros
-  const loadMembers = useCallback(async () => {
-    if (!gymData?.id) {
-      setLoading(false);
-      return;
-    }
-    
-    setLoading(true);
-    setError('');
-    
-    try {
-      const allMembersData = await membersFirestore.getAll(1000);
-      setAllMembers(allMembersData);
-    } catch (error) {
-      console.error('Error cargando miembros:', error);
-      setError('Error al cargar los miembros. Inténtalo de nuevo.');
-      setAllMembers([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [gymData?.id, membersFirestore]);
+const loadMembers = useCallback(async () => {
+  if (!gymData?.id) {
+    setLoading(false);
+    return;
+  }
+  
+  setLoading(true);
+  setError('');
+  
+  try {
+    const allMembersData = await membersFirestore.getAll(2000); // ← CAMBIO: de 1000 a 2000
+    setAllMembers(allMembersData);
+  } catch (error) {
+    console.error('Error cargando miembros:', error);
+    setError('Error al cargar los miembros. Inténtalo de nuevo.');
+    setAllMembers([]);
+  } finally {
+    setLoading(false);
+  }
+}, [gymData?.id, membersFirestore]);
 
   // Aplicar filtros y ordenamiento
   useEffect(() => {
@@ -688,9 +688,28 @@ const MemberRow = React.memo<{
   formatDate: (date: any) => string;
 }>(({ member, onView, onEdit, onDelete, onGenerateQr, onRegisterPayment, formatDate }) => {
   const [imageError, setImageError] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('[role="button"]')) {
+      return;
+    }
+    onView(member);
+  };
 
   return (
-    <tr className="hover:bg-gray-50 transition-colors duration-150">
+     <tr 
+        className={`transition-all duration-150 cursor-pointer select-none ${
+          isHovered 
+            ? 'bg-blue-50 shadow-md transform scale-[1.01]' 
+            : 'hover:bg-gray-50'
+        }`}
+        onDoubleClick={handleDoubleClick}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        title="Doble clic para ver detalles"
+      >
       <td className="px-3 py-4 whitespace-nowrap">
         {member.photo && !imageError ? (
           <img 
@@ -738,35 +757,50 @@ const MemberRow = React.memo<{
           <button 
             className="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-50 transition-colors" 
             title="Ver detalles"
-            onClick={() => onView(member)}
+            onClick={(e) => {
+              e.stopPropagation(); // Evitar que se propague al tr
+              onView(member);
+            }}
           >
             <Eye size={18} />
           </button>
           <button 
             className="text-green-600 hover:text-green-800 p-1 rounded-md hover:bg-green-50 transition-colors" 
             title="Editar"
-            onClick={() => onEdit(member)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(member);
+            }}
           >
             <Edit size={18} />
           </button>
           <button 
             className="text-red-600 hover:text-red-800 p-1 rounded-md hover:bg-red-50 transition-colors" 
             title="Eliminar"
-            onClick={() => onDelete(member)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(member);
+            }}
           >
             <Trash size={18} />
           </button>
           <button 
             className="text-purple-600 hover:text-purple-800 p-1 rounded-md hover:bg-purple-50 transition-colors" 
             title="Generar QR"
-            onClick={() => onGenerateQr(member)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onGenerateQr(member);
+            }}
           >
             <CreditCard size={18} />
           </button>
           <button 
             className="text-yellow-600 hover:text-yellow-800 p-1 rounded-md hover:bg-yellow-50 transition-colors" 
             title="Registrar pago"
-            onClick={() => onRegisterPayment(member)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRegisterPayment(member);
+            }}
           >
             <BanknoteIcon size={18} />
           </button>
@@ -775,6 +809,7 @@ const MemberRow = React.memo<{
     </tr>
   );
 });
+
 
 MemberRow.displayName = 'MemberRow';
 

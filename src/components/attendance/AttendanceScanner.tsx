@@ -9,6 +9,9 @@ import { doc, getDoc, collection, query, where, getDocs, limit, orderBy } from '
 import { db } from '../../config/firebase';
 import { debounce } from 'lodash';
 
+import useFirestore from '../../hooks/useFirestore';
+
+
 interface ScanResult {
   success: boolean;
   message: string;
@@ -38,6 +41,7 @@ interface MemberInfo {
   lastName: string;
   email: string;
   photo?: string | null;
+  status?: string; // ← AGREGAR ESTA LÍNEA
 }
 
 interface MembershipInfo {
@@ -79,62 +83,87 @@ const AttendanceScanner: React.FC = () => {
   const lastQRProcessed = useRef<string>('');
   const qrCooldownTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Función de búsqueda con debounce
-  const debouncedSearch = useMemo(
-    () => debounce(async (term: string) => {
-      if (!gymData?.id || term.trim().length < 2) {
-        setSearchResults([]);
-        return;
-      }
-      
-      setIsSearching(true);
-      setSearchError(null);
-      
-      try {
-        const membersRef = collection(db, `gyms/${gymData.id}/members`);
-        const q = query(
-          membersRef,
-          where('status', '==', 'active'),
-          limit(10)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        const allMembers: MemberInfo[] = [];
-        
-        querySnapshot.forEach(doc => {
-          const data = doc.data();
-          allMembers.push({
-            id: doc.id,
-            firstName: data.firstName || "",
-            lastName: data.lastName || "",
-            email: data.email || "",
-            photo: data.photo || null
-          });
-        });
-        
-        // Filtrar localmente
-        const filtered = allMembers.filter(member => {
-          const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
-          const email = member.email.toLowerCase();
-          const searchTerm = term.toLowerCase();
+  const membersFirestore = useFirestore<MemberInfo>('members');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const [inputValue, setInputValue] = useState('');
+
+      const debouncedSearch = useMemo(
+        () => debounce(async (term: string) => {
+          if (!gymData?.id || term.trim().length < 2) {
+            setSearchResults([]);
+            setSearchError(null);
+            return;
+          }
           
-          return fullName.includes(searchTerm) || email.includes(searchTerm);
-        });
-        
-        setSearchResults(filtered);
-        
-        if (filtered.length === 0) {
-          setSearchError(`No se encontraron socios que coincidan con "${term}"`);
-        }
-      } catch (error) {
-        console.error('Error en búsqueda:', error);
-        setSearchError(`Error al buscar socios`);
-      } finally {
-        setIsSearching(false);
-      }
-    }, 300),
-    [gymData?.id]
-  );
+          setIsSearching(true);
+          setSearchError(null);
+          
+          try {
+            const membersRef = collection(db, `gyms/${gymData.id}/members`);
+            const q = query(
+              membersRef,
+              where('status', '==', 'active'),
+              limit(1000)
+            );
+            
+            const querySnapshot = await getDocs(q);
+            const allMembers: MemberInfo[] = [];
+            
+            querySnapshot.forEach(doc => {
+              const data = doc.data();
+              allMembers.push({
+                id: doc.id,
+                firstName: data.firstName || "",
+                lastName: data.lastName || "",
+                email: data.email || "",
+                photo: data.photo || null,
+                status: data.status || "active"
+              });
+            });
+            
+            const searchTermLower = term.toLowerCase();
+            const filtered = allMembers.filter(member => {
+              const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
+              const email = member.email.toLowerCase();
+              
+              return fullName.includes(searchTermLower) || 
+                    email.includes(searchTermLower) ||
+                    member.firstName.toLowerCase().includes(searchTermLower) ||
+                    member.lastName.toLowerCase().includes(searchTermLower);
+            });
+            
+            const limitedResults = filtered.slice(0, 20);
+            
+            // Usar setTimeout para evitar interferir con el input
+            setTimeout(() => {
+              setSearchResults(limitedResults);
+              
+              if (filtered.length === 0) {
+                setSearchError(`No se encontraron socios que coincidan con "${term}"`);
+              } else if (filtered.length > 20) {
+                setSearchError(`Se encontraron ${filtered.length} resultados. Mostrando los primeros 20.`);
+              }
+            }, 0);
+            
+          } catch (error) {
+            console.error('Error en búsqueda:', error);
+            setTimeout(() => {
+              setSearchError('Error al buscar socios');
+            }, 0);
+          } finally {
+            // Mantener el focus incluso después de terminar la búsqueda
+            setTimeout(() => {
+              setIsSearching(false);
+              if (searchInputRef.current) {
+                searchInputRef.current.focus();
+              }
+            }, 50);
+          }
+        }, 400), // Aumenté el delay a 400ms para mejor UX
+        [gymData?.id]
+      );
+
 
   // Cargar miembros recientes
   const loadRecentMembers = useCallback(async () => {
@@ -303,17 +332,17 @@ const AttendanceScanner: React.FC = () => {
   };
 
   // Limpiar recursos al desmontar
-  useEffect(() => {
-    return () => {
-      if (scanInterval.current) {
-        clearInterval(scanInterval.current);
-      }
-      if (qrCooldownTimeout.current) {
-        clearTimeout(qrCooldownTimeout.current);
-      }
-      debouncedSearch.cancel();
-    };
-  }, [debouncedSearch]);
+    useEffect(() => {
+      return () => {
+        if (scanInterval.current) {
+          clearInterval(scanInterval.current);
+        }
+        if (qrCooldownTimeout.current) {
+          clearTimeout(qrCooldownTimeout.current);
+        }
+        debouncedSearch.cancel();
+      };
+    }, []); // Sin dependencias para evitar recreaciones
 
   useEffect(() => {
     loadRecentMembers();
@@ -620,18 +649,49 @@ const AttendanceScanner: React.FC = () => {
   };
 
   // Buscar miembros
-  const searchMembers = useCallback(() => {
+const searchMembers = useCallback(() => {
+  if (searchTerm.trim().length >= 2) {
     debouncedSearch(searchTerm);
-  }, [searchTerm, debouncedSearch]);
+    // Mantener focus después de buscar manualmente
+    setTimeout(() => {
+      if (searchInputRef.current) {
+        searchInputRef.current.focus();
+      }
+    }, 100);
+  }
+}, [searchTerm, debouncedSearch]);
 
-  useEffect(() => {
-    if (searchTerm.trim().length >= 2) {
-      debouncedSearch(searchTerm);
-    } else {
-      setSearchResults([]);
-      setSearchError(null);
+const clearSearch = useCallback(() => {
+  setSearchTerm('');
+  setSearchResults([]);
+  setSearchError(null);
+  setTimeout(() => {
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
     }
-  }, [searchTerm, debouncedSearch]);
+  }, 50);
+}, []);
+
+
+const handleSearchTermChange = useCallback((newTerm: string) => {
+  setSearchTerm(newTerm);
+  
+  // Mantener el focus en el input después de la búsqueda
+  const maintainFocus = () => {
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  };
+  
+  if (newTerm.trim().length >= 2) {
+    debouncedSearch(newTerm);
+    // Pequeño delay para mantener el focus después de la búsqueda
+    setTimeout(maintainFocus, 100);
+  } else {
+    setSearchResults([]);
+    setSearchError(null);
+  }
+}, [debouncedSearch]);
 
   // Formatear fecha
   const formatDateTime = (date: Date) => {
@@ -734,26 +794,42 @@ const AttendanceScanner: React.FC = () => {
   );
 
   // Renderizar entrada manual
-  const renderManualEntry = () => (
+    const renderManualEntry = () => (
     <div className="flex flex-col items-center">
       <div className="mb-4 w-full max-w-lg">
         <div className="relative">
           <input
+            ref={searchInputRef} // ← AGREGAR REF
             type="text"
             placeholder="Buscar socio por nombre, apellido o email..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && searchMembers()}
+            onChange={(e) => {
+              e.preventDefault();
+              handleSearchTermChange(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                searchMembers();
+              }
+              // Evitar que otros eventos interfieran
+              e.stopPropagation();
+            }}
+            onFocus={(e) => {
+              // Asegurar que el input mantenga el focus
+              e.target.selectionStart = e.target.value.length;
+            }}
             className="w-full px-4 py-3 pl-12 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            disabled={isSearching}
+            disabled={false} // ← Nunca deshabilitar para evitar pérdida de focus
             autoFocus
+            autoComplete="off"
           />
           <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
             <Search size={20} className="text-gray-400" />
           </div>
           
           {isSearching && (
-            <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
+            <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
               <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
             </div>
           )}
@@ -761,24 +837,15 @@ const AttendanceScanner: React.FC = () => {
         
         <button
           onClick={searchMembers}
-          disabled={searchTerm.trim().length < 2 || isSearching}
+          disabled={searchTerm.trim().length < 2}
           className={`w-full mt-3 py-2 rounded-lg flex items-center justify-center transition-colors ${
-            searchTerm.trim().length < 2 || isSearching 
+            searchTerm.trim().length < 2
               ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
               : 'bg-blue-600 text-white hover:bg-blue-700'
           }`}
         >
-          {isSearching ? (
-            <>
-              <div className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2"></div>
-              Buscando...
-            </>
-          ) : (
-            <>
-              <Search size={18} className="mr-2" />
-              Buscar Socio
-            </>
-          )}
+          <Search size={18} className="mr-2" />
+          Buscar Socio
         </button>
       </div>
       
@@ -913,6 +980,7 @@ const AttendanceScanner: React.FC = () => {
         <p>o selecciona un socio de la lista de recientes</p>
       </div>
     </div>
+  
   );
 
   // Modal para selección de membresía desde QR

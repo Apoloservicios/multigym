@@ -92,7 +92,7 @@ const useFirestore = <T>(collectionName: string) => {
   const search = useCallback(async (
     searchTerm: string,
     searchFields: string[] = ['firstName', 'lastName', 'email'],
-    limitResults: number = 50
+    limitResults: number = 500
   ) => {
     // console.log('🔍 Búsqueda iniciada para:', searchTerm);
     
@@ -142,7 +142,7 @@ const useFirestore = <T>(collectionName: string) => {
       setLoading(false);
       return [] as T[];
     }
-  }, [getCollectionPath, gymData?.id]);
+  }, [getCollectionPath, gymData?.id , collectionName]);
 
   // CRUD básico
   const getById = useCallback(async (id: string) => {

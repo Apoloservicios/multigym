@@ -223,7 +223,7 @@ const BusinessProfile: React.FC = () => {
             onClick={() => {
               // Aquí podríamos implementar una función para solicitar renovación
               // Por ahora, simplemente mostraremos la información de contacto
-              alert('Para renovar tu suscripción, contacta con soporte en soporte@multigym.com');
+              alert('Para renovar tu suscripción, contacta con soporte en info@multigym.com.ar');
             }}
             className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded hover:bg-yellow-300 transition-colors text-sm"
           >
@@ -245,7 +245,7 @@ const BusinessProfile: React.FC = () => {
         <button
           onClick={() => {
             // Aquí podríamos implementar una función para solicitar renovación
-            alert('Para renovar tu suscripción, contacta con soporte en soporte@multigym.com');
+            alert('Para renovar tu suscripción, contacta con soporte en info@multigym.com.ar');
           }}
           className="px-3 py-1 bg-red-200 text-red-800 rounded hover:bg-red-300 transition-colors text-sm"
         >
@@ -271,7 +271,7 @@ const BusinessProfile: React.FC = () => {
         <button
           onClick={() => {
             // Aquí podríamos implementar una función para solicitar suscripción
-            alert('Para adquirir una suscripción, contacta con soporte en soporte@multigym.com');
+            alert('Para adquirir una suscripción, contacta con soporte en info@multigym.com.ar');
           }}
           className="px-3 py-1 bg-blue-200 text-blue-800 rounded hover:bg-blue-300 transition-colors text-sm"
         >
@@ -631,9 +631,9 @@ const BusinessProfile: React.FC = () => {
           por favor contacta a nuestro equipo de soporte:
         </p>
         <p className="text-blue-800 font-medium mt-2">
-          Email: soporte@multigym.com
+          Email: info@multigym.com.ar
           <br />
-          Teléfono: (123) 456-7890
+          Teléfono: (260) 4515854
         </p>
       </div>
     </div>

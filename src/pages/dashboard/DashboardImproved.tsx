@@ -1,4 +1,4 @@
-// src/pages/dashboard/DashboardImproved.tsx - CORREGIDO CÁLCULO "POR COBRAR" - COMPLETO
+// src/pages/dashboard/DashboardImproved.tsx - VERSIÓN CORREGIDA
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -46,8 +46,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { exportTransactionsToExcel } from '../../utils/excel.utils';
+// 🔧 IMPORTAR FUNCIONES CORREGIDAS DEL SERVICIO
+import { getTransactionDisplayInfo } from '../../services/financial.service';
 
-// Interfaces
+// 🔧 INTERFACE CORREGIDA - Agregar propiedad faltante
 interface EnhancedDashboardMetrics {
   totalMembers: number;
   activeMembers: number;
@@ -64,6 +66,7 @@ interface EnhancedDashboardMetrics {
   overduePayments: number;
   overdueAmount: number;
   refundsToday: number;
+  refundsThisMonth: number; // 🔧 AGREGAR PROPIEDAD FALTANTE
 }
 
 interface PendingPayment {
@@ -87,8 +90,6 @@ const DashboardImproved: React.FC = () => {
     refreshData: refreshFinancialData 
   } = useFinancial();
 
-
-  
   // Estados principales
   const [metrics, setMetrics] = useState<EnhancedDashboardMetrics>({
     totalMembers: 0,
@@ -105,7 +106,8 @@ const DashboardImproved: React.FC = () => {
     pendingAmount: 0,
     overduePayments: 0,
     overdueAmount: 0,
-    refundsToday: 0
+    refundsToday: 0,
+    refundsThisMonth: 0 // 🔧 AGREGAR VALOR INICIAL
   });
   
   const [pendingPayments, setPendingPayments] = useState<PendingPayment[]>([]);
@@ -132,205 +134,146 @@ const DashboardImproved: React.FC = () => {
       todayStart: getTodayStartInArgentina(),
       todayEnd: getTodayEndInArgentina(),
       thisMonthStart: getThisMonthStartInArgentina(),
-      nextWeek: Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
+      nextWeek: Timestamp.fromDate(new Date(Date.now() + 7 * 24 * 60 * 1000)),
       todayString: getCurrentDateInArgentina()
     };
   }, []);
 
-  // Función para detectar tipo de transacción - MEMOIZADA
-          const getTransactionDisplayInfo = useCallback((transaction: any) => {
-      // 🔍 DEBUG: Log para transacciones de reintegro
-      if (transaction.type === 'refund' || transaction.category === 'refund' || 
-          transaction.description?.toLowerCase().includes('reintegro')) {
-        console.log('🔍 DETECTANDO TRANSACCIÓN DE REINTEGRO:', {
-          id: transaction.id,
-          type: transaction.type,
-          category: transaction.category,
-          amount: transaction.amount,
-          description: transaction.description?.substring(0, 50) + '...',
-          createdAt: transaction.createdAt,
-          date: transaction.date
-        });
-      }
+  // 🔧 USAR FUNCIÓN IMPORTADA DEL SERVICIO EN LUGAR DE LOCAL
+  const getTransactionInfo = useCallback((transaction: any) => {
+    return getTransactionDisplayInfo(transaction);
+  }, []);
 
-      // 🆕 LÓGICA CORREGIDA: Priorizar tipo 'refund' para reintegros
-      const isRefund = transaction.type === 'refund' || 
-                      transaction.category === 'refund' || 
-                      transaction.description?.toLowerCase().includes('reintegro');
+  // ***************************************************
+
+  // 🆕 FUNCIÓN PARA EXPORTAR TRANSACCIONES RECIENTES A EXCEL
+  const handleExportRecentTransactions = async () => {
+    if (!transactions.length) {
+      setExportError('No hay transacciones para exportar');
+      setTimeout(() => setExportError(''), 3000);
+      return;
+    }
+
+    setIsExporting(true);
+    setExportError('');
+
+    try {
+      // Filtrar las últimas 50 transacciones
+      const recentTransactions = transactions.slice(0, 50);
       
-      // Solo si NO es reintegro, verificar si es gasto
-      const isExpense = !isRefund && (
-        transaction.type === 'expense' || 
-        transaction.category === 'expense' ||
-        transaction.category === 'withdrawal' ||
-        transaction.amount < 0
+      // Generar nombre de archivo con fecha
+      const today = getCurrentDateInArgentina();
+      const fileName = `dashboard-transacciones-${today.replace(/-/g, '')}.xlsx`;
+      
+      console.log('📊 Exportando transacciones del dashboard:', {
+        count: recentTransactions.length,
+        fileName
+      });
+      
+      // Exportar usando la utilidad existente
+      exportTransactionsToExcel(
+        recentTransactions, 
+        gymData?.name || 'Dashboard Financiero', 
+        fileName
       );
-                      
-      // Solo si NO es reintegro NI gasto, es ingreso
-      const isIncome = !isRefund && !isExpense && (
-        transaction.type === 'income' ||
-        transaction.category === 'membership' ||
-        transaction.category === 'extra' ||
-        transaction.category === 'penalty' ||
-        transaction.category === 'product' ||
-        transaction.category === 'service' ||
-        transaction.amount > 0
-      );
+
+      console.log('✅ Transacciones exportadas exitosamente');
       
-      // 🔍 DEBUG: Log resultado de la clasificación para reintegros
-      if (transaction.type === 'refund' || transaction.category === 'refund' || 
-          transaction.description?.toLowerCase().includes('reintegro')) {
-        console.log('🔍 RESULTADO CLASIFICACIÓN REINTEGRO:', {
-          isRefund,
-          isExpense,
-          isIncome,
-          displayAmount: Math.abs(transaction.amount),
-          originalAmount: transaction.amount
-        });
-      }
+      // Mostrar mensaje de éxito
+      setSuccess('Transacciones exportadas exitosamente');
+      setTimeout(() => setSuccess(''), 3000);
       
-      return {
-        isRefund,
-        isIncome,
-        isExpense,
-        displayAmount: Math.abs(transaction.amount),
-        type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
-      };
-    }, []);
+    } catch (err: any) {
+      console.error('❌ Error exportando transacciones:', err);
+      setExportError(err.message || 'Error al exportar transacciones');
+      setTimeout(() => setExportError(''), 5000);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
+  const handleExportPendingPayments = async () => {
+    if (!pendingPayments.length) {
+      setExportError('No hay pagos pendientes para exportar');
+      setTimeout(() => setExportError(''), 3000);
+      return;
+    }
 
-    // ***************************************************
+    setIsExporting(true);
+    setExportError('');
 
+    try {
+      // Preparar datos para Excel usando SheetJS directamente
+      const XLSX = await import('xlsx');
+      
+      const excelData = pendingPayments.map((payment, index) => ({
+        '#': index + 1,
+        'Socio': payment.memberName,
+        'Actividad/Membresía': payment.activityName,
+        'Monto Adeudado': payment.cost,
+        'Fecha de Inicio': formatSafeDate(payment.startDate),
+        'Fecha de Vencimiento': formatSafeDate(payment.endDate),
+        'Estado': payment.overdue ? 'Vencido' : 'Pendiente',
+        'Días de Atraso': payment.daysOverdue || 0,
+        'Observaciones': payment.overdue ? `Vencido hace ${payment.daysOverdue} días` : 'Al día'
+      }));
 
-// 🆕 FUNCIÓN PARA EXPORTAR TRANSACCIONES RECIENTES A EXCEL
-const handleExportRecentTransactions = async () => {
-  if (!transactions.length) {
-    setExportError('No hay transacciones para exportar');
-    setTimeout(() => setExportError(''), 3000);
-    return;
-  }
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      
+      // Configurar anchos de columna
+      worksheet['!cols'] = [
+        { wch: 5 },  // #
+        { wch: 25 }, // Socio
+        { wch: 20 }, // Actividad
+        { wch: 15 }, // Monto
+        { wch: 15 }, // Fecha Inicio
+        { wch: 15 }, // Fecha Venc
+        { wch: 12 }, // Estado
+        { wch: 12 }, // Días Atraso
+        { wch: 30 }  // Observaciones
+      ];
+      
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Pagos Pendientes');
+      
+      // Agregar hoja de resumen
+      const totalAmount = pendingPayments.reduce((sum, p) => sum + p.cost, 0);
+      const overdueCount = pendingPayments.filter(p => p.overdue).length;
+      
+      const summaryData = [
+        { 'Concepto': 'RESUMEN DE PAGOS PENDIENTES', 'Valor': '' },
+        { 'Concepto': 'Gimnasio', 'Valor': gymData?.name || 'Sin nombre' },
+        { 'Concepto': 'Fecha del reporte', 'Valor': formatDateForDisplay(getCurrentDateInArgentina()) },
+        { 'Concepto': '', 'Valor': '' },
+        { 'Concepto': 'Total de socios con deuda', 'Valor': pendingPayments.length },
+        { 'Concepto': 'Socios con pagos vencidos', 'Valor': overdueCount },
+        { 'Concepto': 'Socios con pagos al día', 'Valor': pendingPayments.length - overdueCount },
+        { 'Concepto': 'Monto total adeudado', 'Valor': `$${totalAmount.toLocaleString('es-AR')}` }
+      ];
 
-  setIsExporting(true);
-  setExportError('');
+      const summarySheet = XLSX.utils.json_to_sheet(summaryData);
+      summarySheet['!cols'] = [{ wch: 25 }, { wch: 20 }];
+      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
 
-  try {
-    // Filtrar las últimas 50 transacciones
-    const recentTransactions = transactions.slice(0, 50);
-    
-    // Generar nombre de archivo con fecha
-    const today = getCurrentDateInArgentina();
-    const fileName = `dashboard-transacciones-${today.replace(/-/g, '')}.xlsx`;
-    
-    console.log('📊 Exportando transacciones del dashboard:', {
-      count: recentTransactions.length,
-      fileName
-    });
-    
-    // Exportar usando la utilidad existente
-    exportTransactionsToExcel(
-      recentTransactions, 
-      gymData?.name || 'Dashboard Financiero', 
-      fileName
-    );
+      const today = getCurrentDateInArgentina().replace(/-/g, '');
+      const fileName = `pagos-pendientes-${today}.xlsx`;
+      
+      XLSX.writeFile(workbook, fileName);
+      
+      console.log('✅ Pagos pendientes exportados:', fileName);
+      setSuccess('Pagos pendientes exportados exitosamente');
+      setTimeout(() => setSuccess(''), 3000);
+      
+    } catch (err: any) {
+      console.error('❌ Error exportando pagos pendientes:', err);
+      setExportError(err.message || 'Error al exportar pagos pendientes');
+      setTimeout(() => setExportError(''), 5000);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
-    console.log('✅ Transacciones exportadas exitosamente');
-    
-    // Mostrar mensaje de éxito
-    setSuccess('Transacciones exportadas exitosamente');
-    setTimeout(() => setSuccess(''), 3000);
-    
-  } catch (err: any) {
-    console.error('❌ Error exportando transacciones:', err);
-    setExportError(err.message || 'Error al exportar transacciones');
-    setTimeout(() => setExportError(''), 5000);
-  } finally {
-    setIsExporting(false);
-  }
-};
-
-const handleExportPendingPayments = async () => {
-  if (!pendingPayments.length) {
-    setExportError('No hay pagos pendientes para exportar');
-    setTimeout(() => setExportError(''), 3000);
-    return;
-  }
-
-  setIsExporting(true);
-  setExportError('');
-
-  try {
-    // Preparar datos para Excel usando SheetJS directamente
-    const XLSX = await import('xlsx');
-    
-    const excelData = pendingPayments.map((payment, index) => ({
-      '#': index + 1,
-      'Socio': payment.memberName,
-      'Actividad/Membresía': payment.activityName,
-      'Monto Adeudado': payment.cost,
-      'Fecha de Inicio': formatSafeDate(payment.startDate),
-      'Fecha de Vencimiento': formatSafeDate(payment.endDate),
-      'Estado': payment.overdue ? 'Vencido' : 'Pendiente',
-      'Días de Atraso': payment.daysOverdue || 0,
-      'Observaciones': payment.overdue ? `Vencido hace ${payment.daysOverdue} días` : 'Al día'
-    }));
-
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(excelData);
-    
-    // Configurar anchos de columna
-    worksheet['!cols'] = [
-      { wch: 5 },  // #
-      { wch: 25 }, // Socio
-      { wch: 20 }, // Actividad
-      { wch: 15 }, // Monto
-      { wch: 15 }, // Fecha Inicio
-      { wch: 15 }, // Fecha Venc
-      { wch: 12 }, // Estado
-      { wch: 12 }, // Días Atraso
-      { wch: 30 }  // Observaciones
-    ];
-    
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Pagos Pendientes');
-    
-    // Agregar hoja de resumen
-    const totalAmount = pendingPayments.reduce((sum, p) => sum + p.cost, 0);
-    const overdueCount = pendingPayments.filter(p => p.overdue).length;
-    
-    const summaryData = [
-      { 'Concepto': 'RESUMEN DE PAGOS PENDIENTES', 'Valor': '' },
-      { 'Concepto': 'Gimnasio', 'Valor': gymData?.name || 'Sin nombre' },
-      { 'Concepto': 'Fecha del reporte', 'Valor': formatDateForDisplay(getCurrentDateInArgentina()) },
-      { 'Concepto': '', 'Valor': '' },
-      { 'Concepto': 'Total de socios con deuda', 'Valor': pendingPayments.length },
-      { 'Concepto': 'Socios con pagos vencidos', 'Valor': overdueCount },
-      { 'Concepto': 'Socios con pagos al día', 'Valor': pendingPayments.length - overdueCount },
-      { 'Concepto': 'Monto total adeudado', 'Valor': `$${totalAmount.toLocaleString('es-AR')}` }
-    ];
-
-    const summarySheet = XLSX.utils.json_to_sheet(summaryData);
-    summarySheet['!cols'] = [{ wch: 25 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumen');
-
-    const today = getCurrentDateInArgentina().replace(/-/g, '');
-    const fileName = `pagos-pendientes-${today}.xlsx`;
-    
-    XLSX.writeFile(workbook, fileName);
-    
-    console.log('✅ Pagos pendientes exportados:', fileName);
-    setSuccess('Pagos pendientes exportados exitosamente');
-    setTimeout(() => setSuccess(''), 3000);
-    
-  } catch (err: any) {
-    console.error('❌ Error exportando pagos pendientes:', err);
-    setExportError(err.message || 'Error al exportar pagos pendientes');
-    setTimeout(() => setExportError(''), 5000);
-  } finally {
-    setIsExporting(false);
-  }
-};
-
-
-     // ***************************************************
+  // ***************************************************
 
   // Función para formatear nombres de métodos de pago - MEMOIZADA
   const formatPaymentMethodName = useCallback((method: string): string => {
@@ -345,326 +288,173 @@ const handleExportPendingPayments = async () => {
 
   // 🔧 GENERAR ACTIVIDADES RECIENTES CON FECHAS ARGENTINA - MEMOIZADO
   const recentActivities = React.useMemo(() => {
-  if (!transactions.length) return [];
+    if (!transactions.length) return [];
 
-  // 🔍 DEBUG: Verificar transacciones de reintegro
-  const refundTransactions = transactions.filter(t => 
-    t.type === 'refund' || t.category === 'refund' || 
-    t.description?.toLowerCase().includes('reintegro')
-  );
-  
-  if (refundTransactions.length > 0) {
-    console.log('🔍 TRANSACCIONES DE REINTEGRO ENCONTRADAS:', {
-      total: refundTransactions.length,
-      transactions: refundTransactions.map(t => ({
-        id: t.id,
-        type: t.type,
-        category: t.category,
-        amount: t.amount,
-        description: t.description?.substring(0, 30) + '...'
-      }))
-    });
-  }
+    // 🔍 DEBUG: Verificar transacciones de reintegro
+    const refundTransactions = transactions.filter(t => 
+      t.type === 'refund' || t.category === 'refund' || 
+      t.description?.toLowerCase().includes('reintegro')
+    );
+    
+    if (refundTransactions.length > 0) {
+      console.log('🔍 TRANSACCIONES DE REINTEGRO ENCONTRADAS:', {
+        total: refundTransactions.length,
+        transactions: refundTransactions.map(t => ({
+          id: t.id,
+          type: t.type,
+          category: t.category,
+          amount: t.amount,
+          description: t.description?.substring(0, 30) + '...'
+        }))
+      });
+    }
 
-  return transactions.slice(0, 10).map(transaction => {
-    const displayInfo = getTransactionDisplayInfo(transaction);
-    
-    let memberDisplayName = 'Usuario del sistema';
-    let transactionDescription = 'Transacción';
-    
-    if (transaction.memberName && transaction.memberName !== transaction.userName) {
-      memberDisplayName = transaction.memberName;
-    } else if (transaction.description) {
-      const desc = transaction.description.toLowerCase();
-      if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
-        const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
-        if (match && match[1]) {
-          memberDisplayName = match[1].trim();
+    return transactions.slice(0, 10).map(transaction => {
+      // 🔧 USAR FUNCIÓN IMPORTADA
+      const displayInfo = getTransactionInfo(transaction);
+      
+      let memberDisplayName = 'Usuario del sistema';
+      let transactionDescription = 'Transacción';
+      
+      if (transaction.memberName && transaction.memberName !== transaction.userName) {
+        memberDisplayName = transaction.memberName;
+      } else if (transaction.description) {
+        const desc = transaction.description.toLowerCase();
+        if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
+          const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
+          if (match && match[1]) {
+            memberDisplayName = match[1].trim();
+          }
         }
       }
-    }
-    
-    if (transaction.category === 'membership') {
-      transactionDescription = 'Pago de membresía';
-    } else if (transaction.category === 'extra') {
-      transactionDescription = 'Ingreso extra';
-    } else if (transaction.category === 'refund') {
-      transactionDescription = 'Devolución';
-    } else if (transaction.category === 'withdrawal') {
-      transactionDescription = 'Retiro de caja';
-    } else if (transaction.category === 'expense') {
-      transactionDescription = 'Gasto operativo';
-    } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
-      transactionDescription = transaction.description;
-    }
-    
-    return {
-      id: transaction.id || '',
-      type: displayInfo.type as 'payment' | 'refund' | 'expense',
-      memberName: memberDisplayName,
-      description: transactionDescription,
-      amount: displayInfo.displayAmount,
-      method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
-      timestamp: transaction.createdAt,
-      status: transaction.status || 'completed',
-      color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
-      symbol: displayInfo.isIncome ? '+' : '-',
-      processedBy: transaction.userName || 'Sistema'
-    };
-  });
-}, [transactions, getTransactionDisplayInfo, formatPaymentMethodName]);
-
-  // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO PARA EVITAR DUPLICACIÓN
-  const loadEnhancedMetrics = useCallback(async () => {
-
-    if (!gymData?.id || !shouldLoad()) return;
-
-     if (transactions.length === 0) {
-        console.log('⏳ Esperando a que las transacciones se carguen...', {
-          transactionCount: transactions.length,
-          financialLoading,
-          dailySummary: !!dailySummary
-        });
-        return; // No calcular métricas si no hay transacciones aún
+      
+      if (transaction.category === 'membership') {
+        transactionDescription = 'Pago de membresía';
+      } else if (transaction.category === 'extra') {
+        transactionDescription = 'Ingreso extra';
+      } else if (transaction.category === 'refund') {
+        transactionDescription = 'Devolución';
+      } else if (transaction.category === 'withdrawal') {
+        transactionDescription = 'Retiro de caja';
+      } else if (transaction.category === 'expense') {
+        transactionDescription = 'Gasto operativo';
+      } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
+        transactionDescription = transaction.description;
       }
-      console.log('🚀 INICIANDO CÁLCULO DE MÉTRICAS CON TRANSACCIONES:', transactions.length);
+      
+      return {
+        id: transaction.id || '',
+        type: displayInfo.type as 'payment' | 'refund' | 'expense',
+        memberName: memberDisplayName,
+        description: transactionDescription,
+        amount: displayInfo.displayAmount,
+        method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
+        timestamp: transaction.createdAt,
+        status: transaction.status || 'completed',
+        color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
+        symbol: displayInfo.isIncome ? '+' : '-',
+        processedBy: transaction.userName || 'Sistema'
+      };
+    });
+  }, [transactions, getTransactionInfo, formatPaymentMethodName]);
+
+  // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO
+  const loadEnhancedMetrics = useCallback(async () => {
+    if (!gymData?.id || !shouldLoad()) return;
+    
+    console.log('🚀 INICIANDO CÁLCULO DE MÉTRICAS CON TRANSACCIONES:', transactions.length);
     
     try {
-      setLastLoadTime(Date.now());
-    
-      // Cargar métricas de socios (resto del código igual hasta las métricas financieras)
+      // Métricas de socios (sin cambios)
       const [
         totalMembersSnap,
         activeMembersSnap,
         inactiveMembersSnap,
         membersWithDebtSnap
       ] = await Promise.all([
-        getDocs(collection(db, `gyms/${gymData.id}/members`)),
-        getDocs(query(
-          collection(db, `gyms/${gymData.id}/members`),
-          where('status', '==', 'active')
-        )),
-        getDocs(query(
-          collection(db, `gyms/${gymData.id}/members`),
-          where('status', '==', 'inactive')
-        )),
-        getDocs(query(
-          collection(db, `gyms/${gymData.id}/members`),
-          where('totalDebt', '>', 0)
-        ))
+        getDocs(query(collection(db, `gyms/${gymData.id}/members`))),
+        getDocs(query(collection(db, `gyms/${gymData.id}/members`), where('status', '==', 'active'))),
+        getDocs(query(collection(db, `gyms/${gymData.id}/members`), where('status', '==', 'inactive'))),
+        getDocs(query(collection(db, `gyms/${gymData.id}/members`), where('totalDebt', '>', 0)))
       ]);
 
-      // 🔧 CARGAR PAGOS PENDIENTES - CORREGIDO PARA EVITAR DUPLICACIÓN
+      // 🔧 CORREGIR CÁLCULOS FINANCIEROS USANDO FUNCIÓN IMPORTADA
+      let todayIncome = 0;
+      let todayExpenses = 0; 
+      let todayRefunds = 0;
+      let monthlyIncome = 0;
+      let monthlyExpenses = 0;
+      let monthlyRefunds = 0;
       let pendingPayments = 0;
       let pendingAmount = 0;
       let overduePayments = 0;
       let overdueAmount = 0;
 
-      const payments: PendingPayment[] = [];
-      const processedMembers = new Set<string>(); // 🔧 NUEVO: Evitar duplicación
-
-      try {
-        // CONSULTA LIMITADA - Solo membresías pendientes
-        const pendingAssignmentsSnap = await getDocs(query(
-          collection(db, `gyms/${gymData.id}/membershipAssignments`),
-          where('paymentStatus', '==', 'pending'),
-          where('status', '==', 'active'),
-          limit(30)
-        ));
-
-        // 🔧 USAR FECHA ARGENTINA PARA COMPARAR VENCIMIENTOS
-        const nowInArgentina = timestampToArgentinianDate(Timestamp.now()) || new Date();
-
-        pendingAssignmentsSnap.forEach(doc => {
-          const data = doc.data();
-          const endDate = timestampToArgentinianDate(data.endDate);
-          const overdue = endDate ? endDate < nowInArgentina : false;
-          const cost = data.cost || 0;
-          const memberId = data.memberId;
-
-          // Marcar miembro como procesado
-          processedMembers.add(memberId);
-
-          pendingAmount += cost;
-          pendingPayments++;
-
-          if (overdue) {
-            overduePayments++;
-            overdueAmount += cost;
-          }
-
-          const daysOverdue = overdue && endDate ? 
-            Math.floor((nowInArgentina.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24)) : 
-            undefined;
-
-          payments.push({
-            id: doc.id,
-            memberName: data.memberName || data.firstName + ' ' + data.lastName || 'Sin nombre',
-            activityName: data.activityName || 'Sin actividad',
-            cost,
-            startDate: data.startDate,
-            endDate: data.endDate,
-            overdue,
-            daysOverdue
-          });
-        });
-
-        // 🔧 AGREGAR SOCIOS CON DEUDA QUE NO TENGAN MEMBRESÍAS PENDIENTES
-        if (membersWithDebtSnap.size > 0 && payments.length < 20) {
-          let debtCount = 0;
-          membersWithDebtSnap.forEach(doc => {
-            if (debtCount >= 10) return;
-            
-            const data = doc.data();
-            const debt = data.totalDebt || 0;
-            const memberId = doc.id;
-            
-            // 🔧 SOLO AGREGAR SI NO FUE PROCESADO EN MEMBRESÍAS PENDIENTES
-            if (debt > 0 && !processedMembers.has(memberId)) {
-              const memberFullName = (data.firstName + ' ' + data.lastName).trim();
-              
-              if (memberFullName !== ' ') {
-                pendingAmount += debt;
-                pendingPayments++;
-                overduePayments++;
-                overdueAmount += debt;
-
-                const memberCreatedDate = timestampToArgentinianDate(data.createdAt) || nowInArgentina;
-                const daysSinceCreated = Math.floor((nowInArgentina.getTime() - memberCreatedDate.getTime()) / (1000 * 60 * 60 * 24));
-
-                payments.push({
-                  id: doc.id + '_debt',
-                  memberName: memberFullName,
-                  activityName: 'Deuda acumulada',
-                  cost: debt,
-                  startDate: data.createdAt || Timestamp.now(),
-                  endDate: data.createdAt || Timestamp.now(),
-                  overdue: true,
-                  daysOverdue: daysSinceCreated
-                });
-                
-                debtCount++;
-                processedMembers.add(memberId);
-              }
-            }
-          });
-        }
-
-        setPendingPayments(payments);
-
-        // 🔧 AGREGAR LOGGING PARA DEBUG
-        console.log('💰 Resumen de Por Cobrar:', {
-          pendingPayments,
-          pendingAmount,
-          overduePayments, 
-          overdueAmount,
-          totalProcessedMembers: processedMembers.size,
-          breakdown: {
-            fromMembershipAssignments: pendingAssignmentsSnap.size,
-            fromMemberDebt: payments.filter(p => p.id.includes('_debt')).length
-          }
-        });
-
-      } catch (membershipError) {
-        console.error('Error loading payments:', membershipError);
-        setPendingPayments([]);
-      }
-
-      // 🔧 CALCULAR MÉTRICAS FINANCIERAS CON FECHAS ARGENTINA
-      let todayIncome = 0;
-      let todayExpenses = 0;
-      let monthlyIncome = 0;
-      let monthlyExpenses = 0;
-      let refundsToday = 0;
-
-      if (dailySummary) {
-        todayIncome = dailySummary.totalIncome;
-        todayExpenses = dailySummary.totalExpenses;
-        refundsToday = dailySummary.refunds;
-      }
-
-      // 🔧 CALCULAR TOTALES MENSUALES CON FECHAS ARGENTINA
-      const monthlyTransactions = transactions.filter(t => {
-        const transactionDateArg = timestampToArgentinianDate(t.createdAt);
-        const thisMonthStartArg = timestampToArgentinianDate(dateRanges.thisMonthStart);
+      // Procesar transacciones de HOY
+      const todayTransactions = transactions.filter(t => {
+        const transactionDate = t.createdAt?.toDate() || t.date?.toDate();
+        if (!transactionDate) return false;
         
-        return transactionDateArg && thisMonthStartArg && transactionDateArg >= thisMonthStartArg;
+        const today = new Date();
+        return transactionDate.toDateString() === today.toDateString();
       });
 
-
-              // 🔍 AGREGAR ESTOS LOGS PARA DEBUG
-        console.log('🔍 DEBUG MÉTRICAS MENSUALES:', {
-          totalTransactions: transactions.length,
-          thisMonthStart: dateRanges.thisMonthStart,
-          thisMonthStartConverted: timestampToArgentinianDate(dateRanges.thisMonthStart),
-          monthlyTransactionsFound: monthlyTransactions.length,
-          sampleTransaction: transactions[0] ? {
-            id: transactions[0].id,
-            createdAt: transactions[0].createdAt,
-            convertedDate: timestampToArgentinianDate(transactions[0].createdAt),
-            amount: transactions[0].amount,
-            type: transactions[0].type
-          } : 'No transactions'
-        });
-
-        if (monthlyTransactions.length > 0) {
-          console.log('🔍 TRANSACCIONES MENSUALES ENCONTRADAS:', 
-            monthlyTransactions.map(t => ({
-              id: t.id,
-              amount: t.amount,
-              type: t.type,
-              category: t.category,
-              date: timestampToArgentinianDate(t.createdAt)
-            }))
-          );
-        }
-
-        monthlyTransactions.forEach(transaction => {
-          const displayInfo = getTransactionDisplayInfo(transaction);
-          
-          console.log('🔍 PROCESANDO TRANSACCIÓN MENSUAL:', {
-            id: transaction.id,
-            amount: transaction.amount,
-            displayAmount: displayInfo.displayAmount,
-            isIncome: displayInfo.isIncome,
-            isRefund: displayInfo.isRefund,
-            isExpense: displayInfo.isExpense,
-            status: transaction.status
-          });
-          
-          if (transaction.status === 'completed') {
-            if (displayInfo.isIncome) {
-              monthlyIncome += displayInfo.displayAmount;
-              console.log('✅ SUMANDO A INGRESOS MENSUALES:', displayInfo.displayAmount, 'Total:', monthlyIncome);
-            } else if (displayInfo.isRefund || displayInfo.isExpense) {
-              monthlyExpenses += displayInfo.displayAmount;
-              console.log('❌ SUMANDO A EGRESOS MENSUALES:', displayInfo.displayAmount, 'Total:', monthlyExpenses);
-            }
-          }
-        });
-
-        console.log('📊 RESULTADO FINAL MÉTRICAS MENSUALES:', {
-          monthlyIncome,
-          monthlyExpenses,
-          monthlyNet: monthlyIncome - monthlyExpenses
-        });
-
-
-
-
-      monthlyTransactions.forEach(transaction => {
-        const displayInfo = getTransactionDisplayInfo(transaction);
+      todayTransactions.forEach(transaction => {
+        // 🔧 USAR FUNCIÓN IMPORTADA
+        const displayInfo = getTransactionInfo(transaction);
         
         if (transaction.status === 'completed') {
-          if (displayInfo.isIncome) {
+          if (displayInfo.isRefund) {
+            todayRefunds += displayInfo.displayAmount;
+          } else if (displayInfo.isIncome) {
+            todayIncome += displayInfo.displayAmount;
+          } else if (displayInfo.isExpense) {
+            todayExpenses += displayInfo.displayAmount;
+          }
+        }
+      });
+
+      // 🔧 DEBUGGING PARA HOY
+      console.log('📊 CÁLCULOS DEL DÍA:', {
+        transaccionesHoy: todayTransactions.length,
+        ingresos: todayIncome,
+        gastos: todayExpenses,
+        reintegros: todayRefunds,
+        netoCalculado: todayIncome - todayRefunds - todayExpenses
+      });
+
+      // Procesar transacciones MENSUALES
+      const thisMonthStart = dateRanges.thisMonthStart.toDate();
+      const monthlyTransactions = transactions.filter(t => {
+        const transactionDate = t.createdAt?.toDate() || t.date?.toDate();
+        return transactionDate && transactionDate >= thisMonthStart;
+      });
+
+      monthlyTransactions.forEach(transaction => {
+        // 🔧 USAR FUNCIÓN IMPORTADA
+        const displayInfo = getTransactionInfo(transaction);
+        
+        if (transaction.status === 'completed') {
+          if (displayInfo.isRefund) {
+            monthlyRefunds += displayInfo.displayAmount;
+          } else if (displayInfo.isIncome) {
             monthlyIncome += displayInfo.displayAmount;
-          } else if (displayInfo.isRefund || displayInfo.isExpense) {
+          } else if (displayInfo.isExpense) {
             monthlyExpenses += displayInfo.displayAmount;
           }
         }
       });
 
-      // Actualizar métricas
+      // 🔧 DEBUGGING PARA MES
+      console.log('📊 CÁLCULOS DEL MES:', {
+        transaccionesMes: monthlyTransactions.length,
+        ingresos: monthlyIncome,
+        gastos: monthlyExpenses,
+        reintegros: monthlyRefunds,
+        netoCalculado: monthlyIncome - monthlyRefunds - monthlyExpenses
+      });
+
+      // 🔧 ACTUALIZAR MÉTRICAS CON VALORES CORREGIDOS
       setMetrics({
         totalMembers: totalMembersSnap.size,
         activeMembers: activeMembersSnap.size,
@@ -672,22 +462,23 @@ const handleExportPendingPayments = async () => {
         membersWithDebt: membersWithDebtSnap.size,
         todayIncome,
         todayExpenses,
-        todayNet: todayIncome - todayExpenses,
+        todayNet: todayIncome - todayRefunds - todayExpenses,
         monthlyIncome,
         monthlyExpenses,
-        monthlyNet: monthlyIncome - monthlyExpenses,
+        monthlyNet: monthlyIncome - monthlyRefunds - monthlyExpenses,
         pendingPayments,
-        pendingAmount, // 🔧 AHORA SIN DUPLICACIÓN
+        pendingAmount,
         overduePayments,
         overdueAmount,
-        refundsToday
+        refundsToday: todayRefunds,
+        refundsThisMonth: monthlyRefunds // 🔧 AHORA SÍ EXISTE EN LA INTERFACE
       });
 
     } catch (err: any) {
       console.error('Error loading enhanced metrics:', err);
       setError('Error al cargar las métricas del dashboard');
     }
-  }, [gymData?.id, shouldLoad, transactions, dateRanges.thisMonthStart, dailySummary, getTransactionDisplayInfo]);
+  }, [gymData?.id, shouldLoad, transactions, dateRanges.thisMonthStart, getTransactionInfo]);
 
   // Cargar todos los datos - CON CONTROL DE BUCLES
   const loadDashboardData = useCallback(async () => {
@@ -722,41 +513,42 @@ useEffect(() => {
   if (dailySummary && !financialLoading) {
     console.log('🔄 Sincronizando métricas con dailySummary:', dailySummary);
     
-    // 🔍 DEBUG: Verificar si hay reintegros en el dailySummary
-    if (dailySummary.refunds > 0) {
-      console.log('🔄 REINTEGROS DETECTADOS EN DAILY SUMMARY:', {
-        refunds: dailySummary.refunds,
-        totalExpenses: dailySummary.totalExpenses
-      });
-    }
+    // 🔧 DEBUGGING: Verificar los valores del dailySummary
+    console.log('🔍 VALORES DAILY SUMMARY:', {
+      totalIncome: dailySummary.totalIncome,
+      totalExpenses: dailySummary.totalExpenses,
+      refunds: dailySummary.refunds,
+      netAmount: dailySummary.netAmount,
+      calculoManual: dailySummary.totalIncome - dailySummary.totalExpenses
+    });
     
     setMetrics(prev => ({
       ...prev,
       todayIncome: dailySummary.totalIncome,
-      todayExpenses: dailySummary.totalExpenses,
-      todayNet: dailySummary.totalIncome - dailySummary.totalExpenses,
-      refundsToday: dailySummary.refunds
+      // 🔧 CORRECCIÓN: Los reintegros YA ESTÁN incluidos en totalExpenses
+      todayExpenses: dailySummary.totalExpenses, // ✅ SIN RESTAR refunds
+      todayNet: dailySummary.netAmount,
+      refundsToday: dailySummary.refunds || 0
     }));
   }
 }, [dailySummary, financialLoading]);
 
-      useEffect(() => {
-      if (gymData?.id && transactions.length > 0) { // 🔧 AGREGAR CONDICIÓN DE TRANSACCIONES
-        console.log('🔄 INICIANDO CARGA DE DASHBOARD CON TRANSACCIONES:', transactions.length);
-        loadDashboardData();
-      } else if (gymData?.id && transactions.length === 0) {
-        console.log('⏳ Esperando transacciones para cargar dashboard...');
-      }
-    }, [gymData?.id, transactions.length]);
+  useEffect(() => {
+    if (gymData?.id && transactions.length > 0) {
+      console.log('🔄 INICIANDO CARGA DE DASHBOARD CON TRANSACCIONES:', transactions.length);
+      loadDashboardData();
+    } else if (gymData?.id && transactions.length === 0) {
+      console.log('⏳ Esperando transacciones para cargar dashboard...');
+    }
+  }, [gymData?.id, transactions.length]);
 
-          // 🔧 NUEVO useEffect para manejar la carga inicial
-      useEffect(() => {
-        // Cargar datos cuando las transacciones estén disponibles por primera vez
-        if (gymData?.id && transactions.length > 0 && Object.values(metrics).every(v => v === 0)) {
-          console.log('🎯 PRIMERA CARGA DE MÉTRICAS CON TRANSACCIONES DISPONIBLES');
-          loadEnhancedMetrics();
-        }
-      }, [gymData?.id, transactions.length, metrics, loadEnhancedMetrics]);
+  // 🔧 NUEVO useEffect para manejar la carga inicial
+  useEffect(() => {
+    if (gymData?.id && transactions.length > 0 && Object.values(metrics).every(v => v === 0)) {
+      console.log('🎯 PRIMERA CARGA DE MÉTRICAS CON TRANSACCIONES DISPONIBLES');
+      loadEnhancedMetrics();
+    }
+  }, [gymData?.id, transactions.length, metrics, loadEnhancedMetrics]);
 
   // Auto-refresh cada 15 minutos
   useEffect(() => {
@@ -812,25 +604,25 @@ useEffect(() => {
     }
   };
 
-    if (loading && Object.values(metrics).every(v => v === 0) && !dailySummary) {
-      return (
-        <div className="flex items-center justify-center min-h-screen">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-gray-600">Cargando dashboard financiero...</p>
-            <p className="text-sm text-gray-500 mt-2">
-              {transactions.length === 0 
-                ? 'Cargando transacciones...' 
-                : `Procesando ${transactions.length} transacciones...`
-              }
-            </p>
-            <p className="text-sm text-gray-500 mt-1">
-              Fecha: {formatDateForDisplay(getCurrentDateInArgentina())}
-            </p>
-          </div>
+  if (loading && Object.values(metrics).every(v => v === 0) && !dailySummary) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-gray-600">Cargando dashboard financiero...</p>
+          <p className="text-sm text-gray-500 mt-2">
+            {transactions.length === 0 
+              ? 'Cargando transacciones...' 
+              : `Procesando ${transactions.length} transacciones...`
+            }
+          </p>
+          <p className="text-sm text-gray-500 mt-1">
+            Fecha: {formatDateForDisplay(getCurrentDateInArgentina())}
+          </p>
         </div>
-      );
-    }
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 bg-gray-100 min-h-screen">
@@ -872,23 +664,23 @@ useEffect(() => {
         </div>
       )}
 
-        {exportError && (
-          <div className="mb-6 p-4 bg-yellow-100 border border-yellow-300 rounded-lg">
-            <div className="flex items-center">
-              <AlertTriangle size={20} className="text-yellow-600 mr-2" />
-              <span className="text-yellow-700">{exportError}</span>
-            </div>
+      {exportError && (
+        <div className="mb-6 p-4 bg-yellow-100 border border-yellow-300 rounded-lg">
+          <div className="flex items-center">
+            <AlertTriangle size={20} className="text-yellow-600 mr-2" />
+            <span className="text-yellow-700">{exportError}</span>
           </div>
-        )}
+        </div>
+      )}
 
-        {success && (
-          <div className="mb-6 p-4 bg-green-100 border border-green-300 rounded-lg">
-            <div className="flex items-center">
-              <CheckCircle size={20} className="text-green-600 mr-2" />
-              <span className="text-green-700">{success}</span>
-            </div>
+      {success && (
+        <div className="mb-6 p-4 bg-green-100 border border-green-300 rounded-lg">
+          <div className="flex items-center">
+            <CheckCircle size={20} className="text-green-600 mr-2" />
+            <span className="text-green-700">{success}</span>
           </div>
-        )}
+        </div>
+      )}
 
       {/* Métricas principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -1032,7 +824,7 @@ useEffect(() => {
                   {metrics.refundsToday > 0 && (
                     <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
                       <span className="text-sm text-purple-700">Devoluciones hoy</span>
-                      <span className="text-sm font-bold text-purple-700">{metrics.refundsToday}</span>
+                      <span className="text-sm font-bold text-purple-700">{formatCurrency(metrics.refundsToday)}</span>
                     </div>
                   )}
                   {metrics.overduePayments === 0 && metrics.pendingPayments === 0 && metrics.refundsToday === 0 && metrics.membersWithDebt === 0 && (
@@ -1188,7 +980,8 @@ useEffect(() => {
 
           {activeTab === 'transactions' && (
             <div>
-              <div className="flex space-x-2">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium text-gray-900">Transacciones Recientes</h3>
                 <button
                   onClick={handleExportRecentTransactions}
                   disabled={isExporting || recentActivities.length === 0}
@@ -1196,7 +989,7 @@ useEffect(() => {
                   title="Exportar transacciones recientes a Excel"
                 >
                   <Download size={14} className={isExporting ? 'animate-pulse mr-1' : 'mr-1'} />
-                  {isExporting ? 'Exportando...' : 'Transacciones'}
+                  {isExporting ? 'Exportando...' : 'Exportar Excel'}
                 </button>
               </div>
               
@@ -1318,4 +1111,3 @@ useEffect(() => {
 };
 
 export default DashboardImproved;
-                    

@@ -417,7 +417,7 @@ export const getTransactionsByDate = async (
   try {
     console.log('🔍 Obteniendo transacciones para fecha:', { gymId, date });
     
-    // 🔧 USAR RANGO DE FECHAS EN ARGENTINA
+    // 🔧 USAR RANGO DE FECHAS EN ARGENTINA (igual que financial.service.ts)
     const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
     
     console.log('📅 Rango de consulta:', {
@@ -427,91 +427,150 @@ export const getTransactionsByDate = async (
     
     const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
     
-    // 🔧 USAR CONSULTA CON createdAt Y RANGO DE FECHAS ARGENTINA
-    let transactions: Transaction[] = [];
+    // 🔧 USAR LA MISMA CONSULTA COMBINADA QUE financial.service.ts
+    console.log('🔍 EJECUTANDO CONSULTAS COMBINADAS (createdAt + date)');
     
-    try {
-      // Primero intentar con createdAt (más preciso)
-      const qCreatedAt = query(
-        transactionsRef,
-        where('createdAt', '>=', startOfDay),
-        where('createdAt', '<=', endOfDay),
-        orderBy('createdAt', 'desc')
-      );
-      
-      const createdAtSnapshot = await getDocs(qCreatedAt);
-      createdAtSnapshot.forEach(doc => {
-        transactions.push({
-          id: doc.id,
-          ...doc.data()
-        } as Transaction);
+    // Consulta 1: Por createdAt (transacciones normales)
+    const q1 = query(
+      transactionsRef,
+      where('createdAt', '>=', startOfDay),
+      where('createdAt', '<=', endOfDay),
+      orderBy('createdAt', 'desc')
+    );
+    
+    // Consulta 2: Por date (reintegros y otras que usan campo 'date')
+    const q2 = query(
+      transactionsRef,
+      where('date', '>=', startOfDay),
+      where('date', '<=', endOfDay),
+      orderBy('date', 'desc')
+    );
+    
+    // Ejecutar ambas consultas
+    const [snap1, snap2] = await Promise.all([
+      getDocs(q1),
+      getDocs(q2)
+    ]);
+    
+    // Combinar resultados y eliminar duplicados
+    const transactionMap = new Map();
+    
+    // Procesar primera consulta
+    snap1.forEach(doc => {
+      transactionMap.set(doc.id, {
+        id: doc.id,
+        ...doc.data()
+      } as Transaction);
+    });
+    
+    // Procesar segunda consulta (puede sobrescribir, está bien)
+    snap2.forEach(doc => {
+      transactionMap.set(doc.id, {
+        id: doc.id,
+        ...doc.data()
+      } as Transaction);
+    });
+    
+    const transactions = Array.from(transactionMap.values());
+    
+    console.log(`📊 Transacciones encontradas (consulta combinada):`, transactions.length);
+    
+    // 🔧 AGREGAR LOG ESPECÍFICO PARA REINTEGROS (igual que financial.service.ts)
+    const refundTransactions = transactions.filter(t => 
+      t.type === 'refund' || t.category === 'refund' || 
+      t.description?.toLowerCase().includes('reintegro')
+    );
+    
+    if (refundTransactions.length > 0) {
+      console.log(`🔄 REINTEGROS ENCONTRADOS EN DAILY CASH:`, {
+        total: refundTransactions.length,
+        amounts: refundTransactions.map(t => t.amount),
+        ids: refundTransactions.map(t => t.id)
       });
-      
-      console.log('📊 Transacciones encontradas (createdAt):', transactions.length);
-      
-    } catch (createdAtError) {
-      console.warn('⚠️ Error querying by createdAt, trying with date field:', createdAtError);
-      
-      // Fallback: usar campo date
-      try {
-        const qDate = query(
-          transactionsRef,
-          where('date', '>=', startOfDay),
-          where('date', '<=', endOfDay),
-          orderBy('date', 'desc')
-        );
-        
-        const dateSnapshot = await getDocs(qDate);
-        dateSnapshot.forEach(doc => {
-          transactions.push({
-            id: doc.id,
-            ...doc.data()
-          } as Transaction);
-        });
-        
-        console.log('📊 Transacciones encontradas (date):', transactions.length);
-        
-      } catch (dateError) {
-        console.warn('⚠️ Error querying by date, getting all and filtering:', dateError);
-        
-        // Último recurso: obtener todas y filtrar manualmente
-        const allSnapshot = await getDocs(transactionsRef);
-        allSnapshot.forEach(doc => {
-          const data = doc.data();
-          const txDate = data.createdAt || data.date;
-          
-          if (txDate) {
-            const txJsDate = txDate.toDate ? txDate.toDate() : new Date(txDate);
-            if (txJsDate >= startOfDay.toDate() && txJsDate <= endOfDay.toDate()) {
-              transactions.push({
-                id: doc.id,
-                ...data
-              } as Transaction);
-            }
-          }
-        });
-        
-        // Ordenar manualmente
-        transactions.sort((a, b) => {
-          const aTime = (a.createdAt || a.date);
-          const bTime = (b.createdAt || b.date);
-          
-          const aSeconds = aTime?.seconds || 0;
-          const bSeconds = bTime?.seconds || 0;
-          
-          return bSeconds - aSeconds; // Descendente (más reciente primero)
-        });
-        
-        console.log('📊 Transacciones encontradas (manual):', transactions.length);
-      }
     }
     
     return transactions;
+    
   } catch (error) {
     console.error('❌ Error getting transactions by date:', error);
     throw error;
   }
 };
+
+// 🔧 TAMBIÉN AGREGAR una función para calcular resumen que sea consistente
+
+      export const calculateDayTotals = async (
+        gymId: string,
+        date: string
+      ): Promise<{
+        totalIncome: number;
+        totalExpenses: number;
+        refunds: number;
+        netAmount: number;
+        transactionCount: number;
+      }> => {
+        try {
+          const transactions = await getTransactionsByDate(gymId, date);
+          
+          let totalIncome = 0;
+          let totalExpenses = 0;
+          let refunds = 0;
+          
+          transactions.forEach(transaction => {
+            if (transaction.status === 'completed') {
+              const amount = Math.abs(transaction.amount);
+              
+              // 🔧 USAR LA MISMA LÓGICA DE CLASIFICACIÓN QUE financial.service.ts
+              const isRefund = transaction.type === 'refund' || 
+                              transaction.category === 'refund' ||
+                              transaction.description?.toLowerCase().includes('reintegro');
+              
+              const isExpense = !isRefund && (
+                transaction.type === 'expense' || 
+                transaction.category === 'expense' ||
+                transaction.category === 'withdrawal' ||
+                (transaction.amount < 0 && !isRefund)
+              );
+              
+              const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+              
+              if (isRefund) {
+                totalExpenses += amount;
+                refunds += amount;
+                console.log(`🔄 Reintegro detectado en DailyCash: -$${amount}`);
+              } else if (isIncome) {
+                totalIncome += amount;
+                console.log(`✅ Ingreso detectado en DailyCash: +$${amount}`);
+              } else if (isExpense) {
+                totalExpenses += amount;
+                console.log(`💸 Gasto detectado en DailyCash: -$${amount}`);
+              }
+            }
+          });
+          
+          const netAmount = totalIncome - totalExpenses;
+          
+          console.log(`📊 RESUMEN DAILY CASH para ${date}:`, {
+            totalIncome,
+            totalExpenses,
+            refunds,
+            netAmount,
+            transactionCount: transactions.length
+          });
+          
+          return {
+            totalIncome,
+            totalExpenses,
+            refunds,
+            netAmount,
+            transactionCount: transactions.length
+          };
+          
+        } catch (error) {
+          console.error('Error calculating day totals:', error);
+          throw error;
+        }
+      };
 
 // Obtener resumen de transacciones para un rango de fechas (para reportes)
 export const getTransactionsSummary = async (

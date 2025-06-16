@@ -94,6 +94,8 @@ const safeFormatTime = (timestamp: any): string => {
 };
 
 
+
+
 useEffect(() => {
   // 🔧 FORZAR ACTUALIZACIÓN DE FECHA ARGENTINA
   const updateArgentinaDate = () => {
@@ -124,6 +126,9 @@ useEffect(() => {
   
   return () => clearInterval(interval);
 }, []);
+
+
+
 
 
 const formatDisplayDateArgentina = (dateString: string): string => {
@@ -323,6 +328,8 @@ const formatDisplayDateArgentina = (dateString: string): string => {
       setLoading(false);
     }
   };
+
+  
 
   // 🔧 FUNCIÓN MEJORADA PARA CALCULAR BALANCE
   const calculateCurrentBalance = (): number => {

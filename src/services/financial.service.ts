@@ -1,4 +1,4 @@
-// src/services/financial.service.ts - COMPLETO CON MÉTODOS FALTANTES
+// src/services/financial.service.ts - VERSIÓN CORREGIDA PARA INCONSISTENCIAS
 
 import { 
   collection, 
@@ -11,8 +11,10 @@ import {
   limit,
   Timestamp,
   writeBatch,
-  updateDoc
+  updateDoc,
+  getDoc // 🔧 AGREGAR ESTA IMPORTACIÓN
 } from 'firebase/firestore';
+
 import { db } from '../config/firebase';
 import { Transaction, DailyCash } from '../types/gym.types';
 import { normalizeDailyCashForLegacy, normalizeTransactionForLegacy } from '../utils/compatibility.utils';
@@ -36,7 +38,7 @@ export interface PaymentTransaction {
   paymentMethod: 'cash' | 'card' | 'transfer' | 'other';
   description: string;
   status: 'completed' | 'pending' | 'failed' | 'refunded';
-  type: 'membership_payment' | 'penalty' | 'refund' | 'other_income' | 'expense';
+  type: 'membership_payment' | 'penalty' | 'refund' | 'other_income' | 'expense' | 'income'; // 🔧 AGREGAR 'refund' E 'income'
   processedBy: string;
   createdAt: Timestamp;
   completedAt?: Timestamp;
@@ -76,41 +78,57 @@ export interface DailyCashSummary {
   refunds: number;
 }
 
-// ================== FUNCIONES HELPER PARA CLASIFICACIÓN ==================
+// ================== FUNCIONES HELPER CORREGIDAS ==================
 
-// 🆕 FUNCIÓN HELPER CORREGIDA: Clasificar tipo de transacción
-export const getTransactionType = (transaction: Transaction): 'income' | 'expense' | 'refund' => {
-  // 🆕 PRIORIZAR TIPO REFUND
-  if (transaction.type === 'refund' || 
-      transaction.category === 'refund' ||
-      transaction.description?.toLowerCase().includes('reintegro')) {
+// 🔧 FUNCIÓN HELPER CORREGIDA: Clasificar tipo de transacción
+export const getTransactionType = (transaction: any): 'income' | 'expense' | 'refund' => {
+  // 🔧 MEJORAR DETECCIÓN DE REINTEGROS
+    const description = transaction.description?.toLowerCase() || '';
+  
+  // Verificar si es reintegro por múltiples criterios
+   const isRefund = transaction.type === 'refund' || 
+                  transaction.category === 'refund' ||
+                  description.includes('reintegro') ||
+                  description.includes('devolución') ||
+                  description.includes('devolucion') ||
+                  description.includes('cancelación') ||
+                  description.includes('cancelacion') ||
+                  (transaction.amount < 0 && (
+                    transaction.type === 'refund' || 
+                    transaction.category === 'refund' ||
+                    description.includes('reintegro')
+                  ));
+  
+  if (isRefund) {
     return 'refund';
   }
   
-  // Luego verificar gastos
-  if (transaction.type === 'expense' || 
-      transaction.category === 'expense' ||
-      transaction.category === 'withdrawal' ||
-      transaction.amount < 0) {
+  const isExpense = transaction.type === 'expense' || 
+                   transaction.category === 'expense' ||
+                   transaction.category === 'withdrawal' ||
+                   (transaction.amount < 0 && !isRefund);
+  
+  if (isExpense) {
     return 'expense';
   }
   
-  // Por defecto, es ingreso
   return 'income';
 };
 
-// 🆕 FUNCIÓN HELPER CORREGIDA: Obtener información de display para transacciones
+// 🔧 FUNCIÓN HELPER CORREGIDA: Obtener información de display para transacciones
 export const getTransactionDisplayInfo = (transaction: Transaction) => {
   const type = getTransactionType(transaction);
   
-  // 🔍 DEBUG para reintegros
+  // 🔍 DEBUG para reintegros con más detalles
   if (type === 'refund') {
     console.log('🔍 DETECTANDO TRANSACCIÓN DE REINTEGRO:', {
       id: transaction.id,
       type: transaction.type,
       category: transaction.category,
       amount: transaction.amount,
-      description: transaction.description?.substring(0, 50) + '...'
+      description: transaction.description?.substring(0, 50) + '...',
+      createdAt: transaction.createdAt,
+      date: transaction.date
     });
   }
   
@@ -124,7 +142,8 @@ export const getTransactionDisplayInfo = (transaction: Transaction) => {
       isRefund,
       isExpense,
       isIncome,
-      displayAmount: Math.abs(transaction.amount)
+      displayAmount: Math.abs(transaction.amount),
+      originalAmount: transaction.amount
     });
   }
   
@@ -133,6 +152,7 @@ export const getTransactionDisplayInfo = (transaction: Transaction) => {
     isIncome,
     isExpense,
     displayAmount: Math.abs(transaction.amount),
+    originalAmount: transaction.amount,
     type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
   };
 };
@@ -184,13 +204,13 @@ export class FinancialService {
           type: 'income',
           category: 'membership',
           amount: paymentData.amount,
-          description: `Pago de membresía: ${membershipData.membershipName} para ${memberData.firstName} ${memberData.lastName}`,
+          description: `Pago membresía ${membershipData.membershipName || 'Musculacion'} (${membershipData.startDate} - ${membershipData.endDate}) - $ ${paymentData.amount} de ${memberData.firstName} ${memberData.lastName}`,
           memberId: membershipData.memberId,
           memberName: `${memberData.firstName} ${memberData.lastName}`,
           paymentMethod: paymentData.paymentMethod,
           date: Timestamp.now(),
           userId: paymentData.processedBy,
-          userName: memberData.firstName, // Se puede mejorar
+          userName: memberData.firstName,
           status: 'completed',
           notes: paymentData.notes,
           createdAt: Timestamp.now()
@@ -229,7 +249,7 @@ export class FinancialService {
           const cashData = cashRegisterSnap.data();
           transaction.update(cashRegisterRef, {
             totalIncome: (cashData.totalIncome || 0) + paymentData.amount,
-            membershipIncome: (cashData.membershipIncome || 0) + paymentData.amount, // Para compatibilidad
+            membershipIncome: (cashData.membershipIncome || 0) + paymentData.amount,
             lastUpdated: Timestamp.now()
           });
         } else {
@@ -237,16 +257,16 @@ export class FinancialService {
             gymId,
             date: today,
             openingBalance: 0,
-            openingAmount: 0, // Para compatibilidad
+            openingAmount: 0,
             totalIncome: paymentData.amount,
             totalExpenses: 0,
-            totalExpense: 0, // Para compatibilidad
-            membershipIncome: paymentData.amount, // Para compatibilidad
-            otherIncome: 0, // Para compatibilidad
+            totalExpense: 0,
+            membershipIncome: paymentData.amount,
+            otherIncome: 0,
             status: 'open',
             openedBy: paymentData.processedBy,
             openedAt: Timestamp.now(),
-            openingTime: Timestamp.now(), // Para compatibilidad
+            openingTime: Timestamp.now(),
             lastUpdated: Timestamp.now()
           };
           transaction.set(cashRegisterRef, newCashRegister);
@@ -269,7 +289,7 @@ export class FinancialService {
   // ============ DEVOLUCIONES ============
   
   /**
-   * Procesa una devolución por cancelación de membresía - VERSIÓN COMPATIBLE
+   * 🔧 PROCESA DEVOLUCIONES CORREGIDAS - Versión compatible
    */
   static async processRefund(
     gymId: string,
@@ -294,23 +314,23 @@ export class FinancialService {
         const originalTransaction = originalTransactionSnap.data() as Transaction;
         const today = getCurrentDateInArgentina();
         
-        // 2. Crear registro de devolución COMPATIBLE
+        // 2. 🔧 CREAR REGISTRO DE DEVOLUCIÓN CON CAMPOS CORRECTOS
         const refundTransactionRef = doc(collection(db, `gyms/${gymId}/transactions`));
         const refundTransactionCompat: Partial<Transaction> = normalizeTransactionForLegacy({
           gymId,
-          type: 'refund', // 🆕 TIPO CORRECTO PARA REINTEGROS
-          category: 'refund', // 🆕 CATEGORÍA CORRECTA
-          amount: -Math.abs(refundData.amount), // 🆕 MONTO NEGATIVO PARA GASTOS
-          description: `Reintegro: ${refundData.reason} - ${originalTransaction.description}`,
+          type: 'refund', // 🔧 TIPO CORRECTO
+          category: 'refund', // 🔧 CATEGORÍA CORRECTA
+          amount: -Math.abs(refundData.amount), // 🔧 MONTO NEGATIVO
+          description: `Reintegro por cancelación de membresía: ${originalTransaction.description?.replace('Pago membresía', '').replace('Pago de membresía', '').trim()}`,
           memberId: originalTransaction.memberId,
           memberName: originalTransaction.memberName,
           originalTransactionId: originalTransactionId,
           date: Timestamp.now(),
           userId: refundData.processedBy,
-          userName: 'Sistema', // Se puede mejorar
-          paymentMethod: originalTransaction.paymentMethod,
+          userName: 'Sistema',
+          paymentMethod: originalTransaction.paymentMethod || 'cash',
           status: 'completed',
-          notes: refundData.notes,
+          notes: `Reintegro por cancelación de membresía ID: ${originalTransactionId}`,
           createdAt: Timestamp.now()
         });
         
@@ -326,12 +346,12 @@ export class FinancialService {
           refundReason: refundData.reason
         });
         
-        // 5. Actualizar caja diaria COMPATIBLE
+        // 5. 🔧 ACTUALIZAR CAJA DIARIA - Los reintegros van a totalExpenses
         if (cashRegisterSnap.exists()) {
           const cashData = cashRegisterSnap.data();
           transaction.update(cashRegisterRef, {
             totalExpenses: (cashData.totalExpenses || 0) + refundData.amount,
-            totalExpense: (cashData.totalExpense || 0) + refundData.amount, // Para compatibilidad
+            totalExpense: (cashData.totalExpense || 0) + refundData.amount,
             lastUpdated: Timestamp.now()
           });
         } else {
@@ -339,14 +359,14 @@ export class FinancialService {
             gymId,
             date: today,
             openingBalance: 0,
-            openingAmount: 0, // Para compatibilidad
+            openingAmount: 0,
             totalIncome: 0,
             totalExpenses: refundData.amount,
-            totalExpense: refundData.amount, // Para compatibilidad
+            totalExpense: refundData.amount,
             status: 'open',
             openedBy: refundData.processedBy,
             openedAt: Timestamp.now(),
-            openingTime: Timestamp.now(), // Para compatibilidad
+            openingTime: Timestamp.now(),
             lastUpdated: Timestamp.now()
           };
           transaction.set(cashRegisterRef, newCashRegister);
@@ -369,7 +389,7 @@ export class FinancialService {
   // ============ CONSULTAS Y REPORTES ============
   
   /**
-   * 🔧 OBTIENE EL RESUMEN DE CAJA DIARIA CON TIMEZONE ARGENTINA Y CLASIFICACIÓN CORREGIDA
+   * 🔧 FUNCIÓN PRINCIPAL CORREGIDA: getDailyCashSummary
    */
   static async getDailyCashSummary(
     gymId: string,
@@ -438,7 +458,7 @@ export class FinancialService {
       console.log(`💰 Transacciones encontradas para ${date} (consulta combinada):`, transactions.length);
       console.log('🔍 EJECUTANDO CONSULTAS COMBINADAS (createdAt + date)');
       
-      // 🔧 AGREGAR LOG ESPECÍFICO PARA REINTEGROS
+      // 🔧 LOG ESPECÍFICO PARA REINTEGROS CON MÁS DETALLE
       const refundTransactions = transactions.filter(t => 
         t.type === 'refund' || t.category === 'refund' || 
         t.description?.toLowerCase().includes('reintegro')
@@ -448,11 +468,12 @@ export class FinancialService {
         console.log(`🔄 REINTEGROS ENCONTRADOS EN RESUMEN DIARIO:`, {
           total: refundTransactions.length,
           amounts: refundTransactions.map(t => t.amount),
-          ids: refundTransactions.map(t => t.id)
+          ids: refundTransactions.map(t => t.id),
+          descriptions: refundTransactions.map(t => t.description?.substring(0, 30))
         });
       }
       
-      // 🆕 CLASIFICACIÓN CORREGIDA DE TRANSACCIONES
+      // 🔧 CLASIFICACIÓN CORREGIDA DE TRANSACCIONES
       let totalIncome = 0;
       let totalExpenses = 0;
       let pendingPayments = 0;
@@ -466,15 +487,16 @@ export class FinancialService {
           type: transaction.type,
           category: transaction.category,
           status: transaction.status,
-          description: transaction.description?.substring(0, 30) + '...'
+          description: transaction.description?.substring(0, 50) + '...'
         });
         
         if (transaction.status === 'completed') {
-          // 🆕 USAR FUNCIÓN DE CLASIFICACIÓN CORREGIDA
+          // 🔧 USAR FUNCIÓN DE CLASIFICACIÓN CORREGIDA
           const transactionType = getTransactionType(transaction);
           const amount = Math.abs(transaction.amount);
           
           if (transactionType === 'refund') {
+            // 🔧 CAMBIO CRÍTICO: Los reintegros van a totalExpenses pero también se trackean separadamente
             totalExpenses += amount;
             refunds += amount;
             console.log(`🔄 Reintegro detectado: -$${amount}`);
@@ -482,7 +504,7 @@ export class FinancialService {
             totalIncome += amount;
             console.log(`✅ Ingreso detectado: +$${amount}`);
             
-            // Agregar al breakdown por método de pago
+            // 🔧 AGREGAR AL BREAKDOWN POR MÉTODO DE PAGO (solo ingresos reales)
             const method = transaction.paymentMethod || 'other';
             if (!paymentMethodBreakdown[method]) {
               paymentMethodBreakdown[method] = {
@@ -502,17 +524,31 @@ export class FinancialService {
         }
       });
       
+      // 🔧 CALCULAR NETO CORRECTAMENTE
+      const netAmount = totalIncome - totalExpenses;
+      
       const summary: DailyCashSummary = {
         date,
         totalIncome,
         totalExpenses,
-        netAmount: totalIncome - totalExpenses,
+        netAmount,
         paymentBreakdown: Object.values(paymentMethodBreakdown),
         pendingPayments,
         refunds
       };
       
       console.log('📊 Resumen calculado para ' + date + ':', summary);
+      
+      // 🔧 VALIDACIÓN FINAL
+      if (refunds > 0) {
+        console.log('🔍 VALIDACIÓN FINAL:', {
+          ingresosReales: totalIncome,
+          reintegros: refunds,
+          gastosOperativos: totalExpenses - refunds,
+          netoCalculado: netAmount,
+          desglosePagos: Object.values(paymentMethodBreakdown).length
+        });
+      }
       
       return summary;
       
@@ -530,25 +566,56 @@ export class FinancialService {
     date: string
   ): Promise<Transaction[]> {
     try {
+      console.log(`🔍 Obteniendo transacciones para fecha: ${date}`);
+      
       const { start: startOfDay, end: endOfDay } = getArgentinianDayRange(date);
       
+      console.log(`📅 Rango de consulta:`, {
+        startOfDay: startOfDay.toDate(),
+        endOfDay: endOfDay.toDate()
+      });
+      
       const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-      const q = query(
+      
+      // 🔧 USAR CONSULTA COMBINADA TAMBIÉN AQUÍ
+      const q1 = query(
         transactionsRef,
         where('createdAt', '>=', startOfDay),
         where('createdAt', '<=', endOfDay),
         orderBy('createdAt', 'desc')
       );
       
-      const querySnapshot = await getDocs(q);
+      const q2 = query(
+        transactionsRef,
+        where('date', '>=', startOfDay),
+        where('date', '<=', endOfDay),
+        orderBy('date', 'desc')
+      );
       
-      const transactions: Transaction[] = [];
-      querySnapshot.forEach(doc => {
-        transactions.push({
+      const [snap1, snap2] = await Promise.all([
+        getDocs(q1),
+        getDocs(q2)
+      ]);
+      
+      const transactionMap = new Map();
+      
+      snap1.forEach(doc => {
+        transactionMap.set(doc.id, {
           id: doc.id,
           ...doc.data()
         } as Transaction);
       });
+      
+      snap2.forEach(doc => {
+        transactionMap.set(doc.id, {
+          id: doc.id,
+          ...doc.data()
+        } as Transaction);
+      });
+      
+      const transactions = Array.from(transactionMap.values());
+      
+      console.log(`📊 Transacciones encontradas (createdAt): ${transactions.length}`);
       
       return transactions;
     } catch (error) {
@@ -635,10 +702,10 @@ export class FinancialService {
       await updateDoc(dailyCashRef, {
         status: 'closed',
         closingBalance: closingData.closingBalance,
-        closingAmount: closingData.closingBalance, // Para compatibilidad
+        closingAmount: closingData.closingBalance,
         closedBy: closingData.closedBy,
         closedAt: Timestamp.now(),
-        closingTime: Timestamp.now(), // Para compatibilidad
+        closingTime: Timestamp.now(),
         notes: closingData.notes || '',
         lastUpdated: Timestamp.now()
       });
@@ -685,7 +752,7 @@ export class FinancialService {
   // ============ RESUMEN MENSUAL ============
   
   /**
-   * 🆕 FUNCIÓN: Obtener resumen mensual con clasificación corregida
+   * 🔧 FUNCIÓN CORREGIDA: Obtener resumen mensual con clasificación correcta
    */
   static async getMonthlyFinancialSummary(gymId: string, year: number, month: number) {
     try {
@@ -709,6 +776,7 @@ export class FinancialService {
       let totalExpenses = 0;
       let membershipIncome = 0;
       let refundAmount = 0;
+      let operationalExpenses = 0; // 🔧 SEPARAR GASTOS OPERATIVOS
       
       querySnapshot.forEach(doc => {
         const transaction = doc.data() as Transaction;
@@ -727,20 +795,240 @@ export class FinancialService {
             }
           } else if (type === 'expense') {
             totalExpenses += amount;
+            operationalExpenses += amount; // 🔧 SEPARAR GASTOS OPERATIVOS
           }
         }
       });
       
-      return {
+              return {
         totalIncome,
         totalExpenses,
         membershipIncome,
         refundAmount,
+        operationalExpenses, // 🔧 GASTOS OPERATIVOS SIN REINTEGROS
         netAmount: totalIncome - totalExpenses,
         transactionCount: querySnapshot.size
       };
     } catch (error) {
       console.error('Error getting monthly summary:', error);
+      throw error;
+    }
+  }
+  
+  // ============ MÉTODOS ADICIONALES PARA DEBUGGING ============
+  
+ /**
+ * 🔧 MÉTODO DE VALIDACIÓN CORREGIDO: Verificar consistencia de datos
+ */
+static async validateDailyConsistency(
+  gymId: string,
+  date: string
+): Promise<{
+  isConsistent: boolean;
+  cashRegister: any;
+  calculatedSummary: DailyCashSummary | null;
+  differences: any;
+}> {
+  try {
+    console.log(`🔍 VALIDANDO CONSISTENCIA PARA ${date}`);
+    
+    // 1. 🔧 CORREGIR: Obtener registro de caja diaria correctamente
+    const cashRegisterDoc = doc(db, `gyms/${gymId}/dailyCash`, date);
+    const cashRegisterSnap = await getDoc(cashRegisterDoc);
+    
+    let cashRegister = null;
+    if (cashRegisterSnap.exists()) {
+      cashRegister = { 
+        id: cashRegisterSnap.id, 
+        ...(cashRegisterSnap.data() as any)
+      };
+    }
+    
+    // 2. Calcular resumen basado en transacciones
+    const calculatedSummary = await this.getDailyCashSummary(gymId, date);
+    
+    // 3. 🔧 CORREGIR: Comparar valores con validación de propiedades
+    const differences = {
+      income: cashRegister && cashRegister.totalIncome !== undefined 
+        ? cashRegister.totalIncome - (calculatedSummary?.totalIncome || 0) 
+        : 0,
+      expenses: cashRegister && cashRegister.totalExpenses !== undefined 
+        ? cashRegister.totalExpenses - (calculatedSummary?.totalExpenses || 0) 
+        : 0,
+      refunds: (calculatedSummary?.refunds || 0)
+    };
+    
+    const isConsistent = Math.abs(differences.income) < 0.01 && Math.abs(differences.expenses) < 0.01;
+    
+    console.log(`📊 RESULTADO VALIDACIÓN:`, {
+      isConsistent,
+      cashRegister: cashRegister ? {
+        totalIncome: cashRegister.totalIncome || 0,
+        totalExpenses: cashRegister.totalExpenses || 0
+      } : null,
+      calculatedSummary: calculatedSummary ? {
+        totalIncome: calculatedSummary.totalIncome,
+        totalExpenses: calculatedSummary.totalExpenses,
+        refunds: calculatedSummary.refunds
+      } : null,
+      differences
+    });
+    
+    return {
+      isConsistent,
+      cashRegister,
+      calculatedSummary,
+      differences
+    };
+  } catch (error) {
+    console.error('Error validating daily consistency:', error);
+    throw error;
+  }
+}
+
+  
+  /**
+   * 🔧 MÉTODO DE DEBUGGING: Obtener breakdown detallado de transacciones
+   */
+  static async getDetailedTransactionBreakdown(
+    gymId: string,
+    date: string
+  ): Promise<{
+    totalTransactions: number;
+    incomeTransactions: Transaction[];
+    expenseTransactions: Transaction[];
+    refundTransactions: Transaction[];
+    pendingTransactions: Transaction[];
+    summary: {
+      totalIncome: number;
+      totalExpenses: number;
+      totalRefunds: number;
+      totalPending: number;
+    };
+  }> {
+    try {
+      const transactions = await this.getDayTransactions(gymId, date);
+      
+      const incomeTransactions: Transaction[] = [];
+      const expenseTransactions: Transaction[] = [];
+      const refundTransactions: Transaction[] = [];
+      const pendingTransactions: Transaction[] = [];
+      
+      let totalIncome = 0;
+      let totalExpenses = 0;
+      let totalRefunds = 0;
+      let totalPending = 0;
+      
+      transactions.forEach(transaction => {
+        const type = getTransactionType(transaction);
+        const amount = Math.abs(transaction.amount);
+        
+        if (transaction.status === 'pending') {
+          pendingTransactions.push(transaction);
+          totalPending += amount;
+        } else if (transaction.status === 'completed') {
+          if (type === 'refund') {
+            refundTransactions.push(transaction);
+            totalRefunds += amount;
+          } else if (type === 'income') {
+            incomeTransactions.push(transaction);
+            totalIncome += amount;
+          } else if (type === 'expense') {
+            expenseTransactions.push(transaction);
+            totalExpenses += amount;
+          }
+        }
+      });
+      
+      console.log(`📊 BREAKDOWN DETALLADO PARA ${date}:`, {
+        totalTransactions: transactions.length,
+        income: { count: incomeTransactions.length, total: totalIncome },
+        expenses: { count: expenseTransactions.length, total: totalExpenses },
+        refunds: { count: refundTransactions.length, total: totalRefunds },
+        pending: { count: pendingTransactions.length, total: totalPending }
+      });
+      
+      return {
+        totalTransactions: transactions.length,
+        incomeTransactions,
+        expenseTransactions,
+        refundTransactions,
+        pendingTransactions,
+        summary: {
+          totalIncome,
+          totalExpenses,
+          totalRefunds,
+          totalPending
+        }
+      };
+    } catch (error) {
+      console.error('Error getting detailed breakdown:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 🔧 MÉTODO UTILITARIO: Reclasificar transacciones existentes (usar con cuidado)
+   */
+  static async reclassifyTransactions(
+    gymId: string,
+    date: string,
+    dryRun: boolean = true
+  ): Promise<{
+    transactionsToUpdate: any[];
+    summary: string;
+  }> {
+    try {
+      console.log(`🔧 ${dryRun ? 'SIMULANDO' : 'EJECUTANDO'} RECLASIFICACIÓN PARA ${date}`);
+      
+      const transactions = await this.getDayTransactions(gymId, date);
+      const transactionsToUpdate: any[] = [];
+      
+      transactions.forEach(transaction => {
+        const currentType = transaction.type;
+        const correctType = getTransactionType(transaction);
+        
+        if (currentType !== correctType) {
+          transactionsToUpdate.push({
+            id: transaction.id,
+            currentType,
+            correctType,
+            amount: transaction.amount,
+            description: transaction.description?.substring(0, 50) + '...'
+          });
+        }
+      });
+      
+      if (!dryRun && transactionsToUpdate.length > 0) {
+        const batch = writeBatch(db);
+        
+        transactionsToUpdate.forEach(({ id, correctType }) => {
+          const transactionRef = doc(db, `gyms/${gymId}/transactions`, id);
+          batch.update(transactionRef, {
+            type: correctType,
+            category: correctType,
+            updatedAt: Timestamp.now()
+          });
+        });
+        
+        await batch.commit();
+        console.log(`✅ ${transactionsToUpdate.length} transacciones reclasificadas`);
+      }
+      
+      const summary = `${transactionsToUpdate.length} transacciones necesitan reclasificación`;
+      
+      console.log(`📊 RESULTADO RECLASIFICACIÓN:`, {
+        found: transactionsToUpdate.length,
+        dryRun,
+        transactionsToUpdate: transactionsToUpdate.slice(0, 5) // Solo primeras 5 para log
+      });
+      
+      return {
+        transactionsToUpdate,
+        summary
+      };
+    } catch (error) {
+      console.error('Error reclassifying transactions:', error);
       throw error;
     }
   }
@@ -753,6 +1041,19 @@ export const calculateDailySummary = async (gymId: string, dateString: string) =
 
 export const getDayTransactions = async (gymId: string, dateString: string): Promise<Transaction[]> => {
   return await FinancialService.getDayTransactions(gymId, dateString);
+};
+
+// 🔧 NUEVAS FUNCIONES UTILITARIAS EXPORTADAS
+export const validateDailyConsistency = async (gymId: string, dateString: string) => {
+  return await FinancialService.validateDailyConsistency(gymId, dateString);
+};
+
+export const getDetailedTransactionBreakdown = async (gymId: string, dateString: string) => {
+  return await FinancialService.getDetailedTransactionBreakdown(gymId, dateString);
+};
+
+export const reclassifyTransactions = async (gymId: string, dateString: string, dryRun: boolean = true) => {
+  return await FinancialService.reclassifyTransactions(gymId, dateString, dryRun);
 };
 
 export default FinancialService;
