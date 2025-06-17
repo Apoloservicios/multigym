@@ -1,7 +1,7 @@
 // src/components/memberships/AutoRenewalDashboard.tsx
-// 🆕 DASHBOARD MEJORADO con orden de componentes corregido
+// 🆕 DASHBOARD MEJORADO con progreso REAL conectado al servicio
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   RefreshCw, 
   Calendar, 
@@ -16,16 +16,20 @@ import {
   Eye,
   RotateCcw,
   AlertTriangle,
-  History
+  History,
+  X,
+  Zap,
+  Timer,
+  Activity
 } from 'lucide-react';
 import { MembershipAssignment } from '../../types/member.types';
 import { 
   getUpcomingAutoRenewals, 
   processExpiredMemberships,
   getMembershipExpirationStats,
-  getExpiredAutoRenewals // Nueva función que crearemos
+  getExpiredAutoRenewals
 } from '../../services/membershipExpiration.service';
-import { renewSingleMembership } from '../../services/membershipAutoRenewal.service'; // Nueva función
+import { renewSingleMembership } from '../../services/membershipAutoRenewal.service';
 import useAuth from '../../hooks/useAuth';
 
 interface AutoRenewalStats {
@@ -44,9 +48,127 @@ interface ProcessResult {
   errors: string[];
 }
 
-// 🔧 COMPONENTES DECLARADOS ANTES DEL COMPONENTE PRINCIPAL
+// 🆕 NUEVO: Interface para progreso del proceso
+interface ProcessProgress {
+  current: number;
+  total: number;
+  stage: 'preparing' | 'processing' | 'completing' | 'done';
+  currentItem: string;
+  estimatedTimeRemaining: number;
+}
 
-// Componente para la tabla de renovaciones
+// 🔧 COMPONENTE MEJORADO: Barra de progreso con detalles
+const ProgressBar: React.FC<{
+  progress: ProcessProgress;
+  onCancel: () => void;
+  showCancel: boolean;
+}> = ({ progress, onCancel, showCancel }) => {
+  const percentage = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
+  
+  const formatTime = (seconds: number) => {
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    return `${minutes}m ${remainingSeconds}s`;
+  };
+
+  const getStageText = (stage: string) => {
+    switch (stage) {
+      case 'preparing': return 'Preparando proceso...';
+      case 'processing': return 'Procesando renovaciones...';
+      case 'completing': return 'Finalizando...';
+      case 'done': return 'Proceso completado';
+      default: return 'Procesando...';
+    }
+  };
+
+  return (
+    <div className="bg-white border-l-4 border-blue-500 rounded-lg shadow-lg p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center">
+          <div className="bg-blue-100 p-2 rounded-full mr-3">
+            <Zap size={20} className="text-blue-600 animate-pulse" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900">
+              Proceso de Renovación en Curso
+            </h3>
+            <p className="text-sm text-gray-600">
+              {getStageText(progress.stage)}
+            </p>
+          </div>
+        </div>
+        
+        {showCancel && (
+          <button
+            onClick={onCancel}
+            className="flex items-center px-3 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
+          >
+            <X size={16} className="mr-1" />
+            Cancelar
+          </button>
+        )}
+      </div>
+
+      {/* Barra de progreso principal */}
+      <div className="mb-4">
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-sm font-medium text-gray-700">
+            Progreso: {progress.current} de {progress.total}
+          </span>
+          <span className="text-sm text-gray-500">
+            {Math.round(percentage)}%
+          </span>
+        </div>
+        
+        <div className="w-full bg-gray-200 rounded-full h-3">
+          <div
+            className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-300 ease-out relative overflow-hidden"
+            style={{ width: `${percentage}%` }}
+          >
+            {/* Animación de brillo */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 transform -skew-x-12 animate-pulse"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Información detallada */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+        <div className="flex items-center">
+          <Activity size={16} className="text-gray-400 mr-2" />
+          <div>
+            <span className="text-gray-500">Procesando:</span>
+            <p className="font-medium text-gray-900 truncate">
+              {progress.currentItem || 'Preparando...'}
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex items-center">
+          <Timer size={16} className="text-gray-400 mr-2" />
+          <div>
+            <span className="text-gray-500">Tiempo estimado:</span>
+            <p className="font-medium text-gray-900">
+              {formatTime(progress.estimatedTimeRemaining)}
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex items-center">
+          <Clock size={16} className="text-gray-400 mr-2" />
+          <div>
+            <span className="text-gray-500">Estado:</span>
+            <p className="font-medium text-blue-600">
+              {getStageText(progress.stage)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Componente para la tabla de renovaciones (igual que antes)
 const RenewalTable: React.FC<{
   memberships: MembershipAssignment[];
   onRenewIndividual: (membership: MembershipAssignment) => void;
@@ -189,7 +311,7 @@ const RenewalTable: React.FC<{
   );
 };
 
-// Componente para el historial de procesos
+// Componente para el historial de procesos (igual que antes)
 const ProcessHistoryCard: React.FC<{ process: any }> = ({ process }) => {
   const formatDateTime = (date: Date) => {
     return date.toLocaleString('es-AR');
@@ -259,7 +381,7 @@ const ProcessHistoryCard: React.FC<{ process: any }> = ({ process }) => {
   );
 };
 
-// 🔧 COMPONENTE PRINCIPAL DECLARADO DESPUÉS DE LOS COMPONENTES AUXILIARES
+// 🔧 COMPONENTE PRINCIPAL MEJORADO
 const AutoRenewalDashboard: React.FC = () => {
   const { gymData } = useAuth();
   
@@ -269,11 +391,26 @@ const AutoRenewalDashboard: React.FC = () => {
   const [processHistory, setProcessHistory] = useState<ProcessResult[]>([]);
   const [stats, setStats] = useState<AutoRenewalStats | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  // 🆕 NUEVO: Estados para loading con progreso
+  const [loadingProgress, setLoadingProgress] = useState<{
+    current: number;
+    total: number;
+    currentTask: string;
+  }>({ current: 0, total: 5, currentTask: 'Inicializando...' });
   const [processing, setProcessing] = useState<boolean>(false);
   const [processingIndividual, setProcessingIndividual] = useState<string | null>(null);
   const [lastProcessed, setLastProcessed] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  // 🆕 NUEVOS ESTADOS para progreso y cancelación
+  const [processProgress, setProcessProgress] = useState<ProcessProgress | null>(null);
+  const [cancelRequested, setCancelRequested] = useState<boolean>(false);
+  const [showProgress, setShowProgress] = useState<boolean>(false);
+  const [processStartTime, setProcessStartTime] = useState<Date | null>(null);
+
+  // Refs para control de cancelación
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -282,6 +419,15 @@ const AutoRenewalDashboard: React.FC = () => {
     }
   }, [gymData?.id]);
 
+  // Limpiar al desmontar
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   const loadDashboardData = async () => {
     if (!gymData?.id) return;
     
@@ -289,22 +435,42 @@ const AutoRenewalDashboard: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      // Cargar todos los datos en paralelo
-      const [upcoming, expired, statistics] = await Promise.all([
-        getUpcomingAutoRenewals(gymData.id, 14), // Próximos 14 días
-        getExpiredAutoRenewals(gymData.id), // Nueva función para vencidas
-        getMembershipExpirationStats(gymData.id)
-      ]);
+      // 🆕 NUEVO: Progreso de carga paso a paso
+      const updateLoadingProgress = (current: number, task: string) => {
+        setLoadingProgress({ current, total: 5, currentTask: task });
+      };
       
+      // Paso 1: Cargar próximas renovaciones
+      updateLoadingProgress(1, 'Cargando próximas renovaciones...');
+      const upcoming = await getUpcomingAutoRenewals(gymData.id, 14);
+      
+      // Paso 2: Cargar renovaciones vencidas
+      updateLoadingProgress(2, 'Cargando renovaciones vencidas...');
+      const expired = await getExpiredAutoRenewals(gymData.id);
+      
+      // Paso 3: Cargar estadísticas
+      updateLoadingProgress(3, 'Calculando estadísticas...');
+      const statistics = await getMembershipExpirationStats(gymData.id);
+      
+      // Paso 4: Cargar historial
+      updateLoadingProgress(4, 'Cargando historial de procesos...');
+      const savedHistory = localStorage.getItem(`renewalHistory_${gymData.id}`);
+      let historyData = [];
+      if (savedHistory) {
+        historyData = JSON.parse(savedHistory);
+      }
+      
+      // Paso 5: Finalizar
+      updateLoadingProgress(5, 'Finalizando carga...');
+      
+      // Establecer todos los datos
       setUpcomingRenewals(upcoming);
       setExpiredRenewals(expired);
       setStats(statistics);
+      setProcessHistory(historyData);
       
-      // Cargar historial desde localStorage
-      const savedHistory = localStorage.getItem(`renewalHistory_${gymData.id}`);
-      if (savedHistory) {
-        setProcessHistory(JSON.parse(savedHistory));
-      }
+      // Pequeño delay para mostrar "Finalizando carga..."
+      await new Promise(resolve => setTimeout(resolve, 500));
       
     } catch (err: any) {
       console.error('Error cargando dashboard:', err);
@@ -314,51 +480,164 @@ const AutoRenewalDashboard: React.FC = () => {
     }
   };
 
-  const processAllRenewals = async () => {
-    if (!gymData?.id) return;
+  // 🆕 NUEVA FUNCIÓN: Actualizar progreso
+  const updateProgress = (current: number, total: number, currentItem: string, stage: 'preparing' | 'processing' | 'completing' | 'done') => {
+    if (cancelRequested) return;
+    
+    const elapsed = (Date.now() - (processStartTime?.getTime() || Date.now())) / 1000;
+    const itemsPerSecond = current / Math.max(elapsed, 1);
+    const remainingItems = Math.max(0, total - current);
+    const estimatedTimeRemaining = remainingItems / Math.max(itemsPerSecond, 0.1);
+    
+    setProcessProgress({
+      current,
+      total,
+      stage,
+      currentItem,
+      estimatedTimeRemaining
+    });
+  };
+
+  // 🆕 NUEVA FUNCIÓN: Cancelar proceso
+  const cancelProcess = () => {
+    setCancelRequested(true);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setProcessing(false);
+    setShowProgress(false);
+    setProcessProgress(null);
+    setError('Proceso cancelado por el usuario');
+  };
+
+  // 🔄 FUNCIÓN COMPLETAMENTE NUEVA: Procesar renovaciones con progreso REAL
+  const processAllRenewalsWithProgress = async () => {
+    if (!gymData?.id || expiredRenewals.length === 0) return;
     
     try {
       setProcessing(true);
       setError(null);
       setSuccess(null);
+      setShowProgress(true);
+      setProcessStartTime(new Date());
+      setCancelRequested(false);
       
-      console.log('🚀 Iniciando proceso masivo de renovaciones...');
+      // Crear AbortController para cancelación
+      abortControllerRef.current = new AbortController();
       
-      const result = await processExpiredMemberships(gymData.id);
+      console.log('🚀 Iniciando proceso paso a paso de renovaciones...');
       
-      if (result.success) {
-        const renewedCount = result.renewedMemberships?.length || 0;
-        const expiredCount = result.expiredMemberships?.length || 0;
-        
-        setSuccess(`Proceso completado exitosamente:
-        • ${renewedCount} membresías renovadas automáticamente
-        • ${expiredCount} membresías expiradas
-        ${result.errors.length > 0 ? `• ${result.errors.length} errores encontrados` : ''}`);
-        
-        setLastProcessed(new Date());
-        
-        // Guardar en historial
-        const newHistoryEntry: ProcessResult = {
-          ...result,
-          timestamp: new Date()
-        } as any;
-        
-        const updatedHistory = [newHistoryEntry, ...processHistory].slice(0, 10); // Mantener últimos 10
-        setProcessHistory(updatedHistory);
-        localStorage.setItem(`renewalHistory_${gymData.id}`, JSON.stringify(updatedHistory));
-        
-        // Recargar datos
-        await loadDashboardData();
-        
-      } else {
-        setError(`Error en el proceso: ${result.errors.join(', ')}`);
+      const totalItems = expiredRenewals.length;
+      let processedCount = 0;
+      const renewedMemberships: MembershipAssignment[] = [];
+      const processedExpired: MembershipAssignment[] = [];
+      const errors: string[] = [];
+      
+      // Fase 1: Preparación
+      updateProgress(0, totalItems, 'Inicializando proceso...', 'preparing');
+      
+      // Pequeño delay para mostrar la preparación
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      if (cancelRequested) {
+        throw new Error('Proceso cancelado');
       }
+      
+      // Fase 2: Procesar cada membresía individualmente
+      for (const membership of expiredRenewals) {
+        if (cancelRequested) {
+          throw new Error('Proceso cancelado');
+        }
+        
+        try {
+          processedCount++;
+          updateProgress(
+            processedCount, 
+            totalItems, 
+            `${membership.memberName} - ${membership.activityName}`, 
+            'processing'
+          );
+          
+          // Llamar al servicio de renovación individual
+          if (membership.id && membership.memberId) {
+            await renewSingleMembership(gymData.id, membership.memberId, membership.id);
+            renewedMemberships.push(membership);
+            console.log(`✅ Renovada: ${membership.memberName} - ${membership.activityName}`);
+          } else {
+            throw new Error('Datos de membresía incompletos');
+          }
+          
+          // Delay pequeño para simular procesamiento real y mostrar progreso
+          await new Promise(resolve => setTimeout(resolve, 300));
+          
+        } catch (err: any) {
+          console.error(`❌ Error renovando ${membership.memberName}:`, err);
+          errors.push(`${membership.memberName}: ${err.message}`);
+          processedExpired.push(membership);
+        }
+      }
+      
+      // Verificar cancelación antes de finalizar
+      if (cancelRequested) {
+        throw new Error('Proceso cancelado');
+      }
+      
+      // Fase 3: Finalizando
+      updateProgress(totalItems, totalItems, 'Finalizando proceso...', 'completing');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Fase 4: Completado
+      updateProgress(totalItems, totalItems, 'Proceso completado', 'done');
+      
+      // Crear resultado
+      const result: ProcessResult = {
+        success: true,
+        renewedMemberships,
+        expiredMemberships: processedExpired,
+        errors
+      };
+      
+      const renewedCount = renewedMemberships.length;
+      const expiredCount = processedExpired.length;
+      
+      setSuccess(`Proceso completado exitosamente:
+      • ${renewedCount} membresías renovadas automáticamente
+      • ${expiredCount} membresías expiradas
+      ${errors.length > 0 ? `• ${errors.length} errores encontrados` : ''}`);
+      
+      setLastProcessed(new Date());
+      
+      // Guardar en historial
+      const newHistoryEntry = {
+        ...result,
+        timestamp: new Date()
+      } as any;
+      
+      const updatedHistory = [newHistoryEntry, ...processHistory].slice(0, 10);
+      setProcessHistory(updatedHistory);
+      localStorage.setItem(`renewalHistory_${gymData.id}`, JSON.stringify(updatedHistory));
+      
+      // Recargar datos
+      await loadDashboardData();
+      
+      // Ocultar progreso después de 2 segundos
+      setTimeout(() => {
+        setShowProgress(false);
+        setProcessProgress(null);
+      }, 2000);
       
     } catch (err: any) {
       console.error('❌ Error procesando renovaciones:', err);
-      setError(err.message || 'Error procesando renovaciones');
+      if (err.message === 'Proceso cancelado') {
+        setError('Proceso cancelado por el usuario');
+      } else {
+        setError(err.message || 'Error procesando renovaciones');
+      }
+      setShowProgress(false);
+      setProcessProgress(null);
     } finally {
       setProcessing(false);
+      setCancelRequested(false);
     }
   };
 
@@ -385,11 +664,104 @@ const AutoRenewalDashboard: React.FC = () => {
   };
 
   if (loading) {
+    const loadingPercentage = (loadingProgress.current / loadingProgress.total) * 100;
+    
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex items-center space-x-2">
-          <RefreshCw className="animate-spin" size={20} />
-          <span>Cargando dashboard...</span>
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
+          <div className="text-center">
+            {/* Icono y título */}
+            <div className="flex justify-center mb-4">
+              <div className="bg-blue-100 p-3 rounded-full">
+                <RefreshCw className="animate-spin h-8 w-8 text-blue-600" />
+              </div>
+            </div>
+            
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              Cargando Dashboard de Renovaciones
+            </h3>
+            
+            <p className="text-sm text-gray-600 mb-6">
+              {loadingProgress.currentTask}
+            </p>
+            
+            {/* Barra de progreso */}
+            <div className="mb-4">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm font-medium text-gray-700">
+                  Paso {loadingProgress.current} de {loadingProgress.total}
+                </span>
+                <span className="text-sm text-gray-500">
+                  {Math.round(loadingPercentage)}%
+                </span>
+              </div>
+              
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-gradient-to-r from-blue-500 to-blue-600 h-2 rounded-full transition-all duration-500 ease-out relative overflow-hidden"
+                  style={{ width: `${loadingPercentage}%` }}
+                >
+                  {/* Animación de brillo */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 transform -skew-x-12 animate-pulse"></div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Pasos del proceso */}
+            <div className="space-y-2 text-xs text-gray-500">
+              <div className={`flex items-center ${loadingProgress.current >= 1 ? 'text-green-600' : 'text-gray-400'}`}>
+                {loadingProgress.current >= 1 ? (
+                  <CheckCircle size={12} className="mr-2" />
+                ) : (
+                  <div className="w-3 h-3 border border-gray-300 rounded-full mr-2"></div>
+                )}
+                Próximas renovaciones
+              </div>
+              
+              <div className={`flex items-center ${loadingProgress.current >= 2 ? 'text-green-600' : 'text-gray-400'}`}>
+                {loadingProgress.current >= 2 ? (
+                  <CheckCircle size={12} className="mr-2" />
+                ) : (
+                  <div className="w-3 h-3 border border-gray-300 rounded-full mr-2"></div>
+                )}
+                Renovaciones vencidas
+              </div>
+              
+              <div className={`flex items-center ${loadingProgress.current >= 3 ? 'text-green-600' : 'text-gray-400'}`}>
+                {loadingProgress.current >= 3 ? (
+                  <CheckCircle size={12} className="mr-2" />
+                ) : (
+                  <div className="w-3 h-3 border border-gray-300 rounded-full mr-2"></div>
+                )}
+                Estadísticas del sistema
+              </div>
+              
+              <div className={`flex items-center ${loadingProgress.current >= 4 ? 'text-green-600' : 'text-gray-400'}`}>
+                {loadingProgress.current >= 4 ? (
+                  <CheckCircle size={12} className="mr-2" />
+                ) : (
+                  <div className="w-3 h-3 border border-gray-300 rounded-full mr-2"></div>
+                )}
+                Historial de procesos
+              </div>
+              
+              <div className={`flex items-center ${loadingProgress.current >= 5 ? 'text-green-600' : 'text-gray-400'}`}>
+                {loadingProgress.current >= 5 ? (
+                  <CheckCircle size={12} className="mr-2" />
+                ) : (
+                  <div className="w-3 h-3 border border-gray-300 rounded-full mr-2"></div>
+                )}
+                Finalizando carga
+              </div>
+            </div>
+            
+            {/* Información adicional */}
+            <div className="mt-6 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-xs text-blue-700">
+                💡 Con muchos socios, este proceso puede tardar unos segundos
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -407,7 +779,7 @@ const AutoRenewalDashboard: React.FC = () => {
         <div className="flex space-x-3">
           <button
             onClick={loadDashboardData}
-            disabled={loading}
+            disabled={loading || processing}
             className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors disabled:opacity-50"
           >
             <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
@@ -415,15 +787,24 @@ const AutoRenewalDashboard: React.FC = () => {
           </button>
           
           <button
-            onClick={processAllRenewals}
-            disabled={processing}
+            onClick={processAllRenewalsWithProgress}
+            disabled={processing || expiredRenewals.length === 0}
             className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
             <Play size={16} className={`mr-2 ${processing ? 'animate-pulse' : ''}`} />
-            {processing ? 'Procesando...' : 'Procesar Masivo'}
+            {processing ? 'Procesando...' : `Procesar ${expiredRenewals.length} Renovaciones`}
           </button>
         </div>
       </div>
+
+      {/* 🆕 NUEVA SECCIÓN: Barra de progreso REAL */}
+      {showProgress && processProgress && (
+        <ProgressBar
+          progress={processProgress}
+          onCancel={cancelProcess}
+          showCancel={processing && !cancelRequested}
+        />
+      )}
 
       {/* Mensajes de estado */}
       {error && (
@@ -507,6 +888,28 @@ const AutoRenewalDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* 🆕 NUEVA SECCIÓN: Info de último proceso */}
+      {lastProcessed && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <Clock className="text-blue-600 mr-3" size={20} />
+            <div>
+              <p className="text-sm font-medium text-blue-800">
+                Último proceso ejecutado
+              </p>
+              <p className="text-sm text-blue-600">
+                {lastProcessed.toLocaleString('es-AR')} • 
+                {processStartTime && (
+                  <span className="ml-1">
+                    Duración: {Math.round((lastProcessed.getTime() - processStartTime.getTime()) / 1000)}s
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Pestañas */}
       <div className="bg-white shadow rounded-lg">
         <div className="border-b border-gray-200">
@@ -553,9 +956,18 @@ const AutoRenewalDashboard: React.FC = () => {
           {/* Pestaña: Próximas Renovaciones */}
           {activeTab === 'upcoming' && (
             <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Próximas Renovaciones Automáticas
-              </h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Próximas Renovaciones Automáticas
+                </h3>
+                {upcomingRenewals.length > 0 && (
+                  <div className="flex items-center text-sm text-gray-500">
+                    <Calendar size={16} className="mr-1" />
+                    Próximos 14 días
+                  </div>
+                )}
+              </div>
+              
               {upcomingRenewals.length === 0 ? (
                 <div className="text-center py-8">
                   <Calendar className="mx-auto h-12 w-12 text-gray-400" />
@@ -565,12 +977,28 @@ const AutoRenewalDashboard: React.FC = () => {
                   </p>
                 </div>
               ) : (
-                <RenewalTable 
-                  memberships={upcomingRenewals}
-                  onRenewIndividual={renewIndividualMembership}
-                  processingIndividual={processingIndividual}
-                  showRenewButton={false}
-                />
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center">
+                      <CheckCircle className="text-green-600 mr-2" size={20} />
+                      <div>
+                        <p className="text-sm font-medium text-green-800">
+                          Renovaciones programadas
+                        </p>
+                        <p className="text-sm text-green-600">
+                          Estas membresías se renovarán automáticamente cuando venzan
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <RenewalTable 
+                    memberships={upcomingRenewals}
+                    onRenewIndividual={renewIndividualMembership}
+                    processingIndividual={processingIndividual}
+                    showRenewButton={false}
+                  />
+                </div>
               )}
             </div>
           )}
@@ -583,13 +1011,23 @@ const AutoRenewalDashboard: React.FC = () => {
                   Membresías Vencidas con Renovación Automática
                 </h3>
                 {expiredRenewals.length > 0 && (
-                  <button
-                    onClick={processAllRenewals}
-                    disabled={processing}
-                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Renovar Todas ({expiredRenewals.length})
-                  </button>
+                  <div className="flex items-center space-x-3">
+                    <div className="text-sm text-gray-500">
+                      {expiredRenewals.length} membresías pendientes
+                    </div>
+                    <button
+                      onClick={processAllRenewalsWithProgress}
+                      disabled={processing}
+                      className="flex items-center px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {processing ? (
+                        <RefreshCw size={16} className="animate-spin mr-2" />
+                      ) : (
+                        <Zap size={16} className="mr-2" />
+                      )}
+                      {processing ? 'Procesando...' : `Renovar Todas (${expiredRenewals.length})`}
+                    </button>
+                  </div>
                 )}
               </div>
               
@@ -600,14 +1038,35 @@ const AutoRenewalDashboard: React.FC = () => {
                   <p className="mt-1 text-sm text-gray-500">
                     No hay membresías vencidas pendientes de renovación automática.
                   </p>
+                  <div className="mt-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                    <p className="text-sm text-green-700">
+                      🎉 ¡Excelente! Todas las membresías con renovación automática están al día.
+                    </p>
+                  </div>
                 </div>
               ) : (
-                <RenewalTable 
-                  memberships={expiredRenewals}
-                  onRenewIndividual={renewIndividualMembership}
-                  processingIndividual={processingIndividual}
-                  showRenewButton={true}
-                />
+                <div className="space-y-4">
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="flex items-center">
+                      <AlertTriangle className="text-red-600 mr-2" size={20} />
+                      <div>
+                        <p className="text-sm font-medium text-red-800">
+                          Atención requerida
+                        </p>
+                        <p className="text-sm text-red-600">
+                          Estas membresías están vencidas y requieren renovación automática
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <RenewalTable 
+                    memberships={expiredRenewals}
+                    onRenewIndividual={renewIndividualMembership}
+                    processingIndividual={processingIndividual}
+                    showRenewButton={true}
+                  />
+                </div>
               )}
             </div>
           )}
@@ -615,9 +1074,17 @@ const AutoRenewalDashboard: React.FC = () => {
           {/* Pestaña: Historial */}
           {activeTab === 'history' && (
             <div>
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Historial de Procesos de Renovación
-              </h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-medium text-gray-900">
+                  Historial de Procesos de Renovación
+                </h3>
+                {processHistory.length > 0 && (
+                  <div className="text-sm text-gray-500">
+                    Últimos {processHistory.length} procesos
+                  </div>
+                )}
+              </div>
+              
               {processHistory.length === 0 ? (
                 <div className="text-center py-8">
                   <History className="mx-auto h-12 w-12 text-gray-400" />
@@ -625,18 +1092,89 @@ const AutoRenewalDashboard: React.FC = () => {
                   <p className="mt-1 text-sm text-gray-500">
                     No se han ejecutado procesos de renovación aún.
                   </p>
+                  <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                    <p className="text-sm text-blue-700">
+                      💡 El historial aparecerá aquí después de ejecutar el primer proceso de renovación.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {processHistory.map((process, index) => (
                     <ProcessHistoryCard key={index} process={process} />
                   ))}
+                  
+                  {/* Información adicional del historial */}
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <History className="text-gray-400 mr-2" size={16} />
+                        <span className="text-sm text-gray-600">
+                          Se mantienen los últimos 10 procesos
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (gymData?.id) {
+                            localStorage.removeItem(`renewalHistory_${gymData.id}`);
+                            setProcessHistory([]);
+                          }
+                        }}
+                        className="text-sm text-red-600 hover:text-red-700"
+                      >
+                        Limpiar historial
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
           )}
         </div>
       </div>
+
+      {/* 🆕 NUEVA SECCIÓN: Consejos y recomendaciones */}
+      {!processing && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6">
+          <div className="flex items-start">
+            <div className="bg-blue-100 p-2 rounded-full mr-4">
+              <Settings className="text-blue-600" size={20} />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                Consejos para Renovaciones Automáticas
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-700">
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-1">📅 Frecuencia recomendada</h4>
+                  <p>Ejecuta el proceso diariamente para mantener todas las renovaciones al día.</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-1">⚡ Proceso masivo</h4>
+                  <p>Usa el botón "Procesar Todas" para renovar múltiples membresías de una vez.</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-1">🔍 Monitoreo</h4>
+                  <p>Revisa regularmente la pestaña "Próximas" para planificar renovaciones.</p>
+                </div>
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-1">📊 Historial</h4>
+                  <p>Consulta el historial para revisar procesos anteriores y detectar patrones.</p>
+                </div>
+              </div>
+              
+              {expiredRenewals.length > 0 && (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm text-yellow-800">
+                    ⚠️ <strong>Nota:</strong> Tienes {expiredRenewals.length} membresías vencidas pendientes. 
+                    El proceso con barra de progreso te permite ver exactamente qué se está renovando en tiempo real.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

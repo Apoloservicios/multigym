@@ -212,3 +212,26 @@ export type TransactionExpenseCategory = 'withdrawal' | 'refund' | 'expense' | '
 
 // AGREGAR TIPO FALTANTE
 export type TransactionCategory = TransactionIncomeCategory | TransactionExpenseCategory;
+
+// 🔧 AGREGAR ESTE TIPO AL FINAL DEL ARCHIVO gym.types.ts
+
+export interface Member {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  status: 'active' | 'inactive' | 'suspended';
+  createdAt: any;
+  updatedAt?: any;
+  // Agregar otros campos que uses en tu sistema
+  dni?: string;
+  address?: string;
+  birthDate?: string;
+  emergencyContact?: {
+    name: string;
+    phone: string;
+  };
+  memberNumber?: string;
+  joinDate?: string;
+}

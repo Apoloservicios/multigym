@@ -1,4 +1,4 @@
-// src/pages/dashboard/DashboardImproved.tsx - VERSIÓN CORREGIDA
+// src/pages/dashboard/DashboardImproved.tsx - VERSIÓN COMPLETA CON TODAS LAS FUNCIONALIDADES
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -46,10 +46,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { exportTransactionsToExcel } from '../../utils/excel.utils';
-// 🔧 IMPORTAR FUNCIONES CORREGIDAS DEL SERVICIO
-import { getTransactionDisplayInfo } from '../../services/financial.service';
 
-// 🔧 INTERFACE CORREGIDA - Agregar propiedad faltante
+// 🔧 INTERFACE COMPLETA CON TODAS LAS PROPIEDADES
 interface EnhancedDashboardMetrics {
   totalMembers: number;
   activeMembers: number;
@@ -66,7 +64,7 @@ interface EnhancedDashboardMetrics {
   overduePayments: number;
   overdueAmount: number;
   refundsToday: number;
-  refundsThisMonth: number; // 🔧 AGREGAR PROPIEDAD FALTANTE
+  refundsThisMonth: number; // 🔧 AGREGAR PROPIEDAD PARA REINTEGROS MENSUALES
 }
 
 interface PendingPayment {
@@ -139,9 +137,52 @@ const DashboardImproved: React.FC = () => {
     };
   }, []);
 
-  // 🔧 USAR FUNCIÓN IMPORTADA DEL SERVICIO EN LUGAR DE LOCAL
+  // 🔧 FUNCIÓN HELPER CORREGIDA para clasificar transacciones
   const getTransactionInfo = useCallback((transaction: any) => {
-    return getTransactionDisplayInfo(transaction);
+    const description = transaction.description?.toLowerCase() || '';
+    
+    // 🔧 MEJORAR DETECCIÓN DE REINTEGROS/DEVOLUCIONES
+    const isRefund = transaction.type === 'refund' || 
+                    transaction.category === 'refund' ||
+                    description.includes('reintegro') ||
+                    description.includes('devolución') ||
+                    description.includes('devolucion') ||
+                    description.includes('cancelación') ||
+                    description.includes('cancelacion') ||
+                    (transaction.amount < 0 && (
+                      transaction.type === 'refund' || 
+                      transaction.category === 'refund'
+                    ));
+    
+    const isExpense = !isRefund && (
+      transaction.type === 'expense' || 
+      transaction.category === 'expense' ||
+      transaction.category === 'withdrawal' ||
+      (transaction.amount < 0 && !isRefund)
+    );
+    
+    const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+    
+    // 🔍 DEBUG para reintegros
+    if (isRefund) {
+      console.log('🔍 REINTEGRO DETECTADO EN DASHBOARD:', {
+        id: transaction.id,
+        type: transaction.type,
+        category: transaction.category,
+        amount: transaction.amount,
+        description: transaction.description?.substring(0, 50) + '...',
+        clasificacion: { isRefund, isExpense, isIncome }
+      });
+    }
+    
+    return {
+      isRefund,
+      isIncome,
+      isExpense,
+      displayAmount: Math.abs(transaction.amount),
+      originalAmount: transaction.amount,
+      type: isRefund ? 'refund' : (isExpense ? 'expense' : 'income')
+    };
   }, []);
 
   // ***************************************************
@@ -310,7 +351,7 @@ const DashboardImproved: React.FC = () => {
     }
 
     return transactions.slice(0, 10).map(transaction => {
-      // 🔧 USAR FUNCIÓN IMPORTADA
+      // 🔧 USAR FUNCIÓN CORREGIDA
       const displayInfo = getTransactionInfo(transaction);
       
       let memberDisplayName = 'Usuario del sistema';
@@ -378,7 +419,7 @@ const DashboardImproved: React.FC = () => {
         getDocs(query(collection(db, `gyms/${gymData.id}/members`), where('totalDebt', '>', 0)))
       ]);
 
-      // 🔧 CORREGIR CÁLCULOS FINANCIEROS USANDO FUNCIÓN IMPORTADA
+      // 🔧 CORREGIR CÁLCULOS FINANCIEROS
       let todayIncome = 0;
       let todayExpenses = 0; 
       let todayRefunds = 0;
@@ -390,53 +431,65 @@ const DashboardImproved: React.FC = () => {
       let overduePayments = 0;
       let overdueAmount = 0;
 
+      // Obtener fechas para comparaciones
+      const today = new Date();
+      const currentMonth = today.getMonth();
+      const currentYear = today.getFullYear();
+      const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
+
       // Procesar transacciones de HOY
       const todayTransactions = transactions.filter(t => {
         const transactionDate = t.createdAt?.toDate() || t.date?.toDate();
         if (!transactionDate) return false;
-        
-        const today = new Date();
         return transactionDate.toDateString() === today.toDateString();
       });
 
+      console.log('📊 TRANSACCIONES DE HOY:', {
+        total: todayTransactions.length,
+        fechas: todayTransactions.map(t => ({
+          id: t.id,
+          fecha: (t.createdAt?.toDate() || t.date?.toDate())?.toISOString(),
+          amount: t.amount,
+          type: t.type,
+          category: t.category
+        }))
+      });
+
       todayTransactions.forEach(transaction => {
-        // 🔧 USAR FUNCIÓN IMPORTADA
         const displayInfo = getTransactionInfo(transaction);
         
         if (transaction.status === 'completed') {
           if (displayInfo.isRefund) {
             todayRefunds += displayInfo.displayAmount;
+            console.log(`🔄 Reintegro HOY: $${displayInfo.displayAmount}`);
           } else if (displayInfo.isIncome) {
             todayIncome += displayInfo.displayAmount;
+            console.log(`✅ Ingreso HOY: $${displayInfo.displayAmount}`);
           } else if (displayInfo.isExpense) {
             todayExpenses += displayInfo.displayAmount;
+            console.log(`💸 Gasto HOY: $${displayInfo.displayAmount}`);
           }
         }
       });
 
-      // 🔧 DEBUGGING PARA HOY
-      console.log('📊 CÁLCULOS DEL DÍA:', {
-        transaccionesHoy: todayTransactions.length,
-        ingresos: todayIncome,
-        gastos: todayExpenses,
-        reintegros: todayRefunds,
-        netoCalculado: todayIncome - todayRefunds - todayExpenses
-      });
-
       // Procesar transacciones MENSUALES
-      const thisMonthStart = dateRanges.thisMonthStart.toDate();
       const monthlyTransactions = transactions.filter(t => {
         const transactionDate = t.createdAt?.toDate() || t.date?.toDate();
-        return transactionDate && transactionDate >= thisMonthStart;
+        return transactionDate && transactionDate >= firstDayOfMonth;
+      });
+
+      console.log('📊 TRANSACCIONES DEL MES:', {
+        total: monthlyTransactions.length,
+        rango: `${firstDayOfMonth.toISOString()} - ${today.toISOString()}`
       });
 
       monthlyTransactions.forEach(transaction => {
-        // 🔧 USAR FUNCIÓN IMPORTADA
         const displayInfo = getTransactionInfo(transaction);
         
         if (transaction.status === 'completed') {
           if (displayInfo.isRefund) {
             monthlyRefunds += displayInfo.displayAmount;
+            console.log(`🔄 Reintegro MES: $${displayInfo.displayAmount}`);
           } else if (displayInfo.isIncome) {
             monthlyIncome += displayInfo.displayAmount;
           } else if (displayInfo.isExpense) {
@@ -445,14 +498,80 @@ const DashboardImproved: React.FC = () => {
         }
       });
 
-      // 🔧 DEBUGGING PARA MES
-      console.log('📊 CÁLCULOS DEL MES:', {
-        transaccionesMes: monthlyTransactions.length,
-        ingresos: monthlyIncome,
-        gastos: monthlyExpenses,
-        reintegros: monthlyRefunds,
-        netoCalculado: monthlyIncome - monthlyRefunds - monthlyExpenses
+      // 🔧 LOG DE DEBUGGING COMPLETO
+      console.log('📊 RESUMEN FINANCIERO FINAL:', {
+        hoy: {
+          ingresos: todayIncome,
+          egresos: todayExpenses,
+          reintegros: todayRefunds,
+          neto: todayIncome - todayExpenses - todayRefunds
+        },
+        mes: {
+          ingresos: monthlyIncome,
+          egresos: monthlyExpenses,
+          reintegros: monthlyRefunds,
+          neto: monthlyIncome - monthlyExpenses - monthlyRefunds
+        }
       });
+
+      // Cargar pagos pendientes
+      const today_str = getCurrentDateInArgentina();
+      try {
+        const pendingMembershipsSnap = await getDocs(
+          query(
+            collection(db, `gyms/${gymData.id}/membershipAssignments`),
+            where('paymentStatus', '==', 'pending'),
+            where('status', '==', 'active')
+          )
+        );
+
+        const pendingPaymentsArray: PendingPayment[] = [];
+
+        for (const doc of pendingMembershipsSnap.docs) {
+          const membership = doc.data();
+          
+          try {
+            const memberDoc = await getDocs(
+              query(
+                collection(db, `gyms/${gymData.id}/members`),
+                where('__name__', '==', membership.memberId)
+              )
+            );
+            
+            if (!memberDoc.empty) {
+              const member = memberDoc.docs[0].data();
+              const isOverdue = membership.endDate && membership.endDate < today_str;
+              const daysOverdue = isOverdue ? 
+                Math.floor((new Date().getTime() - new Date(membership.endDate).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+              
+              pendingPaymentsArray.push({
+                id: doc.id,
+                memberName: `${member.firstName} ${member.lastName}`,
+                activityName: membership.activityName || 'Actividad',
+                cost: membership.cost || 0,
+                startDate: membership.startDate,
+                endDate: membership.endDate,
+                overdue: isOverdue,
+                daysOverdue
+              });
+
+              pendingPayments++;
+              pendingAmount += membership.cost || 0;
+              
+              if (isOverdue) {
+                overduePayments++;
+                overdueAmount += membership.cost || 0;
+              }
+            }
+          } catch (err) {
+            console.error('Error processing member:', err);
+          }
+        }
+
+        setPendingPayments(pendingPaymentsArray);
+      } catch (error) {
+        console.error('Error loading pending payments:', error);
+      }
 
       // 🔧 ACTUALIZAR MÉTRICAS CON VALORES CORREGIDOS
       setMetrics({
@@ -462,10 +581,10 @@ const DashboardImproved: React.FC = () => {
         membersWithDebt: membersWithDebtSnap.size,
         todayIncome,
         todayExpenses,
-        todayNet: todayIncome - todayRefunds - todayExpenses,
+        todayNet: todayIncome - todayExpenses - todayRefunds,
         monthlyIncome,
         monthlyExpenses,
-        monthlyNet: monthlyIncome - monthlyRefunds - monthlyExpenses,
+        monthlyNet: monthlyIncome - monthlyExpenses - monthlyRefunds,
         pendingPayments,
         pendingAmount,
         overduePayments,
@@ -474,11 +593,13 @@ const DashboardImproved: React.FC = () => {
         refundsThisMonth: monthlyRefunds // 🔧 AHORA SÍ EXISTE EN LA INTERFACE
       });
 
+      setLastLoadTime(Date.now());
+
     } catch (err: any) {
       console.error('Error loading enhanced metrics:', err);
       setError('Error al cargar las métricas del dashboard');
     }
-  }, [gymData?.id, shouldLoad, transactions, dateRanges.thisMonthStart, getTransactionInfo]);
+  }, [gymData?.id, shouldLoad, transactions, getTransactionInfo]);
 
   // Cargar todos los datos - CON CONTROL DE BUCLES
   const loadDashboardData = useCallback(async () => {
@@ -509,29 +630,29 @@ const DashboardImproved: React.FC = () => {
   };
 
   // 🔧 EFECTO PARA SINCRONIZAR CON DATOS DEL HOOK useFinancial
-useEffect(() => {
-  if (dailySummary && !financialLoading) {
-    console.log('🔄 Sincronizando métricas con dailySummary:', dailySummary);
-    
-    // 🔧 DEBUGGING: Verificar los valores del dailySummary
-    console.log('🔍 VALORES DAILY SUMMARY:', {
-      totalIncome: dailySummary.totalIncome,
-      totalExpenses: dailySummary.totalExpenses,
-      refunds: dailySummary.refunds,
-      netAmount: dailySummary.netAmount,
-      calculoManual: dailySummary.totalIncome - dailySummary.totalExpenses
-    });
-    
-    setMetrics(prev => ({
-      ...prev,
-      todayIncome: dailySummary.totalIncome,
-      // 🔧 CORRECCIÓN: Los reintegros YA ESTÁN incluidos en totalExpenses
-      todayExpenses: dailySummary.totalExpenses, // ✅ SIN RESTAR refunds
-      todayNet: dailySummary.netAmount,
-      refundsToday: dailySummary.refunds || 0
-    }));
-  }
-}, [dailySummary, financialLoading]);
+  useEffect(() => {
+    if (dailySummary && !financialLoading) {
+      console.log('🔄 Sincronizando métricas con dailySummary:', dailySummary);
+      
+      // 🔧 DEBUGGING: Verificar los valores del dailySummary
+      console.log('🔍 VALORES DAILY SUMMARY:', {
+        totalIncome: dailySummary.totalIncome,
+        totalExpenses: dailySummary.totalExpenses,
+        refunds: dailySummary.refunds,
+        netAmount: dailySummary.netAmount,
+        calculoManual: dailySummary.totalIncome - dailySummary.totalExpenses
+      });
+      
+      setMetrics(prev => ({
+        ...prev,
+        todayIncome: dailySummary.totalIncome,
+        // 🔧 CORRECCIÓN: Los reintegros YA ESTÁN incluidos en totalExpenses
+        todayExpenses: dailySummary.totalExpenses, // ✅ SIN RESTAR refunds
+        todayNet: dailySummary.netAmount,
+        refundsToday: dailySummary.refunds || 0
+      }));
+    }
+  }, [dailySummary, financialLoading]);
 
   useEffect(() => {
     if (gymData?.id && transactions.length > 0) {
@@ -1071,7 +1192,7 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* Resumen financiero del mes */}
+      {/* Resumen financiero del mes - CORREGIDO */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Resumen del Mes</h3>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -1080,7 +1201,9 @@ useEffect(() => {
             <div className="text-sm text-gray-500">Ingresos totales</div>
           </div>
           <div className="text-center">
-            <div className="text-2xl font-bold text-red-600">{formatCurrency(metrics.monthlyExpenses)}</div>
+            <div className="text-2xl font-bold text-red-600">
+              {formatCurrency(metrics.monthlyExpenses + metrics.refundsThisMonth)}
+            </div>
             <div className="text-sm text-gray-500">Egresos totales</div>
           </div>
           <div className="text-center">
@@ -1096,6 +1219,23 @@ useEffect(() => {
             <div className="text-sm text-gray-500">Balance neto</div>
           </div>
         </div>
+        
+        {/* Desglose de egresos - NUEVO */}
+        {(metrics.monthlyExpenses > 0 || metrics.refundsThisMonth > 0) && (
+          <div className="mt-4 pt-4 border-t border-gray-200">
+            <p className="text-sm text-gray-600 mb-2">Desglose de egresos:</p>
+            <div className="flex justify-center space-x-6">
+              <div className="text-center">
+                <div className="text-lg font-medium text-red-600">{formatCurrency(metrics.monthlyExpenses)}</div>
+                <div className="text-xs text-gray-500">Gastos</div>
+              </div>
+              <div className="text-center">
+                <div className="text-lg font-medium text-orange-600">{formatCurrency(metrics.refundsThisMonth)}</div>
+                <div className="text-xs text-gray-500">Reintegros</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer del dashboard */}

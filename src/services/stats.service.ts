@@ -1,72 +1,48 @@
-// src/services/stats.service.ts
 import { 
   collection, 
   query, 
   where, 
-  orderBy, 
-  limit, 
   getDocs, 
-  Timestamp
+  Timestamp, 
+  orderBy 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Member } from '../types/member.types';
-import { Transaction } from '../types/gym.types';
+import { Transaction, Member } from '../types/gym.types'; // 🔧 AHORA Member EXISTE
 import { toJsDate } from '../utils/date.utils';
 
-// Interfaz para estadísticas del dashboard
-interface DashboardStats {
-  totalMembers: number;
-  activeMembers: number;
-  inactiveMembers: number;
-  newMembersThisMonth: number;
-  totalRevenue: number;
-  membershipRevenue: number;
-  otherRevenue: number;
-  membersByStatus: Record<string, number>;
-  revenueByPeriod: Record<string, number>;
-}
+// Obtener estadísticas del dashboard
+export const getDashboardStats = async (gymId: string) => {
+  const stats = {
+    totalMembers: 0,
+    activeMembers: 0,
+    newMembersThisMonth: 0,
+    totalRevenue: 0,
+    membershipRevenue: 0,
+    otherRevenue: 0
+  };
 
-// Obtener estadísticas para el dashboard
-export const getDashboardStats = async (gymId: string): Promise<DashboardStats> => {
   try {
-    // Inicializar estadísticas
-    const stats: DashboardStats = {
-      totalMembers: 0,
-      activeMembers: 0,
-      inactiveMembers: 0,
-      newMembersThisMonth: 0,
-      totalRevenue: 0,
-      membershipRevenue: 0,
-      otherRevenue: 0,
-      membersByStatus: {},
-      revenueByPeriod: {}
-    };
-    
     // Obtener miembros
     const membersRef = collection(db, `gyms/${gymId}/members`);
     const membersSnapshot = await getDocs(membersRef);
     
-    // Contar miembros por estado
     stats.totalMembers = membersSnapshot.size;
     
-    // Establecer fecha del primer día del mes actual
-    const today = new Date();
-    const firstDayOfCurrentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    // Calcular miembros activos y nuevos del mes
+    const now = new Date();
+    const firstDayOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     
     membersSnapshot.forEach(doc => {
       const member = doc.data() as Member;
       
-      // Contar por estado
+      // Contar miembros activos
       if (member.status === 'active') {
         stats.activeMembers++;
-      } else {
-        stats.inactiveMembers++;
       }
       
-      stats.membersByStatus[member.status] = (stats.membersByStatus[member.status] || 0) + 1;
-      
-      // Comprobar si es nuevo este mes - usar nuestra función segura
-      const createdAtDate = member.createdAt ? toJsDate(member.createdAt) : null;
+      // Contar nuevos miembros del mes
+      const createdAtDate = member.createdAt ? 
+        toJsDate(member.createdAt) : null;
       
       if (createdAtDate && createdAtDate >= firstDayOfCurrentMonth) {
         stats.newMembersThisMonth++;
@@ -74,7 +50,6 @@ export const getDashboardStats = async (gymId: string): Promise<DashboardStats> 
     });
     
     // Obtener ingresos
-    const now = new Date();
     const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
     
@@ -110,7 +85,7 @@ export const getDashboardStats = async (gymId: string): Promise<DashboardStats> 
   }
 };
 
-// Obtener datos para gráfico de miembros según periodo
+// 🔧 FUNCIÓN ÚNICA - Obtener datos para gráfico de miembros según periodo
 export const getMemberChartData = async (
   gymId: string,
   period: 'month' | '3months' | 'year'
@@ -122,84 +97,81 @@ export const getMemberChartData = async (
     // Determinar fecha de inicio según periodo
     switch (period) {
       case 'month':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
         break;
       case '3months':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
         break;
       case 'year':
-        startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
         break;
       default:
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
     
     // Obtener todos los miembros
     const membersRef = collection(db, `gyms/${gymId}/members`);
     const membersSnapshot = await getDocs(membersRef);
     
-    // Preparar datos para gráfico
+    // Generar fechas en orden cronológico
     const datePoints: string[] = [];
     const countPoints: number[] = [];
     
-    // Determinar intervalo según periodo
-    const interval = period === 'year' ? 
-      { unit: 'month', count: 12 } : 
-      period === '3months' ? 
-        { unit: 'week', count: 12 } : 
-        { unit: 'day', count: 30 };
-    
-    // Generar puntos de fecha e inicializar contadores
-    for (let i = 0; i < interval.count; i++) {
-      const date = new Date(now);
+    if (period === 'month') {
+      // Para el mes actual, mostrar día por día desde el 1 hasta hoy
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       
-      if (interval.unit === 'day') {
-        date.setDate(date.getDate() - (interval.count - i - 1));
-        datePoints.push(date.toISOString().split('T')[0]);
-      } else if (interval.unit === 'week') {
-        date.setDate(date.getDate() - (interval.count - i - 1) * 7);
-        datePoints.push(`Sem ${i + 1}`);
-      } else {
-        date.setMonth(date.getMonth() - (interval.count - i - 1));
-        datePoints.push(`${date.getMonth() + 1}/${date.getFullYear().toString().substr(2)}`);
+      for (let d = new Date(firstDay); d <= today; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+        datePoints.push(dateStr);
+        countPoints.push(0);
       }
-      countPoints.push(0);
+    } else if (period === '3months') {
+      for (let i = 0; i < 12; i++) {
+        datePoints.push(`Sem ${i + 1}`);
+        countPoints.push(0);
+      }
+    } else {
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(startDate);
+        date.setMonth(date.getMonth() + i);
+        datePoints.push(`${date.getMonth() + 1}/${date.getFullYear().toString().substr(2)}`);
+        countPoints.push(0);
+      }
     }
     
-    // Contar miembros por fecha de registro
+    // Contar miembros acumulativamente en orden cronológico
     membersSnapshot.forEach(doc => {
       const member = doc.data() as Member;
       
       if (member.createdAt) {
-        // Usar nuestra función segura para convertir a Date
         const createdAt = toJsDate(member.createdAt);
         
         if (createdAt && createdAt >= startDate && createdAt <= now) {
-          // Determinar a qué punto corresponde esta fecha
-          if (interval.unit === 'day') {
-            const dayDiff = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-            const index = interval.count - dayDiff - 1;
-            if (index >= 0 && index < interval.count) {
-              // Incrementar acumulativamente
-              for (let i = index; i < interval.count; i++) {
+          if (period === 'month') {
+            const dayOfMonth = createdAt.getDate();
+            const index = dayOfMonth - 1;
+            
+            if (index >= 0 && index < countPoints.length) {
+              // Incrementar desde este día hasta el final (acumulativo)
+              for (let i = index; i < countPoints.length; i++) {
                 countPoints[i]++;
               }
             }
-          } else if (interval.unit === 'week') {
-            const weekDiff = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24 * 7));
-            const index = interval.count - weekDiff - 1;
-            if (index >= 0 && index < interval.count) {
-              // Incrementar acumulativamente
-              for (let i = index; i < interval.count; i++) {
+          } else if (period === '3months') {
+            const weekDiff = Math.floor((createdAt.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
+            
+            if (weekDiff >= 0 && weekDiff < countPoints.length) {
+              for (let i = weekDiff; i < countPoints.length; i++) {
                 countPoints[i]++;
               }
             }
           } else {
-            const monthDiff = (now.getFullYear() - createdAt.getFullYear()) * 12 + (now.getMonth() - createdAt.getMonth());
-            const index = interval.count - monthDiff - 1;
-            if (index >= 0 && index < interval.count) {
-              // Incrementar acumulativamente
-              for (let i = index; i < interval.count; i++) {
+            const monthDiff = (createdAt.getFullYear() - startDate.getFullYear()) * 12 + (createdAt.getMonth() - startDate.getMonth());
+            
+            if (monthDiff >= 0 && monthDiff < countPoints.length) {
+              for (let i = monthDiff; i < countPoints.length; i++) {
                 countPoints[i]++;
               }
             }
@@ -227,16 +199,16 @@ export const getSalesChartData = async (
     // Determinar fecha de inicio según periodo
     switch (period) {
       case 'month':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
         break;
       case '3months':
-        startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
         break;
       case 'year':
-        startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        startDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
         break;
       default:
-        startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
     }
     
     // Obtener transacciones
@@ -251,61 +223,64 @@ export const getSalesChartData = async (
     
     const transactionsSnapshot = await getDocs(transactionsQuery);
     
-    // Preparar datos para gráfico
+    // Generar fechas en orden cronológico
     const datePoints: string[] = [];
     const membershipValues: number[] = [];
     const otherValues: number[] = [];
     
-    // Determinar intervalo según periodo
-    const interval = period === 'year' ? 
-      { unit: 'month', count: 12 } : 
-      period === '3months' ? 
-        { unit: 'week', count: 12 } : 
-        { unit: 'day', count: 30 };
-    
-    // Generar puntos de fecha e inicializar valores
-    for (let i = 0; i < interval.count; i++) {
-      const date = new Date(now);
+    if (period === 'month') {
+      // Para el mes actual, mostrar día por día desde el 1 hasta hoy
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       
-      if (interval.unit === 'day') {
-        date.setDate(date.getDate() - (interval.count - i - 1));
-        datePoints.push(date.toISOString().split('T')[0]);
-      } else if (interval.unit === 'week') {
-        date.setDate(date.getDate() - (interval.count - i - 1) * 7);
-        datePoints.push(`Sem ${i + 1}`);
-      } else {
-        date.setMonth(date.getMonth() - (interval.count - i - 1));
-        datePoints.push(`${date.getMonth() + 1}/${date.getFullYear().toString().substr(2)}`);
+      for (let d = new Date(firstDay); d <= today; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+        datePoints.push(dateStr);
+        membershipValues.push(0);
+        otherValues.push(0);
       }
-      membershipValues.push(0);
-      otherValues.push(0);
+    } else if (period === '3months') {
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(startDate);
+        date.setDate(date.getDate() + (i * 7));
+        datePoints.push(`Sem ${i + 1}`);
+        membershipValues.push(0);
+        otherValues.push(0);
+      }
+    } else {
+      for (let i = 0; i < 12; i++) {
+        const date = new Date(startDate);
+        date.setMonth(date.getMonth() + i);
+        datePoints.push(`${date.getMonth() + 1}/${date.getFullYear().toString().substr(2)}`);
+        membershipValues.push(0);
+        otherValues.push(0);
+      }
     }
     
-    // Procesar transacciones
+    // Procesar transacciones en orden cronológico
     transactionsSnapshot.forEach(doc => {
       const transaction = doc.data() as Transaction;
       
       if (transaction.date) {
-        // Usar nuestra función segura para convertir a Date
         const txDate = toJsDate(transaction.date);
         
         if (txDate && txDate >= startDate && txDate <= now) {
-          // Determinar a qué punto corresponde esta transacción
           let index = -1;
           
-          if (interval.unit === 'day') {
-            const dayDiff = Math.floor((now.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24));
-            index = interval.count - dayDiff - 1;
-          } else if (interval.unit === 'week') {
-            const weekDiff = Math.floor((now.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
-            index = interval.count - weekDiff - 1;
+          if (period === 'month') {
+            // Calcular índice basado en el día del mes
+            const dayOfMonth = txDate.getDate();
+            index = dayOfMonth - 1; // -1 porque el array empieza en 0
+          } else if (period === '3months') {
+            const weekDiff = Math.floor((txDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
+            index = weekDiff;
           } else {
-            const monthDiff = (now.getFullYear() - txDate.getFullYear()) * 12 + (now.getMonth() - txDate.getMonth());
-            index = interval.count - monthDiff - 1;
+            const monthDiff = (txDate.getFullYear() - startDate.getFullYear()) * 12 + (txDate.getMonth() - startDate.getMonth());
+            index = monthDiff;
           }
           
-          if (index >= 0 && index < interval.count) {
-            // Incrementar según categoría
+          if (index >= 0 && index < datePoints.length) {
+            // Acumular según categoría
             if (transaction.category === 'membership') {
               membershipValues[index] += transaction.amount;
             } else {

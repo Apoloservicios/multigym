@@ -1,10 +1,12 @@
 // src/components/members/MemberAttendanceHistory.tsx
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Activity, AlertCircle, Filter, Download, UserCheck, Building } from 'lucide-react';
+import { Calendar, Clock, Activity, AlertCircle, Filter, Download, UserCheck, Building,FileSpreadsheet } from 'lucide-react';
 import { Member } from '../../types/member.types';
 import { AttendanceRecord } from '../../types/attendance.types';
 import attendanceService from '../../services/attendance.service';
 import useAuth from '../../hooks/useAuth';
+import { exportAttendancesToExcel } from '../../utils/excel.utils';
+import { getCurrentDateInArgentina } from '../../utils/timezone.utils';
 
 
 
@@ -102,36 +104,28 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
     }
   };
 
-  const exportToCSV = () => {
-    try {
-      let csvContent = 'Fecha,Hora,Actividad,Estado,Notas,Registrado Por\n';
-      
-      filteredAttendances.forEach(attendance => {
-        const date = formatDate(attendance.timestamp);
-        const time = attendance.timestamp?.toDate ? 
-          attendance.timestamp.toDate().toLocaleTimeString('es-AR') : '';
-        const activity = attendance.activityName || 'General';
-        const status = attendance.status === 'success' ? 'Exitosa' : 'Fallida';
-        const notes = (attendance.notes || '').replace(/,/g, ' ');
-        const registeredBy = attendance.registeredBy === 'member' ? 'Socio' : 
-                           attendance.registeredByUserName || 'Gimnasio';
-        
-        csvContent += `${date},${time},${activity},${status},${notes},${registeredBy}\n`;
-      });
-      
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `asistencias_${member.firstName}_${member.lastName}.csv`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error('Error exporting to CSV:', err);
+ const exportToExcel = () => {
+  try {
+    console.log('📊 Exportando asistencias a Excel:', filteredAttendances.length);
+    
+    if (!filteredAttendances.length) {
+      alert('No hay asistencias para exportar');
+      return;
     }
-  };
+
+    // Usar la función de utilidad de Excel existente
+    exportAttendancesToExcel(
+      filteredAttendances,
+      `${member.firstName} ${member.lastName}`,
+      `asistencias-${member.firstName}-${member.lastName}-${getCurrentDateInArgentina().replace(/-/g, '')}.xlsx`
+    );
+    
+    console.log('✅ Asistencias exportadas exitosamente');
+  } catch (err) {
+    console.error('❌ Error exporting to Excel:', err);
+    alert('Error al exportar asistencias');
+  }
+};
 
   // Filtrar las asistencias según el filtro actual
   const filteredAttendances = filterAttendances(attendances);
@@ -176,12 +170,12 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
         
         <div className="flex items-center space-x-3">
           <button
-            onClick={exportToCSV}
+            onClick={exportToExcel}
+            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center"
             disabled={filteredAttendances.length === 0}
-            className="px-3 py-2 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:opacity-50 flex items-center"
           >
-            <Download size={16} className="mr-1" />
-            Exportar
+            <FileSpreadsheet size={18} className="mr-2" />
+            Exportar Excel
           </button>
           
           {onClose && (

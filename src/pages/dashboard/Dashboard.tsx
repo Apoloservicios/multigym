@@ -1,4 +1,4 @@
-// src/pages/dashboard/Dashboard.tsx - ACTUALIZADO CON RENOVACIONES AUTOMÁTICAS
+// src/pages/dashboard/Dashboard.tsx - ACTUALIZADO CON MEJORAS DE LAYOUT
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
@@ -11,7 +11,9 @@ import {
   Clock,
   RefreshCw,
   Gift,
-  Cake
+  Cake,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import { formatCurrency } from '../../utils/formatting.utils';
@@ -102,6 +104,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  // 🆕 NUEVO: Estado para expandir/contraer cumpleaños
+  const [birthdaysExpanded, setBirthdaysExpanded] = useState<boolean>(false);
 
   // 🆕 NUEVA FUNCIÓN: Navegar al dashboard de renovaciones automáticas
   const handleNavigateToRenewals = () => {
@@ -576,6 +581,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   };
 
+  // 🆕 NUEVA FUNCIÓN: Calcular cuántos cumpleaños mostrar
+  const getDisplayedBirthdays = () => {
+    const maxVisible = 3; // Máximo visible sin expandir
+    if (birthdaysExpanded) {
+      return upcomingBirthdays;
+    }
+    return upcomingBirthdays.slice(0, maxVisible);
+  };
+
   if (loading && Object.values(metrics).every(v => v === 0)) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -726,13 +740,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* 🆕 NUEVA SECCIÓN: Card de Renovaciones Automáticas */}
-      <div className="mb-8">
-        <div className="max-w-md">
-          <RenewalManagementCard onNavigateToRenewals={handleNavigateToRenewals} />
-        </div>
-      </div>
-
       {/* Sección de contenido principal */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Asistencias Recientes */}
@@ -771,13 +778,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Próximos Cumpleaños */}
+        {/* 🆕 MEJORADO: Próximos Cumpleaños con diseño compacto y expansible */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200">
           <div className="p-6 border-b border-gray-200">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">Próximos Cumpleaños</h2>
-              <div className="bg-pink-50 p-2 rounded-full">
-                <Cake size={20} className="text-pink-600" />
+              <div className="flex items-center space-x-2">
+                <div className="bg-pink-50 p-2 rounded-full">
+                  <Cake size={20} className="text-pink-600" />
+                </div>
+                {metrics.upcomingBirthdays > 0 && (
+                  <span className="bg-pink-100 text-pink-700 text-xs font-medium px-2 py-1 rounded-full">
+                    {metrics.upcomingBirthdays}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -788,39 +802,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <p className="text-gray-500">No hay cumpleaños próximos</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {upcomingBirthdays.map((birthday) => (
+              <div className="space-y-3">
+                {/* Lista de cumpleaños (máximo 3 visibles por defecto) */}
+                {getDisplayedBirthdays().map((birthday) => (
                   <div key={birthday.id} className="flex items-center justify-between p-3 bg-gradient-to-r from-pink-50 to-purple-50 rounded-lg border border-pink-100">
-                    <div className="flex items-center">
-                      <div className="relative">
+                    <div className="flex items-center min-w-0">
+                      <div className="relative flex-shrink-0">
                         {birthday.photo ? (
                           <img 
                             src={birthday.photo} 
                             alt={`${birthday.firstName} ${birthday.lastName}`}
-                            className="w-10 h-10 rounded-full object-cover mr-3"
+                            className="w-8 h-8 rounded-full object-cover mr-3"
                           />
                         ) : (
-                          <div className="w-10 h-10 bg-pink-100 rounded-full flex items-center justify-center mr-3">
-                            <Users size={16} className="text-pink-600" />
+                          <div className="w-8 h-8 bg-pink-100 rounded-full flex items-center justify-center mr-3">
+                            <Users size={14} className="text-pink-600" />
                           </div>
                         )}
                         {birthday.daysUntilBirthday === 0 && (
-                          <div className="absolute -top-1 -right-1 bg-pink-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                          <div className="absolute -top-1 -right-1 bg-pink-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
                             !
                           </div>
                         )}
                       </div>
-                      <div>
-                        <p className="font-medium text-gray-900">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-gray-900 text-sm truncate">
                           {birthday.firstName} {birthday.lastName}
                         </p>
-                        <p className="text-sm text-gray-600">
+                        <p className="text-xs text-gray-600">
                           {formatBirthdayDate(birthday.birthDate)}
                         </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <span className={`text-sm font-medium px-2 py-1 rounded-full ${
+                    <div className="flex-shrink-0 ml-2">
+                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${
                         birthday.daysUntilBirthday === 0 
                           ? 'bg-pink-500 text-white' 
                           : birthday.daysUntilBirthday === 1
@@ -832,6 +847,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     </div>
                   </div>
                 ))}
+                
+                {/* Botón para expandir/contraer si hay más de 3 cumpleaños */}
+                {upcomingBirthdays.length > 3 && (
+                  <button
+                    onClick={() => setBirthdaysExpanded(!birthdaysExpanded)}
+                    className="w-full flex items-center justify-center py-2 text-sm text-gray-500 hover:text-gray-700 border-t border-gray-100 mt-3 pt-3 transition-colors"
+                  >
+                    {birthdaysExpanded ? (
+                      <>
+                        <ChevronUp size={16} className="mr-1" />
+                        Mostrar menos
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={16} className="mr-1" />
+                        Ver {upcomingBirthdays.length - 3} más
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -969,6 +1004,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
               </div>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* 🚀 MOVIDO AL FINAL: Card de Renovaciones Automáticas */}
+      <div className="mt-8">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Gestión de Renovaciones</h2>
+        <div className="max-w-2xl">
+          <RenewalManagementCard onNavigateToRenewals={handleNavigateToRenewals} />
         </div>
       </div>
 

@@ -115,35 +115,41 @@ export const getTransactionType = (transaction: any): 'income' | 'expense' | 're
   return 'income';
 };
 
-// 🔧 FUNCIÓN HELPER CORREGIDA: Obtener información de display para transacciones
-export const getTransactionDisplayInfo = (transaction: Transaction) => {
-  const type = getTransactionType(transaction);
+// 🔧 FUNCIÓN HELPER EXPORTADA: Obtener información de display para transacciones
+export const getTransactionDisplayInfo = (transaction: any) => {
+  const description = transaction.description?.toLowerCase() || '';
   
-  // 🔍 DEBUG para reintegros con más detalles
-  if (type === 'refund') {
+  // 🔧 MEJORAR DETECCIÓN DE REINTEGROS
+  const isRefund = transaction.type === 'refund' || 
+                  transaction.category === 'refund' ||
+                  description.includes('reintegro') ||
+                  description.includes('devolución') ||
+                  description.includes('devolucion') ||
+                  description.includes('cancelación') ||
+                  description.includes('cancelacion') ||
+                  (transaction.amount < 0 && (
+                    transaction.type === 'refund' || 
+                    transaction.category === 'refund'
+                  ));
+  
+  const isExpense = !isRefund && (
+    transaction.type === 'expense' || 
+    transaction.category === 'expense' ||
+    transaction.category === 'withdrawal' ||
+    (transaction.amount < 0 && !isRefund)
+  );
+  
+  const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+  
+  // 🔍 DEBUG para reintegros
+  if (isRefund) {
     console.log('🔍 DETECTANDO TRANSACCIÓN DE REINTEGRO:', {
       id: transaction.id,
       type: transaction.type,
       category: transaction.category,
       amount: transaction.amount,
       description: transaction.description?.substring(0, 50) + '...',
-      createdAt: transaction.createdAt,
-      date: transaction.date
-    });
-  }
-  
-  const isRefund = type === 'refund';
-  const isExpense = type === 'expense';
-  const isIncome = type === 'income';
-  
-  // 🔍 DEBUG resultado de clasificación
-  if (isRefund) {
-    console.log('🔍 RESULTADO CLASIFICACIÓN REINTEGRO:', {
-      isRefund,
-      isExpense,
-      isIncome,
-      displayAmount: Math.abs(transaction.amount),
-      originalAmount: transaction.amount
+      clasificacion: { isRefund, isExpense, isIncome }
     });
   }
   
@@ -153,8 +159,68 @@ export const getTransactionDisplayInfo = (transaction: Transaction) => {
     isExpense,
     displayAmount: Math.abs(transaction.amount),
     originalAmount: transaction.amount,
-    type: isRefund ? 'refund' : isExpense ? 'expense' : 'payment'
+    type: isRefund ? 'refund' : (isExpense ? 'expense' : 'income')
   };
+};
+
+// 🔧 FUNCIÓN HELPER EXPORTADA: Calcular totales mensuales
+export const calculateMonthlyTotals = async (gymId: string, year: number, month: number) => {
+  try {
+    const startDate = new Date(year, month - 1, 1);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const endDate = new Date(year, month, 0);
+    endDate.setHours(23, 59, 59, 999);
+    
+    const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
+    const q = query(
+      transactionsRef,
+      where('createdAt', '>=', Timestamp.fromDate(startDate)),
+      where('createdAt', '<=', Timestamp.fromDate(endDate)),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const querySnapshot = await getDocs(q);
+    
+    let totalIncome = 0;
+    let totalExpenses = 0;
+    let totalRefunds = 0;
+    
+    querySnapshot.forEach(doc => {
+      const transaction = doc.data();
+      
+      if (transaction.status === 'completed') {
+        const displayInfo = getTransactionDisplayInfo(transaction);
+        
+        if (displayInfo.isRefund) {
+          totalRefunds += displayInfo.displayAmount;
+        } else if (displayInfo.isIncome) {
+          totalIncome += displayInfo.displayAmount;
+        } else if (displayInfo.isExpense) {
+          totalExpenses += displayInfo.displayAmount;
+        }
+      }
+    });
+    
+    console.log('📊 TOTALES MENSUALES CALCULADOS:', {
+      period: `${year}-${month}`,
+      totalIncome,
+      totalExpenses,
+      totalRefunds,
+      netAmount: totalIncome - totalExpenses - totalRefunds
+    });
+    
+    return {
+      totalIncome,
+      totalExpenses,
+      totalRefunds,
+      netAmount: totalIncome - totalExpenses - totalRefunds
+    };
+    
+  } catch (error) {
+    console.error('Error calculating monthly totals:', error);
+    throw error;
+  }
 };
 
 // ================== SERVICIO PRINCIPAL ==================
