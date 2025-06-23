@@ -1,373 +1,361 @@
-// src/services/auth.service.ts
+// src/services/auth.service.ts - VERSIÓN SIMPLE QUE FUNCIONA
 
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
-  signOut, 
+  signOut,
   sendPasswordResetEmail,
-  sendEmailVerification,
-  User
+  User as FirebaseUser
 } from 'firebase/auth';
 import { 
   doc, 
   setDoc, 
   getDoc, 
-  serverTimestamp, 
+  getDocs,
   collection,
   query,
   where,
-  getDocs
+  serverTimestamp,
+  runTransaction
 } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
+import { RegisterFormData } from '../types/auth.types';
 
-// Registro de nuevo gimnasio
+// ================== TIPOS ==================
+
+export interface AuthResponse {
+  success: boolean;
+  message?: string;
+  user?: any;
+  role?: 'superadmin' | 'admin' | 'user';
+  gymId?: string | null;
+  error?: string;
+}
+
+export interface LoginResponse {
+  success: boolean;
+  message?: string;
+  role?: 'superadmin' | 'admin' | 'user';
+  gymId?: string | null;
+  user?: any;
+  error?: string;
+}
+
+// ================== FUNCIONES PRINCIPALES ==================
+
+/**
+ * REGISTRO DE GIMNASIO - VERSIÓN SIMPLE CON gymId AUTOMÁTICO
+ */
 export const registerGym = async (
-email: string, 
-password: string, 
-gymName: string, 
-ownerName: string, 
-phone: string,
-cuit: string
-) => {
-try {
-  // Crear usuario en Authentication
-  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-  const user = userCredential.user;
-  
-  // Enviar correo de verificación
-  await sendEmailVerification(user);
-  
-  // Fecha actual
-  const now = new Date();
-  
-  // Fecha de finalización del período de prueba (10 días)
-  const trialEndDate = new Date();
-  trialEndDate.setDate(now.getDate() + 10);
-  
-  // Crear documento en la colección gyms
-  await setDoc(doc(db, 'gyms', user.uid), {
-    name: gymName,
-    owner: ownerName,
-    email: email,
-    phone: phone,
-    cuit: cuit,
-    registrationDate: serverTimestamp(),
-    status: 'trial',
-    trialEndsAt: trialEndDate,
-    subscriptionData: {
-      plan: '',
-      startDate: null,
-      endDate: null,
-      price: 0,
-      paymentMethod: '',
-      lastPayment: null,
-      renewalRequested: false
-    }
-  });
-  
-  // Crear el primer usuario admin para este gimnasio
-  await setDoc(doc(db, `gyms/${user.uid}/users`, user.uid), {
-    email: email,
-    name: ownerName,
-    role: 'admin',
-    phone: phone,
-    createdAt: serverTimestamp(),
-    lastLogin: serverTimestamp(),
-    isActive: true
-  });
-  
-  return { success: true, user };
-} catch (error: any) {
-  console.error('Error registrando gimnasio:', error);
-  
-  // Proporcionar mensajes de error más específicos basados en los códigos de error de Firebase
-  let errorMessage = 'Error desconocido al registrar el gimnasio.';
-  
-  switch (error.code) {
-    case 'auth/email-already-in-use':
-      errorMessage = 'Este correo electrónico ya está registrado.';
-      break;
-    case 'auth/invalid-email':
-      errorMessage = 'Formato de correo electrónico inválido.';
-      break;
-    case 'auth/weak-password':
-      errorMessage = 'La contraseña es demasiado débil. Debe tener al menos 6 caracteres.';
-      break;
-  }
-  
-  return { success: false, error: errorMessage };
-}
-};
+  email: string,
+  password: string,
+  gymName: string,
+  ownerName: string,
+  phone: string,
+  cuit: string
+): Promise<AuthResponse> => {
+  try {
+    console.log('🏋️ Iniciando registro de gimnasio:', gymName);
 
-// Registro de empleado de gimnasio
-export const registerGymEmployee = async (
-email: string, 
-password: string, 
-name: string,
-phone: string,
-gymId: string,
-role: 'admin' | 'user'
-) => {
-try {
-  // Verificar que el gimnasio existe
-  const gymDoc = await getDoc(doc(db, 'gyms', gymId));
-  if (!gymDoc.exists()) {
-    return { success: false, error: 'El gimnasio no existe' };
-  }
-  
-  // Crear usuario en Authentication
-  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-  const user = userCredential.user;
-  
-  // Enviar correo de verificación
-  await sendEmailVerification(user);
-  
-  // Crear documento en la subcolección users del gimnasio
-  await setDoc(doc(db, `gyms/${gymId}/users`, user.uid), {
-    email: email,
-    name: name,
-    role: role,
-    phone: phone,
-    createdAt: serverTimestamp(),
-    lastLogin: serverTimestamp(),
-    isActive: false // Inicialmente inactivo hasta que sea aprobado por el admin
-  });
-  
-  return { success: true, user };
-} catch (error: any) {
-  console.error('Error registrando empleado:', error);
-  
-  // Proporcionar mensajes de error más específicos
-  let errorMessage = 'Error desconocido al registrar el empleado.';
-  
-  switch (error.code) {
-    case 'auth/email-already-in-use':
-      errorMessage = 'Este correo electrónico ya está registrado.';
-      break;
-    case 'auth/invalid-email':
-      errorMessage = 'Formato de correo electrónico inválido.';
-      break;
-    case 'auth/weak-password':
-      errorMessage = 'La contraseña es demasiado débil. Debe tener al menos 6 caracteres.';
-      break;
-  }
-  
-  return { success: false, error: errorMessage };
-}
-};
+    // 1. Crear usuario en Firebase Auth
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    console.log('✅ Usuario creado en Firebase Auth:', user.uid);
 
-// Inicio de sesión (MODIFICADO)
-export const loginUser = async (email: string, password: string) => {
-try {
-  let user: User;
-  
-  // Si no hay contraseña, asumimos que el usuario ya está autenticado
-  if (!password) {
-    if (!auth.currentUser) {
-      throw new Error('Usuario no autenticado');
-    }
-    user = auth.currentUser;
-  } else {
-    // Autenticar con Firebase
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    user = userCredential.user;
-  }
-  
-  console.log("Usuario autenticado correctamente:", user.uid);
-  
-  // MODIFICACIÓN: Buscar superadmin primero por email
-  const adminsRef = collection(db, 'admins');
-  const adminQuery = query(adminsRef, where('email', '==', email));
-  const adminSnapshot = await getDocs(adminQuery);
-  
-  if (!adminSnapshot.empty) {
-    const adminDoc = adminSnapshot.docs[0];
-    const adminData = adminDoc.data();
-    console.log("Admin encontrado por email:", adminDoc.id);
+    // 2. Crear gimnasio
+    const gymRef = doc(db, 'gyms', user.uid);
+    const trialEndDate = new Date();
+    trialEndDate.setDate(trialEndDate.getDate() + 30);
+
+    const gymData = {
+      name: gymName,
+      owner: ownerName,
+      email: email,
+      phone: phone,
+      cuit: cuit,
+      status: 'trial',
+      registrationDate: serverTimestamp(),
+      trialEndsAt: trialEndDate,
+      logo: null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    };
+
+    await setDoc(gymRef, gymData);
+    console.log('✅ Gimnasio creado:', user.uid);
+
+    // 3. 🔧 CREAR USUARIO ADMIN CON gymId AUTOMÁTICO
+    const userRef = doc(db, `gyms/${user.uid}/users`, user.uid);
+    const userData = {
+      email: email,
+      name: ownerName,
+      role: 'admin',
+      gymId: user.uid, // 🎯 CAMPO CRÍTICO: gymId automático
+      phone: phone,
+      isActive: true,
+      createdAt: serverTimestamp(),
+      lastLogin: serverTimestamp()
+    };
+
+    await setDoc(userRef, userData);
+    console.log('✅ Usuario admin creado con gymId:', user.uid);
+
+    return {
+      success: true,
+      message: 'Gimnasio registrado exitosamente',
+      user: userData,
+      role: 'admin',
+      gymId: user.uid
+    };
+
+  } catch (error: any) {
+    console.error('❌ Error en registro:', error);
     
-    // Verificar tanto "rol" como "role" (por si acaso)
-    const role = adminData.rol || adminData.role;
-    if (role === "superadmin") {
-      console.log("Usuario identificado como superadmin");
-      
-      // Guardar información en localStorage para persistir la sesión
-      localStorage.setItem('userRole', 'superadmin');
-      localStorage.setItem('userEmail', email);
-      
-      return { 
-        success: true, 
-        user,
-        userData: { 
-          ...adminData, 
-          id: user.uid,
-          email: user.email || email,
-          role: 'superadmin',
-          isActive: true
-        }, 
-        role: 'superadmin',
-        gymId: null 
-      };
-    }
-  }
-  
-  // Intentar buscar por ID directamente (forma original)
-  const adminDocRef = doc(db, 'admins', user.uid);
-  const adminDoc = await getDoc(adminDocRef);
-  
-  if (adminDoc.exists()) {
-    const adminData = adminDoc.data();
-    console.log("Admin encontrado por ID:", adminDoc.id);
-    
-    // Verificar tanto "rol" como "role"
-    const role = adminData.rol || adminData.role;
-    if (role === "superadmin") {
-      console.log("Usuario identificado como superadmin");
-      
-      // Guardar información en localStorage para persistir la sesión
-      localStorage.setItem('userRole', 'superadmin');
-      localStorage.setItem('userEmail', email);
-      
-      return { 
-        success: true, 
-        user, 
-        userData: { ...adminData, id: user.uid }, 
-        role: 'superadmin',
-        gymId: null 
-      };
-    }
-  }
-  
-  // Luego verificamos si es propietario de gimnasio (el ID del doc coincide con el UID)
-  const gymDoc = await getDoc(doc(db, 'gyms', user.uid));
-  if (gymDoc.exists()) {
-    // Obtener datos del usuario desde la subcolección users
-    const userDoc = await getDoc(doc(db, `gyms/${user.uid}/users`, user.uid));
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      
-      // Guardar información en localStorage
-      localStorage.setItem('userRole', userData.role);
-      localStorage.setItem('userEmail', email);
-      localStorage.setItem('gymId', user.uid);
-      
-      return { 
-        success: true, 
-        user, 
-        userData: { ...userData, id: user.uid }, 
-        gymData: { ...gymDoc.data(), id: user.uid },
-        role: userData.role,
-        gymId: user.uid
-      };
-    }
-  }
-  
-  // Si no es propietario, buscamos en qué gimnasio está registrado como empleado
-  const gymsRef = collection(db, 'gyms');
-  const gymsSnapshot = await getDocs(gymsRef);
-  
-  for (const gym of gymsSnapshot.docs) {
-    const userDocRef = doc(db, `gyms/${gym.id}/users`, user.uid);
-    const userDoc = await getDoc(userDocRef);
-    
-    if (userDoc.exists()) {
-      const userData = userDoc.data();
-      
-      // Actualizar último login
-      await setDoc(userDocRef, { lastLogin: serverTimestamp() }, { merge: true });
-      
-      // Verificar si el usuario está activo
-      if (!userData.isActive) {
-        await signOut(auth);
-        return { success: false, error: 'Tu cuenta está pendiente de activación por el administrador.' };
+    // Limpiar usuario de Auth si hay error
+    if (auth.currentUser) {
+      try {
+        await auth.currentUser.delete();
+      } catch (deleteError) {
+        console.error('Error al limpiar usuario Auth:', deleteError);
       }
-      
-      // Guardar información en localStorage
-      localStorage.setItem('userRole', userData.role);
-      localStorage.setItem('userEmail', email);
-      localStorage.setItem('gymId', gym.id);
-      
-      return { 
-        success: true, 
-        user, 
-        userData: { ...userData, id: user.uid }, 
-        gymData: { ...gym.data(), id: gym.id },
-        role: userData.role,
-        gymId: gym.id
+    }
+
+    return {
+      success: false,
+      error: error.message || 'Error al registrar gimnasio'
+    };
+  }
+};
+
+/**
+ * LOGIN DE USUARIO
+ */
+export const loginUser = async (email: string, password: string): Promise<LoginResponse> => {
+  try {
+    console.log('🔐 Iniciando login para:', email);
+
+    // 1. Autenticar con Firebase Auth
+    let userCredential;
+    if (password) {
+      userCredential = await signInWithEmailAndPassword(auth, email, password);
+    } else {
+      userCredential = { user: auth.currentUser };
+    }
+
+    if (!userCredential.user) {
+      return {
+        success: false,
+        error: 'Error de autenticación'
       };
     }
+
+    const user = userCredential.user;
+
+    // 2. Buscar en superadmins primero
+    const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+    if (adminDoc.exists()) {
+      const adminData = adminDoc.data();
+      return {
+        success: true,
+        role: 'superadmin',
+        gymId: null,
+        user: {
+          id: user.uid,
+          ...adminData,
+          role: 'superadmin'
+        }
+      };
+    }
+
+    // 3. Buscar en usuarios de gimnasio
+    const gymsSnapshot = await getDocs(collection(db, 'gyms'));
+    
+    for (const gymDoc of gymsSnapshot.docs) {
+      const gymId = gymDoc.id;
+      const userDoc = await getDoc(doc(db, `gyms/${gymId}/users`, user.uid));
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        return {
+          success: true,
+          role: userData.role,
+          gymId: gymId,
+          user: {
+            id: user.uid,
+            ...userData,
+            gymId: gymId
+          }
+        };
+      }
+    }
+
+    // Usuario no encontrado
+    await signOut(auth);
+    return {
+      success: false,
+      error: 'Usuario no encontrado en el sistema'
+    };
+
+  } catch (error: any) {
+    console.error('❌ Error en login:', error);
+    return {
+      success: false,
+      error: error.message || 'Error al iniciar sesión'
+    };
   }
-  
-  // Si llegamos aquí, el usuario existe en Firebase Auth pero no en Firestore
-  console.warn('Usuario autenticado pero no encontrado en Firestore');
-  return { success: false, error: 'Usuario no encontrado en el sistema.' };
-  
-} catch (error: any) {
-  console.error('Error en inicio de sesión:', error);
-  
-  // Proporcionar mensajes de error más específicos
-  let errorMessage = 'Error al iniciar sesión. Verifica tus credenciales e intenta de nuevo.';
-  
-  switch (error.code) {
-    case 'auth/invalid-email':
-      errorMessage = 'Formato de correo electrónico inválido.';
-      break;
-    case 'auth/user-not-found':
-      errorMessage = 'No existe una cuenta con este correo.';
-      break;
-    case 'auth/wrong-password':
-      errorMessage = 'Contraseña incorrecta.';
-      break;
-    case 'auth/too-many-requests':
-      errorMessage = 'Demasiados intentos fallidos. Intenta más tarde.';
-      break;
+};
+
+/**
+ * CREAR USUARIO EN GIMNASIO
+ */
+export const createGymUser = async (
+  gymId: string,
+  userData: {
+    email: string;
+    name: string;
+    password: string;
+    phone?: string;
+    role: 'admin' | 'user';
   }
-  
-  return { success: false, error: errorMessage };
-}
+): Promise<AuthResponse> => {
+  try {
+    // 1. Crear usuario en Firebase Auth
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      userData.email,
+      userData.password
+    );
+
+    const user = userCredential.user;
+
+    // 2. Crear documento del usuario con gymId
+    const userRef = doc(db, `gyms/${gymId}/users`, user.uid);
+    const userDocData = {
+      email: userData.email,
+      name: userData.name,
+      role: userData.role,
+      gymId: gymId, // 🎯 gymId automático
+      phone: userData.phone || '',
+      isActive: true,
+      createdAt: serverTimestamp(),
+      lastLogin: null
+    };
+
+    await setDoc(userRef, userDocData);
+
+    return {
+      success: true,
+      message: 'Usuario creado exitosamente',
+      user: {
+        id: user.uid,
+        ...userDocData
+      },
+      role: userData.role,
+      gymId: gymId
+    };
+
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || 'Error al crear usuario'
+    };
+  }
 };
 
-// Cerrar sesión (MODIFICADO)
-export const logoutUser = async () => {
-try {
-  // Limpiar localStorage antes de cerrar sesión
-  localStorage.removeItem('userRole');
-  localStorage.removeItem('userEmail');
-  localStorage.removeItem('gymId');
-  
-  await signOut(auth);
-  return { success: true };
-} catch (error) {
-  console.error('Error al cerrar sesión:', error);
-  return { success: false, error };
-}
+/**
+ * ALIAS PARA COMPATIBILIDAD
+ */
+export const registerGymEmployee = async (
+  gymId: string,
+  email: string,
+  password: string,
+  name: string,
+  phone?: string,
+  role: 'admin' | 'user' = 'user'
+): Promise<AuthResponse> => {
+  return createGymUser(gymId, {
+    email,
+    name,
+    password,
+    phone,
+    role
+  });
 };
 
-// Recuperar contraseña
-export const resetPassword = async (email: string) => {
-try {
-  await sendPasswordResetEmail(auth, email);
-  return { success: true };
-} catch (error) {
-  console.error('Error al enviar correo de recuperación:', error);
-  return { success: false, error };
-}
+/**
+ * LOGOUT
+ */
+export const logoutUser = async (): Promise<void> => {
+  try {
+    await signOut(auth);
+    console.log('👋 Usuario deslogueado');
+  } catch (error) {
+    console.error('Error al cerrar sesión:', error);
+    throw error;
+  }
 };
 
-// Obtener usuario actual
-export const getCurrentUser = (): User | null => {
-return auth.currentUser;
+/**
+ * RESET PASSWORD
+ */
+export const resetPassword = async (email: string): Promise<AuthResponse> => {
+  try {
+    await sendPasswordResetEmail(auth, email);
+    return {
+      success: true,
+      message: 'Email de recuperación enviado'
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || 'Error al enviar email de recuperación'
+    };
+  }
 };
 
-// NUEVA FUNCIÓN: Verificar autenticación almacenada
-export const checkStoredAuth = () => {
-const userRole = localStorage.getItem('userRole');
-const userEmail = localStorage.getItem('userEmail');
-const gymId = localStorage.getItem('gymId');
+/**
+ * FUNCIÓN PARA CORREGIR USUARIOS EXISTENTES
+ */
+export const fixExistingUsers = async (): Promise<void> => {
+  try {
+    console.log('🔧 Iniciando corrección de usuarios existentes...');
 
-return {
-  isAuthenticated: !!userRole,
-  userRole,
-  userEmail,
-  gymId
+    const gymsSnapshot = await getDocs(collection(db, 'gyms'));
+    
+    for (const gymDoc of gymsSnapshot.docs) {
+      const gymId = gymDoc.id;
+      const usersSnapshot = await getDocs(collection(db, `gyms/${gymId}/users`));
+      
+      for (const userDoc of usersSnapshot.docs) {
+        const userData = userDoc.data();
+        
+        if (!userData.gymId) {
+          console.log(`🔧 Corrigiendo usuario ${userDoc.id} - agregando gymId: ${gymId}`);
+          
+          await setDoc(
+            doc(db, `gyms/${gymId}/users`, userDoc.id),
+            { ...userData, gymId: gymId },
+            { merge: true }
+          );
+        }
+      }
+    }
+
+    console.log('✅ Corrección de usuarios completada');
+  } catch (error) {
+    console.error('❌ Error corrigiendo usuarios:', error);
+    throw error;
+  }
 };
+
+// ================== EXPORTACIONES ==================
+
+export default {
+  registerGym,
+  registerGymEmployee,
+  loginUser,
+  createGymUser,
+  logoutUser,
+  resetPassword,
+  fixExistingUsers
 };
