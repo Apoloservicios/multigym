@@ -162,6 +162,10 @@ const DashboardImproved: React.FC = () => {
     );
     
     const isIncome = !isRefund && !isExpense && transaction.amount > 0;
+
+
+
+
     
     // 🔍 DEBUG para reintegros
     if (isRefund) {
@@ -327,77 +331,102 @@ const DashboardImproved: React.FC = () => {
     }
   }, []);
 
-  // 🔧 GENERAR ACTIVIDADES RECIENTES CON FECHAS ARGENTINA - MEMOIZADO
-  const recentActivities = React.useMemo(() => {
-    if (!transactions.length) return [];
+// 🔧 CORRECCIÓN PARA DashboardImproved.tsx
+// Reemplaza la parte de recentActivities (alrededor de la línea 360) con esta versión corregida:
 
-    // 🔍 DEBUG: Verificar transacciones de reintegro
-    const refundTransactions = transactions.filter(t => 
-      t.type === 'refund' || t.category === 'refund' || 
-      t.description?.toLowerCase().includes('reintegro')
-    );
+const recentActivities = React.useMemo(() => {
+  if (!transactions.length) return [];
+
+  // 🔍 DEBUG: Verificar transacciones de reintegro
+  const refundTransactions = transactions.filter(t => 
+    t.type === 'refund' || t.category === 'refund' || 
+    t.description?.toLowerCase().includes('reintegro')
+  );
+  
+  if (refundTransactions.length > 0) {
+    console.log('🔍 TRANSACCIONES DE REINTEGRO ENCONTRADAS:', {
+      total: refundTransactions.length,
+      transactions: refundTransactions.map(t => ({
+        id: t.id,
+        type: t.type,
+        category: t.category,
+        amount: t.amount,
+        description: t.description?.substring(0, 30) + '...'
+      }))
+    });
+  }
+
+  return transactions.slice(0, 10).map(transaction => {
+    // 🔧 USAR FUNCIÓN IMPORTADA
+    const displayInfo = getTransactionInfo(transaction);
     
-    if (refundTransactions.length > 0) {
-      console.log('🔍 TRANSACCIONES DE REINTEGRO ENCONTRADAS:', {
-        total: refundTransactions.length,
-        transactions: refundTransactions.map(t => ({
-          id: t.id,
-          type: t.type,
-          category: t.category,
-          amount: t.amount,
-          description: t.description?.substring(0, 30) + '...'
-        }))
-      });
-    }
-
-    return transactions.slice(0, 10).map(transaction => {
-      // 🔧 USAR FUNCIÓN CORREGIDA
-      const displayInfo = getTransactionInfo(transaction);
-      
-      let memberDisplayName = 'Usuario del sistema';
-      let transactionDescription = 'Transacción';
-      
-      if (transaction.memberName && transaction.memberName !== transaction.userName) {
-        memberDisplayName = transaction.memberName;
-      } else if (transaction.description) {
-        const desc = transaction.description.toLowerCase();
-        if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
-          const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
-          if (match && match[1]) {
-            memberDisplayName = match[1].trim();
-          }
+    let memberDisplayName = 'Usuario del sistema';
+    let transactionDescription = 'Transacción';
+    
+    if (transaction.memberName && transaction.memberName !== transaction.userName) {
+      memberDisplayName = transaction.memberName;
+    } else if (transaction.description) {
+      const desc = transaction.description.toLowerCase();
+      if (desc.includes('pago membresía') || desc.includes('pago de membresía')) {
+        const match = transaction.description.match(/pago de? membresías? de (.+?)(\s|$)/i);
+        if (match && match[1]) {
+          memberDisplayName = match[1].trim();
         }
       }
-      
-      if (transaction.category === 'membership') {
-        transactionDescription = 'Pago de membresía';
-      } else if (transaction.category === 'extra') {
-        transactionDescription = 'Ingreso extra';
-      } else if (transaction.category === 'refund') {
-        transactionDescription = 'Devolución';
-      } else if (transaction.category === 'withdrawal') {
-        transactionDescription = 'Retiro de caja';
-      } else if (transaction.category === 'expense') {
-        transactionDescription = 'Gasto operativo';
-      } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
-        transactionDescription = transaction.description;
-      }
-      
-      return {
-        id: transaction.id || '',
-        type: displayInfo.type as 'payment' | 'refund' | 'expense',
-        memberName: memberDisplayName,
-        description: transactionDescription,
-        amount: displayInfo.displayAmount,
-        method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
-        timestamp: transaction.createdAt,
-        status: transaction.status || 'completed',
-        color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
-        symbol: displayInfo.isIncome ? '+' : '-',
-        processedBy: transaction.userName || 'Sistema'
-      };
+    }
+    
+    if (transaction.category === 'membership') {
+      transactionDescription = 'Pago de membresía';
+    } else if (transaction.category === 'extra') {
+      transactionDescription = 'Ingreso extra';
+    } else if (transaction.category === 'refund') {
+      transactionDescription = 'Devolución';
+    } else if (transaction.category === 'withdrawal') {
+      transactionDescription = 'Retiro de caja';
+    } else if (transaction.category === 'expense') {
+      transactionDescription = 'Gasto operativo';
+    } else if (transaction.description && !transaction.description.toLowerCase().includes(memberDisplayName.toLowerCase())) {
+      transactionDescription = transaction.description;
+    }
+    
+    // 🔧 CORRECCIÓN CRÍTICA: Mapear correctamente displayInfo.type a los tipos esperados por la tabla
+    let tableType: 'payment' | 'refund' | 'expense';
+    
+    if (displayInfo.isIncome) {
+      tableType = 'payment'; // ✅ Los ingresos deben aparecer como 'payment'
+    } else if (displayInfo.isRefund) {
+      tableType = 'refund';   // ✅ Los reintegros como 'refund'
+    } else {
+      tableType = 'expense';  // ✅ Los gastos como 'expense'
+    }
+    
+    // 🔍 DEBUG para verificar la corrección
+    console.log('🔧 MAPEO DE TIPO CORREGIDO:', {
+      transactionId: transaction.id,
+      description: transaction.description?.substring(0, 30),
+      originalType: transaction.type,
+      displayInfoType: displayInfo.type,
+      isIncome: displayInfo.isIncome,
+      isExpense: displayInfo.isExpense,
+      isRefund: displayInfo.isRefund,
+      finalTableType: tableType
     });
-  }, [transactions, getTransactionInfo, formatPaymentMethodName]);
+    
+    return {
+      id: transaction.id || '',
+      type: tableType, // 🔧 USAR EL TIPO MAPEADO CORRECTAMENTE
+      memberName: memberDisplayName,
+      description: transactionDescription,
+      amount: displayInfo.displayAmount,
+      method: formatPaymentMethodName(transaction.paymentMethod || 'cash'),
+      timestamp: transaction.createdAt,
+      status: transaction.status || 'completed',
+      color: displayInfo.isIncome ? 'text-green-600' : 'text-red-600',
+      symbol: displayInfo.isIncome ? '+' : '-',
+      processedBy: transaction.userName || 'Sistema'
+    };
+  });
+}, [transactions, getTransactionInfo, formatPaymentMethodName]);
 
   // 🔧 CARGAR MÉTRICAS CON FECHAS ARGENTINA - CORREGIDO
   const loadEnhancedMetrics = useCallback(async () => {
@@ -662,6 +691,59 @@ const DashboardImproved: React.FC = () => {
       console.log('⏳ Esperando transacciones para cargar dashboard...');
     }
   }, [gymData?.id, transactions.length]);
+
+
+  // 🔍 DEBUG para DETECTAR GASTOS  ************************
+
+React.useEffect(() => {
+  if (transactions.length > 0) {
+    console.log('🔍 DEBUGGING TRANSACCIONES EN DASHBOARD:');
+    
+    // Analizar las primeras 5 transacciones para ver qué está pasando
+    transactions.slice(0, 5).forEach((transaction, index) => {
+      const displayInfo = getTransactionInfo(transaction);
+      
+      console.log(`📊 Transacción ${index + 1}:`, {
+        id: transaction.id,
+        description: transaction.description,
+        amount: transaction.amount,
+        type: transaction.type,
+        category: transaction.category,
+        status: transaction.status,
+        paymentMethod: transaction.paymentMethod,
+        // Resultado de la clasificación
+        clasificacion: {
+          isIncome: displayInfo.isIncome,
+          isExpense: displayInfo.isExpense,
+          isRefund: displayInfo.isRefund,
+          displayAmount: displayInfo.displayAmount,
+          type: displayInfo.type
+        }
+      });
+    });
+    
+    // Contar por tipo real vs mostrado
+    const realIncome = transactions.filter(t => 
+      t.type === 'income' || 
+      t.category === 'membership' || 
+      t.description?.toLowerCase().includes('pago')
+    ).length;
+    
+    const showingAsIncome = transactions.filter(t => {
+      const displayInfo = getTransactionInfo(t);
+      return displayInfo.isIncome;
+    }).length;
+    
+    console.log('📈 RESUMEN DE CLASIFICACIÓN:', {
+      totalTransacciones: transactions.length,
+      deberianSerIngresos: realIncome,
+      mostrandoComoIngresos: showingAsIncome,
+      problema: realIncome !== showingAsIncome ? 'SÍ HAY PROBLEMA' : 'Todo OK'
+    });
+  }
+}, [transactions, getTransactionInfo]);
+
+// 🔍 FIN DEBUG para DETECTAR GASTOS  ************************
 
   // 🔧 NUEVO useEffect para manejar la carga inicial
   useEffect(() => {

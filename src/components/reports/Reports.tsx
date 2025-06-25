@@ -24,6 +24,15 @@ import { getAttendanceByDateRange } from '../../services/attendance.service';
 import { formatDate, formatCurrency } from '../../utils/formatting.utils';
 import useAuth from '../../hooks/useAuth';
 import { Transaction } from '../../types/gym.types';
+import { 
+  collection, 
+  getDocs, 
+  query, 
+  where, 
+  orderBy, 
+  Timestamp 
+} from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 // Tipos locales
 interface AttendanceReportRecord {
@@ -97,7 +106,7 @@ const Reports: React.FC = () => {
   const [attendanceSummary, setAttendanceSummary] = useState<AttendanceSummary | null>(null);
   const [membershipAnalysis, setMembershipAnalysis] = useState<MembershipAnalysis | null>(null);
 
-  // Datos simulados para gráficos de evolución
+  // Datos para gráficos de evolución
   const [evolutionData, setEvolutionData] = useState<any[]>([]);
 
   useEffect(() => {
@@ -132,63 +141,147 @@ const Reports: React.FC = () => {
     setStartDate(start.toISOString().split('T')[0]);
     setEndDate(end.toISOString().split('T')[0]);
   };
-
-  const generateEvolutionData = (selectedPeriod: string) => {
-    const data = [];
-    const now = new Date();
-    
-    if (selectedPeriod === 'week') {
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date();
-        date.setDate(now.getDate() - i);
-        data.push({
-          date: `${date.getDate()}/${date.getMonth() + 1}`,
-          ingresos: Math.floor(Math.random() * 25000) + 10000,
-          egresos: Math.floor(Math.random() * 8000) + 2000,
-          neto: 0
-        });
+  // ✅ NUEVA FUNCIÓN: Generar datos de evolución con datos reales
+    const generateEvolutionDataFromTransactions = async (selectedPeriod: string, transactions: TransactionLocal[]) => {
+      try {
+        const data = [];
+        const now = new Date();
+        
+        console.log('🔄 Generando datos de evolución para período:', selectedPeriod);
+        console.log('📊 Total transacciones disponibles:', transactions.length);
+        
+        if (selectedPeriod === 'week') {
+          // Últimos 7 días
+          for (let i = 6; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(now.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            const dayTransactions = transactions.filter(tx => {
+              const txDate = tx.date?.toDate ? tx.date.toDate() : new Date(tx.date);
+              const txDateStr = txDate.toISOString().split('T')[0];
+              return txDateStr === dateStr;
+            });
+            
+            const ingresos = dayTransactions
+              .filter(tx => tx.type === 'income')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            const egresos = dayTransactions
+              .filter(tx => tx.type === 'expense')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            data.push({
+              date: `${date.getDate()}/${date.getMonth() + 1}`,
+              ingresos,
+              egresos,
+              neto: ingresos - egresos
+            });
+            
+            console.log(`📅 ${dateStr}: ${dayTransactions.length} tx, $${ingresos} ingresos, $${egresos} egresos`);
+          }
+        } else if (selectedPeriod === 'month') {
+          // Últimos 30 días (mostrar cada 3 días)
+          for (let i = 29; i >= 0; i -= 3) {
+            const date = new Date();
+            date.setDate(now.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            // Agrupar 3 días para no saturar el gráfico
+            const dayTransactions = [];
+            for (let j = 0; j < 3 && (i - j) >= 0; j++) {
+              const checkDate = new Date();
+              checkDate.setDate(now.getDate() - (i - j));
+              const checkDateStr = checkDate.toISOString().split('T')[0];
+              
+              const txsForDay = transactions.filter(tx => {
+                const txDate = tx.date?.toDate ? tx.date.toDate() : new Date(tx.date);
+                const txDateStr = txDate.toISOString().split('T')[0];
+                return txDateStr === checkDateStr;
+              });
+              
+              dayTransactions.push(...txsForDay);
+            }
+            
+            const ingresos = dayTransactions
+              .filter(tx => tx.type === 'income')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            const egresos = dayTransactions
+              .filter(tx => tx.type === 'expense')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            data.push({
+              date: `${date.getDate()}/${date.getMonth() + 1}`,
+              ingresos,
+              egresos,
+              neto: ingresos - egresos
+            });
+          }
+        } else if (selectedPeriod === '3months') {
+          // Últimas 12 semanas
+          for (let i = 11; i >= 0; i--) {
+            const endWeek = new Date();
+            endWeek.setDate(now.getDate() - (i * 7));
+            const startWeek = new Date(endWeek);
+            startWeek.setDate(endWeek.getDate() - 6);
+            
+            const weekTransactions = transactions.filter(tx => {
+              const txDate = tx.date?.toDate ? tx.date.toDate() : new Date(tx.date);
+              return txDate >= startWeek && txDate <= endWeek;
+            });
+            
+            const ingresos = weekTransactions
+              .filter(tx => tx.type === 'income')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            const egresos = weekTransactions
+              .filter(tx => tx.type === 'expense')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            data.push({
+              date: `Sem ${12 - i}`,
+              ingresos,
+              egresos,
+              neto: ingresos - egresos
+            });
+          }
+        } else if (selectedPeriod === 'year') {
+          // Últimos 12 meses
+          const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+          
+          for (let i = 11; i >= 0; i--) {
+            const month = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const nextMonth = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+            
+            const monthTransactions = transactions.filter(tx => {
+              const txDate = tx.date?.toDate ? tx.date.toDate() : new Date(tx.date);
+              return txDate >= month && txDate <= nextMonth;
+            });
+            
+            const ingresos = monthTransactions
+              .filter(tx => tx.type === 'income')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            const egresos = monthTransactions
+              .filter(tx => tx.type === 'expense')
+              .reduce((sum, tx) => sum + tx.amount, 0);
+            
+            data.push({
+              date: months[month.getMonth()],
+              ingresos,
+              egresos,
+              neto: ingresos - egresos
+            });
+          }
+        }
+        
+        console.log('📈 Datos de evolución generados:', data);
+        setEvolutionData(data);
+      } catch (error) {
+        console.error('❌ Error generando datos de evolución:', error);
       }
-    } else if (selectedPeriod === 'month') {
-      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-      const startDay = Math.max(1, now.getDate() - 29);
-      
-      for (let i = startDay; i <= Math.min(daysInMonth, now.getDate()); i++) {
-        data.push({
-          date: `${i}/${now.getMonth() + 1}`,
-          ingresos: Math.floor(Math.random() * 50000) + 20000,
-          egresos: Math.floor(Math.random() * 20000) + 5000,
-          neto: 0
-        });
-      }
-    } else if (selectedPeriod === '3months') {
-      for (let i = 11; i >= 0; i--) {
-        data.push({
-          date: `Sem ${12 - i}`,
-          ingresos: Math.floor(Math.random() * 150000) + 80000,
-          egresos: Math.floor(Math.random() * 60000) + 20000,
-          neto: 0
-        });
-      }
-    } else if (selectedPeriod === 'year') {
-      const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-      const currentMonth = now.getMonth();
-      
-      for (let i = 0; i <= currentMonth; i++) {
-        data.push({
-          date: months[i],
-          ingresos: Math.floor(Math.random() * 500000) + 300000,
-          egresos: Math.floor(Math.random() * 200000) + 100000,
-          neto: 0
-        });
-      }
-    }
-    
-    data.forEach(item => {
-      item.neto = item.ingresos - item.egresos;
-    });
-    
-    setEvolutionData(data);
-  };
+    };
 
   const loadTransactionsByDateRange = async (startDateStr: string, endDateStr: string, transactionData: any[]) => {
     const start = new Date(startDateStr);
@@ -275,7 +368,9 @@ const Reports: React.FC = () => {
       
       setTransactions(mappedTransactions);
       calculateFinancialSummary(mappedTransactions);
-      generateEvolutionData(period);
+      
+      // ✅ USAR DATOS REALES para evolución
+      await generateEvolutionDataFromTransactions(period, mappedTransactions);
       
       if (mappedTransactions.length === 0) {
         setError(`No se encontraron transacciones en el período seleccionado (${startDate} - ${endDate})`);
@@ -336,107 +431,343 @@ const Reports: React.FC = () => {
     }
   };
 
-  const loadMembershipAnalysis = async () => {
-    if (!gymData?.id) {
-      setError('No se puede cargar análisis sin gimnasio');
-      return;
-    }
+  // ✅ NUEVA FUNCIÓN: Cargar análisis de membresías con datos reales
+    const loadMembershipAnalysis = async () => {
+      if (!gymData?.id) {
+        setError('No se puede cargar análisis sin gimnasio');
+        return;
+      }
 
-    setLoading(true);
-    setError('');
+      setLoading(true);
+      setError('');
 
-    try {
-      console.log('🔄 Cargando análisis de membresías...');
-      
-      const analysis: MembershipAnalysis = {
-        totalActiveMembers: 447,
-        newMembers: 368,
-        expiringMembers: 23,
-        membershipTypeBreakdown: {
-          'Mensual': 285,
-          'Trimestral': 98,
-          'Semestral': 45,
-          'Anual': 19
-        },
-        revenueByMembership: {
-          'Mensual': 1425000,
-          'Trimestral': 882000,
-          'Semestral': 540000,
-          'Anual': 380000
+      try {
+        console.log('🔄 Cargando análisis de membresías con datos reales...');
+        
+        // Obtener todos los miembros
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const membersSnapshot = await getDocs(membersRef);
+        
+        console.log('👥 Miembros encontrados:', membersSnapshot.size);
+        
+        // Calcular fechas para análisis
+        const now = new Date();
+        const oneMonthFromNow = new Date(now.getTime() + (30 * 24 * 60 * 60 * 1000));
+        const oneMonthAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+        
+        let totalActiveMembers = 0;
+        let newMembers = 0;
+        let expiringMembers = 0;
+        const membershipTypeBreakdown: { [key: string]: number } = {};
+        const revenueByMembership: { [key: string]: number } = {};
+        
+        // Buscar membresías dentro de cada socio
+        for (const memberDoc of membersSnapshot.docs) {
+          const member = memberDoc.data();
+          const memberId = memberDoc.id;
+          
+          // Contar miembros activos
+          if (member.status === 'active') {
+            totalActiveMembers++;
+          }
+          
+          // Contar nuevos miembros del último mes
+          if (member.createdAt) {
+            const createdDate = member.createdAt.toDate ? member.createdAt.toDate() : new Date(member.createdAt);
+            if (createdDate >= oneMonthAgo) {
+              newMembers++;
+            }
+          }
+          
+          // Buscar membresías en la subcolección del socio
+          try {
+            const membershipSubcollectionRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
+            const membershipSnapshot = await getDocs(membershipSubcollectionRef);
+            
+            console.log(`🎫 Membresías para ${member.firstName || 'Sin nombre'}:`, membershipSnapshot.size);
+            
+            membershipSnapshot.forEach(membershipDoc => {
+              const membership = membershipDoc.data();
+              
+              console.log('🔍 Procesando membresía:', {
+                membershipName: membership.membershipName,
+                activityName: membership.activityName, // ✅ NUEVO: Probar este campo también
+                type: membership.type, // ✅ NUEVO: Probar este campo también
+                cost: membership.cost,
+                endDate: membership.endDate,
+                status: membership.status
+              });
+              
+              // ✅ SOLO PROCESAR MEMBRESÍAS ACTIVAS
+              if (membership.status === 'active') {
+                
+                // ✅ USAR MÚLTIPLES CAMPOS PARA IDENTIFICAR EL TIPO
+                let membershipType = 'Membresía General'; // Valor por defecto
+                
+                if (membership.membershipName) {
+                  membershipType = membership.membershipName;
+                } else if (membership.activityName) {
+                  membershipType = membership.activityName;
+                } else if (membership.type) {
+                  membershipType = membership.type;
+                } else {
+                  // ✅ CREAR TIPO BASADO EN COSTO SI NO HAY NOMBRE
+                  if (membership.cost) {
+                    if (membership.cost <= 20000) {
+                      membershipType = 'Membresía Básica';
+                    } else if (membership.cost <= 35000) {
+                      membershipType = 'Membresía Premium';
+                    } else {
+                      membershipType = 'Membresía VIP';
+                    }
+                  }
+                }
+                
+                console.log(`✅ Tipo determinado: "${membershipType}" para costo: $${membership.cost}`);
+                
+                // Contar por tipo de membresía
+                membershipTypeBreakdown[membershipType] = (membershipTypeBreakdown[membershipType] || 0) + 1;
+                
+                // Sumar revenue por tipo
+                if (membership.cost && membership.cost > 0) {
+                  revenueByMembership[membershipType] = (revenueByMembership[membershipType] || 0) + membership.cost;
+                }
+                
+                // ✅ CONTAR MEMBRESÍAS QUE EXPIRAN PRONTO (SOLO ACTIVAS)
+                if (membership.endDate) {
+                  const endDate = membership.endDate.toDate ? membership.endDate.toDate() : new Date(membership.endDate);
+                  if (endDate <= oneMonthFromNow && endDate >= now) {
+                    expiringMembers++;
+                    console.log(`⏰ Membresía expira pronto: ${membershipType} - ${endDate.toLocaleDateString()}`);
+                  }
+                }
+              } else {
+                console.log(`❌ Membresía ${membership.status} - no procesada`);
+              }
+            });
+          } catch (membershipError) {
+            console.warn(`⚠️ Error cargando membresías para ${memberId}:`, membershipError);
+          }
         }
-      };
+        
+        console.log('📊 Breakdown de tipos:', membershipTypeBreakdown);
+        console.log('💰 Revenue por tipo:', revenueByMembership);
+        console.log('⏰ Membresías por vencer:', expiringMembers);
+        
+        // ✅ VERIFICAR SI HAY DATOS VÁLIDOS
+        const hasValidData = Object.keys(membershipTypeBreakdown).length > 0;
+        
+        if (!hasValidData) {
+          console.log('⚠️ No se encontraron membresías activas con tipos válidos');
+          // Crear datos basados en los miembros activos
+          membershipTypeBreakdown['Membresías sin clasificar'] = totalActiveMembers || 1;
+          revenueByMembership['Membresías sin clasificar'] = 0;
+        }
+        
+        const analysis: MembershipAnalysis = {
+          totalActiveMembers: totalActiveMembers || membersSnapshot.size,
+          newMembers,
+          expiringMembers,
+          membershipTypeBreakdown,
+          revenueByMembership
+        };
 
-      setMembershipAnalysis(analysis);
+        console.log('📊 Análisis final de membresías:', analysis);
+        setMembershipAnalysis(analysis);
+        
+      } catch (err: any) {
+        console.error('❌ Error cargando análisis de membresías:', err);
+        setError(err.message || 'Error al cargar análisis de membresías');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+// ✅ MEJORA ADICIONAL: Debug mejorado para verificar estructura de datos
+    const debugMembershipStructure = async () => {
+      if (!gymData?.id) return;
       
-    } catch (err: any) {
-      console.error('❌ Error cargando análisis de membresías:', err);
-      setError(err.message || 'Error al cargar análisis de membresías');
-    } finally {
-      setLoading(false);
-    }
-  };
+      try {
+        console.log('🔍 DEBUG: Verificando estructura de membresías...');
+        
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const membersSnapshot = await getDocs(membersRef);
+        
+        for (const memberDoc of membersSnapshot.docs.slice(0, 1)) { // Solo el primer socio
+          const member = memberDoc.data();
+          const memberId = memberDoc.id;
+          
+          console.log(`🔍 DEBUG: Socio ${member.firstName}:`, member);
+          
+          const membershipSubcollectionRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
+          const membershipSnapshot = await getDocs(membershipSubcollectionRef);
+          
+          membershipSnapshot.forEach(membershipDoc => {
+            const membership = membershipDoc.data();
+            console.log('🔍 DEBUG: Estructura completa de membresía:', membership);
+            console.log('🔍 DEBUG: Campos disponibles:', Object.keys(membership));
+          });
+          
+          break; // Solo revisar el primer socio
+        }
+      } catch (error) {
+        console.error('❌ Error en debug:', error);
+      }
+    };
+
 
   const handleCancelLoading = () => {
     setCancelLoading(true);
     setError('Carga cancelada por el usuario');
   };
 
-  const calculateFinancialSummary = (txs: TransactionLocal[]) => {
-    const totalIncome = txs.filter(tx => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
-    const totalExpenses = txs.filter(tx => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
-    
-    const categoryBreakdown = txs.reduce((acc, tx) => {
-      acc[tx.category] = (acc[tx.category] || 0) + tx.amount;
-      return acc;
-    }, {} as { [key: string]: number });
+    const calculateFinancialSummary = (txs: TransactionLocal[]) => {
+      console.log('🧮 Calculando resumen financiero con', txs.length, 'transacciones');
+      
+      const totalIncome = txs.filter(tx => tx.type === 'income').reduce((sum, tx) => sum + tx.amount, 0);
+      const totalExpenses = txs.filter(tx => tx.type === 'expense').reduce((sum, tx) => sum + tx.amount, 0);
+      
+      // ✅ MEJORAR el breakdown por categoría - separar ingresos y egresos
+      const categoryBreakdown = txs.reduce((acc, tx) => {
+        // Crear clave que incluya el tipo para evitar mezclar ingresos y egresos
+        const categoryKey = tx.type === 'expense' ? tx.category : tx.category;
+        acc[categoryKey] = (acc[categoryKey] || 0) + tx.amount;
+        return acc;
+      }, {} as { [key: string]: number });
 
-    const paymentMethodBreakdown = txs.reduce((acc, tx) => {
-      const method = tx.paymentMethod || 'cash';
-      acc[method] = (acc[method] || 0) + tx.amount;
-      return acc;
-    }, {} as { [key: string]: number });
+      const paymentMethodBreakdown = txs.reduce((acc, tx) => {
+        const method = tx.paymentMethod || 'cash';
+        acc[method] = (acc[method] || 0) + tx.amount;
+        return acc;
+      }, {} as { [key: string]: number });
 
-    setFinancialSummary({
-      totalIncome,
-      totalExpenses,
-      netAmount: totalIncome - totalExpenses,
-      transactionCount: txs.length,
-      categoryBreakdown,
-      paymentMethodBreakdown
-    });
+      console.log('📊 Breakdown por categoría:', categoryBreakdown);
+      console.log('💰 Total ingresos:', totalIncome);
+      console.log('💸 Total egresos:', totalExpenses);
+
+      setFinancialSummary({
+        totalIncome,
+        totalExpenses,
+        netAmount: totalIncome - totalExpenses,
+        transactionCount: txs.length,
+        categoryBreakdown,
+        paymentMethodBreakdown
+      });
+    };
+
+    const calculateAttendanceSummary = (attendances: AttendanceReportRecord[]) => {
+      const totalAttendances = attendances.length;
+      const successfulAttendances = attendances.filter(att => att.status === 'success').length;
+      const failedAttendances = totalAttendances - successfulAttendances;
+      
+      const hourlyDistribution = attendances.reduce((acc, att) => {
+        try {
+          const date = att.timestamp?.toDate ? att.timestamp.toDate() : new Date(att.timestamp);
+          const hour = date.getHours();
+          const timeSlot = `${hour}:00 - ${hour + 1}:00`;
+          acc[timeSlot] = (acc[timeSlot] || 0) + 1;
+        } catch (error) {
+          // Ignorar errores de fecha
+        }
+        return acc;
+      }, {} as { [key: string]: number });
+
+      const memberDistribution = attendances.reduce((acc, att) => {
+        acc[att.memberName] = (acc[att.memberName] || 0) + 1;
+        return acc;
+      }, {} as { [key: string]: number });
+
+      setAttendanceSummary({
+        totalAttendances,
+        successfulAttendances,
+        failedAttendances,
+        successRate: totalAttendances > 0 ? (successfulAttendances / totalAttendances) * 100 : 0,
+        hourlyDistribution,
+        memberDistribution
+      });
+    };
+
+    // ✅ CORRECCIÓN 3: Mejorar renderizado de gráficos de membresías
+  const renderMembershipCharts = () => {
+    if (!membershipAnalysis) return null;
+
+    // Verificar si hay datos para los gráficos
+    const hasTypeData = Object.keys(membershipAnalysis.membershipTypeBreakdown).length > 0;
+    const hasRevenueData = Object.values(membershipAnalysis.revenueByMembership).some(value => value > 0);
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Distribución por tipo de membresía */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-semibold mb-4">Distribución por Tipo de Membresía</h3>
+          <div className="h-64">
+            {hasTypeData ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <RechartPieChart>
+                  <Pie
+                    data={Object.entries(membershipAnalysis.membershipTypeBreakdown).map(([type, count]) => ({
+                      name: type,
+                      value: count
+                    }))}
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    fill="#8884d8"
+                    dataKey="value"
+                    label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {Object.entries(membershipAnalysis.membershipTypeBreakdown).map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => `${value} socios`} />
+                </RechartPieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="text-center">
+                  <PieChart size={48} className="mx-auto mb-2 opacity-30" />
+                  <p>No hay datos de tipos de membresía</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Revenue por tipo de membresía */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-semibold mb-4">Revenue por Tipo de Membresía</h3>
+          <div className="h-64">
+            {hasRevenueData ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={Object.entries(membershipAnalysis.revenueByMembership).map(([type, revenue]) => ({
+                  type,
+                  revenue
+                }))}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="type" />
+                  <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                  <Tooltip formatter={(value) => formatCurrency(value as number)} />
+                  <Bar dataKey="revenue" fill="#3B82F6" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="text-center">
+                  <BarChart3 size={48} className="mx-auto mb-2 opacity-30" />
+                  <p>No hay datos de revenue</p>
+                  <p className="text-xs">Los costos de membresías pueden estar en $0</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
+ // ✅ fin   CORRECCIÓN 3: Mejorar renderizado de gráficos de membresías
+  
 
-  const calculateAttendanceSummary = (attendances: AttendanceReportRecord[]) => {
-    const totalAttendances = attendances.length;
-    const successfulAttendances = attendances.filter(att => att.status === 'success').length;
-    const failedAttendances = totalAttendances - successfulAttendances;
-    
-    const hourlyDistribution = attendances.reduce((acc, att) => {
-      try {
-        const date = att.timestamp?.toDate ? att.timestamp.toDate() : new Date(att.timestamp);
-        const hour = date.getHours();
-        const timeSlot = `${hour}:00 - ${hour + 1}:00`;
-        acc[timeSlot] = (acc[timeSlot] || 0) + 1;
-      } catch (error) {
-        // Ignorar errores de fecha
-      }
-      return acc;
-    }, {} as { [key: string]: number });
-
-    const memberDistribution = attendances.reduce((acc, att) => {
-      acc[att.memberName] = (acc[att.memberName] || 0) + 1;
-      return acc;
-    }, {} as { [key: string]: number });
-
-    setAttendanceSummary({
-      totalAttendances,
-      successfulAttendances,
-      failedAttendances,
-      successRate: totalAttendances > 0 ? (successfulAttendances / totalAttendances) * 100 : 0,
-      hourlyDistribution,
-      memberDistribution
-    });
-  };
 
   const handleExportAttendances = async () => {
     if (!attendances.length) {
@@ -551,76 +882,130 @@ const Reports: React.FC = () => {
     );
   };
 
-  const renderCategoryChart = () => {
-    if (!financialSummary) return null;
+    const renderCategoryChart = () => {
+      if (!financialSummary) return null;
 
-    const categoryData = Object.entries(financialSummary.categoryBreakdown).map(([category, amount]) => ({
-      name: category === 'membership' ? 'Membresías' : 
-            category === 'extra' ? 'Extras' : 
-            category === 'expense' ? 'Gastos' : 
-            category,
-      value: amount
-    }));
+      // ✅ CALCULAR PORCENTAJES CORRECTAMENTE
+      const totalAmount = Object.values(financialSummary.categoryBreakdown).reduce((sum, amount) => sum + Math.abs(amount), 0);
+      
+      if (totalAmount === 0) {
+        return (
+          <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+            <h3 className="text-lg font-semibold mb-4">Distribución por Categorías</h3>
+            <div className="h-64 flex items-center justify-center text-gray-500">
+              <div className="text-center">
+                <PieChart size={48} className="mx-auto mb-2 opacity-30" />
+                <p>No hay datos de categorías</p>
+              </div>
+            </div>
+          </div>
+        );
+      }
 
-    return (
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <h3 className="text-lg font-semibold mb-4">Distribución por Categorías</h3>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <RechartPieChart>
-              <Pie
-                data={categoryData}
-                cx="50%"
-                cy="50%"
-                outerRadius={80}
-                fill="#8884d8"
-                dataKey="value"
-                label={({ name, percent }: { name: string; percent: number }) => `${name} ${(percent * 100).toFixed(0)}%`}
-              >
-                {categoryData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => formatCurrency(value as number)} />
-            </RechartPieChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-    );
-  };
+      const categoryData = Object.entries(financialSummary.categoryBreakdown)
+        .filter(([category, amount]) => Math.abs(amount) > 0) // Solo mostrar categorías con datos
+        .map(([category, amount]) => ({
+          name: category === 'membership' ? 'Membresías' : 
+                category === 'extra' ? 'Extras' : 
+                category === 'expense' ? 'Gastos' : 
+                category === 'maintenance' ? 'Mantenimiento' :
+                category === 'product' ? 'Productos' :
+                category === 'refund' ? 'Reintegros' :
+                category,
+          value: Math.abs(amount), // Usar valor absoluto para el gráfico
+          percentage: (Math.abs(amount) / totalAmount) * 100
+        }));
 
-  const renderEvolutionChart = () => {
-    return (
-      <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Evolución de Ingresos</h3>
-          <select 
-            value={period} 
-            onChange={(e) => setPeriod(e.target.value as any)}
-            className="border border-gray-300 rounded-md px-3 py-1 text-sm"
-          >
-            <option value="week">Última Semana</option>
-            <option value="month">Este Mes</option>
-            <option value="3months">Últimos 3 Meses</option>
-            <option value="year">Este Año</option>
-          </select>
+      console.log('🥧 Datos para gráfico de categorías:', categoryData);
+
+      return (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <h3 className="text-lg font-semibold mb-4">Distribución por Categorías</h3>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <RechartPieChart>
+                <Pie
+                  data={categoryData}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                  label={({ name, percentage }: { name: string; percentage: number }) => 
+                    `${name} ${percentage.toFixed(0)}%`
+                  }
+                >
+                  {categoryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  formatter={(value) => [formatCurrency(value as number), 'Monto']}
+                  labelFormatter={(label) => `Categoría: ${label}`}
+                />
+              </RechartPieChart>
+            </ResponsiveContainer>
+          </div>
+          
+          {/* ✅ AGREGAR TABLA DE DEBUG */}
+          <div className="mt-4 text-xs text-gray-500">
+            <p>Total procesado: {formatCurrency(totalAmount)} | Categorías: {categoryData.length}</p>
+          </div>
         </div>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={evolutionData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis tickFormatter={(value) => formatCurrency(value)} />
-              <Tooltip formatter={(value) => formatCurrency(value as number)} />
-              <Line type="monotone" dataKey="ingresos" stroke="#10B981" strokeWidth={2} name="Ingresos" />
-              <Line type="monotone" dataKey="egresos" stroke="#EF4444" strokeWidth={2} name="Egresos" />
-              <Line type="monotone" dataKey="neto" stroke="#3B82F6" strokeWidth={2} name="Neto" />
-            </LineChart>
-          </ResponsiveContainer>
+      );
+    };
+
+    const renderEvolutionChart = () => {
+      return (
+        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold">Evolución de Ingresos (Datos Reales)</h3>
+            <select 
+              value={period} 
+              onChange={(e) => setPeriod(e.target.value as any)}
+              className="border border-gray-300 rounded-md px-3 py-1 text-sm"
+            >
+              <option value="week">Última Semana</option>
+              <option value="month">Este Mes</option>
+              <option value="3months">Últimos 3 Meses</option>
+              <option value="year">Este Año</option>
+            </select>
+          </div>
+          
+          {/* Debug info */}
+          <div className="mb-2 text-xs text-gray-500">
+            Datos cargados: {evolutionData.length} puntos | Transacciones: {transactions.length}
+          </div>
+          
+          <div className="h-64">
+            {evolutionData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={evolutionData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis tickFormatter={(value) => formatCurrency(value)} />
+                  <Tooltip 
+                    formatter={(value, name) => [formatCurrency(value as number), name]} 
+                    labelStyle={{ color: '#000' }}
+                  />
+                  <Line type="monotone" dataKey="ingresos" stroke="#10B981" strokeWidth={2} name="Ingresos" />
+                  <Line type="monotone" dataKey="egresos" stroke="#EF4444" strokeWidth={2} name="Egresos" />
+                  <Line type="monotone" dataKey="neto" stroke="#3B82F6" strokeWidth={2} name="Neto" />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="text-center">
+                  <TrendingUp size={48} className="mx-auto mb-2 opacity-30" />
+                  <p>Genere el reporte para ver la evolución con datos reales</p>
+                  <p className="text-xs mt-1">Período: {period} | Fecha inicio: {startDate}</p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    );
-  };
+      );
+    };
 
   const renderAttendanceCharts = () => {
     if (!attendanceSummary) return null;
@@ -698,12 +1083,11 @@ const Reports: React.FC = () => {
       </>
     );
   };
-
   return (
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Reportes Avanzados</h1>
-        <p className="text-gray-600">Análisis completo y exportación de datos del gimnasio</p>
+        <p className="text-gray-600">Análisis completo y exportación de datos reales del gimnasio</p>
       </div>
 
       {/* Pestañas de navegación */}
@@ -1019,14 +1403,14 @@ const Reports: React.FC = () => {
         {activeTab === 'members' && (
           <>
             <div className="flex justify-between items-center">
-              <h2 className="text-xl font-semibold">Análisis de Socios y Membresías</h2>
+              <h2 className="text-xl font-semibold">Análisis de Socios y Membresías (Datos Reales)</h2>
               <button
                 onClick={loadMembershipAnalysis}
                 disabled={loading}
-                className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50 flex items-center"
+                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center"
               >
-                <FileSpreadsheet size={16} className="mr-2" />
-                {loading ? 'Cargando...' : 'Exportar Excel'}
+                <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? 'Cargando...' : 'Generar Análisis'}
               </button>
             </div>
 
@@ -1039,7 +1423,7 @@ const Reports: React.FC = () => {
                       <div>
                         <p className="text-sm font-medium text-gray-600">Total de Socios</p>
                         <p className="text-2xl font-bold text-blue-600">{membershipAnalysis.totalActiveMembers}</p>
-                        <p className="text-sm text-green-600">+{membershipAnalysis.newMembers} nuevos en el período</p>
+                        <p className="text-sm text-green-600">+{membershipAnalysis.newMembers} nuevos este mes</p>
                       </div>
                       <div className="bg-blue-50 p-3 rounded-lg">
                         <Users size={24} className="text-blue-600" />
@@ -1052,7 +1436,7 @@ const Reports: React.FC = () => {
                       <div>
                         <p className="text-sm font-medium text-gray-600">Socios Activos</p>
                         <p className="text-2xl font-bold text-green-600">{membershipAnalysis.totalActiveMembers}</p>
-                        <p className="text-sm text-gray-500">99.8% del total</p>
+                        <p className="text-sm text-gray-500">Estado actual</p>
                       </div>
                       <div className="bg-green-50 p-3 rounded-lg">
                         <Target size={24} className="text-green-600" />
@@ -1204,7 +1588,7 @@ const Reports: React.FC = () => {
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 mb-2">Análisis de Membresías</h3>
                 <p className="text-gray-500 mb-4">
-                  Genere el reporte para ver el análisis completo de socios y membresías
+                  Genere el reporte para ver el análisis completo de socios y membresías con datos reales
                 </p>
                 <button
                   onClick={loadMembershipAnalysis}
