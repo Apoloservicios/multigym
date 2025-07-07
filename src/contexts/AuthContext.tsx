@@ -1,8 +1,8 @@
-// src/contexts/AuthContext.tsx
+// src/contexts/AuthContext.tsx - VERSIÓN DEFINITIVA
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { getDoc, doc, updateDoc, serverTimestamp, collection, getDocs, query, where, limit } from 'firebase/firestore';
+import { getDoc, doc, updateDoc, serverTimestamp, collection, getDocs, query, where } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { toJsDate } from '../utils/date.utils';
 
@@ -13,8 +13,8 @@ interface UserData {
   name: string;
   role: 'superadmin' | 'admin' | 'user';
   phone?: string;
-  createdAt: any; // Timestamp de Firebase
-  lastLogin?: any; // Timestamp de Firebase
+  createdAt: any;
+  lastLogin?: any;
   isActive: boolean;
 }
 
@@ -53,7 +53,6 @@ interface AuthContextType {
   isSubscriptionActive: boolean;
   checkTrialStatus: () => boolean;
   checkSubscriptionStatus: () => boolean;
-  // Nuevas propiedades
   subscriptionEndDate: Date | null;
   trialEndDate: Date | null;
   subscriptionDaysLeft: number;
@@ -64,6 +63,15 @@ interface AuthContextType {
 // Crear el contexto
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Hook personalizado para usar el contexto
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth debe ser usado dentro de un AuthProvider');
+  }
+  return context;
+};
+
 // Crear el proveedor del contexto
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -73,137 +81,179 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isComponentMounted = true;
+
     const unsubscribe = onAuthStateChanged(auth, async (user: User | null) => {
+      if (!isComponentMounted) return;
+
+      console.log("🔔 Auth state changed:", user ? `${user.email} (${user.uid})` : 'No user');
       setCurrentUser(user);
       
       if (user) {
         try {
-          console.log("Usuario logueado en AuthContext:", user.uid);
+          console.log("🔍 Verificando permisos para:", user.email);
           
-          // MODIFICACIÓN: Primero verificamos si es un superadmin (buscar por email)
+          // PASO 1: Verificar si es superadmin por email
+          console.log("1️⃣ Buscando superadmin por email...");
           const adminsRef = collection(db, 'admins');
           const adminQuery = query(adminsRef, where('email', '==', user.email));
           const adminSnapshot = await getDocs(adminQuery);
           
+          if (!isComponentMounted) return;
+          
           if (!adminSnapshot.empty) {
             const adminDoc = adminSnapshot.docs[0];
             const adminData = adminDoc.data();
-            console.log("Admin encontrado en AuthContext:", adminData);
+            console.log("✅ Admin encontrado por email:", adminData);
             
-            // Verificar tanto "rol" como "role" (por si acaso)
             const role = adminData.rol || adminData.role;
             if (role === "superadmin") {
-              console.log("Usuario confirmado como superadmin en AuthContext");
+              console.log("🎉 SUPERADMIN CONFIRMADO");
               
-              setUserData({ 
-                id: user.uid,
-                email: user.email || '',
-                name: adminData.name || 'SuperAdmin',
-                role: 'superadmin',
-                createdAt: adminData.createdAt || new Date(),
-                isActive: true
-              });
-              setUserRole('superadmin');
-              setGymData(null);
-              setLoading(false);
+              if (isComponentMounted) {
+                setUserData({ 
+                  id: adminDoc.id,
+                  email: user.email || '',
+                  name: adminData.name || 'SuperAdmin',
+                  role: 'superadmin',
+                  createdAt: adminData.createdAt || new Date(),
+                  isActive: true
+                });
+                setUserRole('superadmin');
+                setGymData(null);
+                setLoading(false);
+              }
               return;
             }
           }
           
-          // Luego verificamos por ID (forma original)
+          // PASO 2: Verificar por ID en admins
+          console.log("2️⃣ Buscando admin por ID...");
           const adminDoc = await getDoc(doc(db, 'admins', user.uid));
+          
+          if (!isComponentMounted) return;
+          
           if (adminDoc.exists()) {
-            setUserData({ 
-              ...adminDoc.data(), 
-              id: user.uid,
-              role: 'superadmin',
-              isActive: true
-            } as UserData);
-            setUserRole('superadmin');
-            setGymData(null);
-            setLoading(false);
+            const adminData = adminDoc.data();
+            console.log("✅ Admin encontrado por ID:", adminData);
+            
+            if (isComponentMounted) {
+              setUserData({ 
+                ...adminData, 
+                id: user.uid,
+                role: 'superadmin',
+                isActive: true
+              } as UserData);
+              setUserRole('superadmin');
+              setGymData(null);
+              setLoading(false);
+            }
             return;
           }
           
-          // Luego verificamos si es propietario de gimnasio
+          // PASO 3: Verificar si es propietario de gimnasio
+          console.log("3️⃣ Verificando como propietario de gimnasio...");
           const gymDoc = await getDoc(doc(db, 'gyms', user.uid));
+          
+          if (!isComponentMounted) return;
+          
           if (gymDoc.exists()) {
-            setGymData({ ...gymDoc.data(), id: user.uid } as GymData);
+            console.log("✅ Gimnasio encontrado");
+            const gymDataResult = { ...gymDoc.data(), id: user.uid } as GymData;
             
             // Obtener datos del usuario desde la subcolección users
             const userDoc = await getDoc(doc(db, `gyms/${user.uid}/users`, user.uid));
+            
+            if (!isComponentMounted) return;
+            
             if (userDoc.exists()) {
-              setUserData({ ...userDoc.data(), id: user.uid } as UserData);
-              setUserRole(userDoc.data().role);
+              const userDataResult = { ...userDoc.data(), id: user.uid } as UserData;
               
               // Actualizar último login
               await updateDoc(doc(db, `gyms/${user.uid}/users`, user.uid), {
                 lastLogin: serverTimestamp()
               });
+              
+              if (isComponentMounted) {
+                setUserData(userDataResult);
+                setGymData(gymDataResult);
+                setUserRole(userDataResult.role);
+                setLoading(false);
+              }
             }
-            
-            setLoading(false);
             return;
           }
           
-          // Si no es propietario, buscamos en qué gimnasio está registrado como empleado
+          // PASO 4: Buscar en gimnasios como empleado
+          console.log("4️⃣ Buscando como empleado...");
           const gymsRef = collection(db, 'gyms');
           const gymsSnapshot = await getDocs(gymsRef);
+          
+          if (!isComponentMounted) return;
           
           for (const gym of gymsSnapshot.docs) {
             const userDocRef = doc(db, `gyms/${gym.id}/users`, user.uid);
             const userDoc = await getDoc(userDocRef);
             
             if (userDoc.exists()) {
-              setUserData({ ...userDoc.data(), id: user.uid } as UserData);
-              setGymData({ ...gym.data(), id: gym.id } as GymData);
-              setUserRole(userDoc.data().role);
+              console.log("✅ Usuario encontrado como empleado");
               
               // Actualizar último login
               await updateDoc(userDocRef, {
                 lastLogin: serverTimestamp()
               });
               
-              setLoading(false);
+              if (isComponentMounted) {
+                setUserData({ ...userDoc.data(), id: user.uid } as UserData);
+                setGymData({ ...gym.data(), id: gym.id } as GymData);
+                setUserRole(userDoc.data().role);
+                setLoading(false);
+              }
               return;
             }
           }
           
-          // Si llegamos aquí, el usuario existe en Firebase Auth pero no en Firestore
-          console.warn('Usuario autenticado pero no encontrado en Firestore');
-          
-          // IMPORTANTE: En lugar de simplemente mostrar un warning, cerramos la sesión
-          await auth.signOut();
-          setUserData(null);
-          setGymData(null);
-          setUserRole(null);
+          // Si llegamos aquí, el usuario no se encontró
+          console.log("❌ Usuario no encontrado en Firestore");
+          if (isComponentMounted) {
+            await auth.signOut();
+            setUserData(null);
+            setGymData(null);
+            setUserRole(null);
+          }
           
         } catch (error) {
-          console.error('Error al cargar datos de usuario:', error);
-          // En caso de error, cerramos la sesión también
-          await auth.signOut();
+          console.error('❌ Error al verificar usuario:', error);
+          if (isComponentMounted) {
+            await auth.signOut();
+            setUserData(null);
+            setGymData(null);
+            setUserRole(null);
+          }
+        }
+      } else {
+        if (isComponentMounted) {
           setUserData(null);
           setGymData(null);
           setUserRole(null);
         }
-      } else {
-        setUserData(null);
-        setGymData(null);
-        setUserRole(null);
       }
       
-      setLoading(false);
+      if (isComponentMounted) {
+        setLoading(false);
+      }
     });
 
-    return unsubscribe;
+    return () => {
+      isComponentMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   // Verificar si el período de prueba está activo
   const checkTrialStatus = (): boolean => {
     if (!gymData) return false;
-    
     if (gymData.status !== 'trial') return false;
-    
     if (!gymData.trialEndsAt) return false;
     
     const trialEndDate = gymData.trialEndsAt.toDate ? gymData.trialEndsAt.toDate() : new Date(gymData.trialEndsAt);
@@ -215,9 +265,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Verificar si la suscripción está activa
   const checkSubscriptionStatus = (): boolean => {
     if (!gymData) return false;
-    
     if (gymData.status !== 'active') return false;
-    
     if (!gymData.subscriptionData?.endDate) return false;
     
     const endDate = gymData.subscriptionData.endDate.toDate ? 
@@ -228,20 +276,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return endDate > currentDate;
   };
 
-  // Funciones adicionales para información de suscripción
-  // Obtener fecha de finalización de suscripción
+  // Funciones auxiliares
   const getSubscriptionEndDate = (): Date | null => {
     if (!gymData?.subscriptionData?.endDate) return null;
     return toJsDate(gymData.subscriptionData.endDate);
   };
   
-  // Obtener fecha de finalización de período de prueba
   const getTrialEndDate = (): Date | null => {
     if (!gymData?.trialEndsAt) return null;
     return toJsDate(gymData.trialEndsAt);
   };
   
-  // Calcular días restantes de suscripción o período de prueba
   const getSubscriptionDaysLeft = (): number => {
     const now = new Date();
     
@@ -264,7 +309,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return 0;
   };
   
-  // Determinar estado actual de suscripción
   const getSubscriptionStatus = (): 'active' | 'expired' | 'trial' | 'suspended' => {
     if (!gymData) return 'expired';
     
@@ -273,14 +317,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (gymData.status === 'trial') {
       const trialEndDate = getTrialEndDate();
       if (!trialEndDate) return 'expired';
-      
       return trialEndDate > new Date() ? 'trial' : 'expired';
     }
     
     if (gymData.status === 'active') {
       const subscriptionEndDate = getSubscriptionEndDate();
       if (!subscriptionEndDate) return 'expired';
-      
       return subscriptionEndDate > new Date() ? 'active' : 'expired';
     }
     
@@ -300,7 +342,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     isSubscriptionActive: checkSubscriptionStatus(),
     checkTrialStatus,
     checkSubscriptionStatus,
-    // Nuevas propiedades
     subscriptionEndDate: getSubscriptionEndDate(),
     trialEndDate: getTrialEndDate(),
     subscriptionDaysLeft: getSubscriptionDaysLeft(),
@@ -310,7 +351,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 };

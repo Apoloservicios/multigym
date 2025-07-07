@@ -1,13 +1,10 @@
+// src/pages/auth/Register.tsx - ADAPTADO AL NUEVO SISTEMA
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { User, Mail, Lock, Building, Phone, CreditCard, ArrowLeft, CheckCircle, AlertCircle } from 'lucide-react';
-import { registerGym, registerGymEmployee } from '../../services/auth.service';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../../config/firebase';
-
-interface RegisterProps {
-  onLoginClick: () => void;
-  onRegistrationSuccess: () => void;
-}
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { collection, getDocs, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from '../../config/firebase';
 
 type RegisterMode = 'select' | 'gymOwner' | 'gymEmployee';
 
@@ -16,9 +13,9 @@ interface GymOption {
   name: string;
 }
 
-const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess }) => {
+const Register: React.FC = () => {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<RegisterMode>('select');
-  const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<boolean>(false);
@@ -131,6 +128,85 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
     return true;
   };
   
+  // Función para registrar gimnasio (reemplaza registerGym del auth.service)
+  const registerGym = async () => {
+    try {
+      console.log('🔧 Registrando nuevo gimnasio...');
+      
+      // Crear usuario en Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(
+        auth, 
+        gymData.email, 
+        gymData.password
+      );
+      
+      const user = userCredential.user;
+      
+      // Crear documento del gimnasio
+      await setDoc(doc(db, 'gyms', user.uid), {
+        name: gymData.gymName,
+        owner: gymData.ownerName,
+        email: gymData.email,
+        phone: gymData.phone,
+        cuit: gymData.cuit,
+        status: 'trial',
+        registrationDate: serverTimestamp(),
+        trialEndsAt: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)), // 30 días
+        logo: null
+      });
+
+      // Crear usuario administrador en la subcolección
+      await setDoc(doc(db, `gyms/${user.uid}/users`, user.uid), {
+        email: gymData.email,
+        name: gymData.ownerName,
+        role: 'admin',
+        phone: gymData.phone,
+        createdAt: serverTimestamp(),
+        isActive: true
+      });
+
+      console.log('✅ Registro de gimnasio exitoso');
+      return { success: true };
+      
+    } catch (error: any) {
+      console.error('❌ Error en registro de gimnasio:', error);
+      return { success: false, error: error.message };
+    }
+  };
+  
+  // Función para registrar empleado (reemplaza registerGymEmployee del auth.service)
+  const registerGymEmployee = async () => {
+    try {
+      console.log('🔧 Registrando nuevo empleado...');
+      
+      // Crear usuario en Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(
+        auth, 
+        employeeData.email, 
+        employeeData.password
+      );
+      
+      const user = userCredential.user;
+      
+      // Crear usuario empleado en la subcolección del gimnasio seleccionado
+      await setDoc(doc(db, `gyms/${employeeData.selectedGymId}/users`, user.uid), {
+        email: employeeData.email,
+        name: employeeData.name,
+        role: 'user', // Rol por defecto para empleados
+        phone: employeeData.phone,
+        createdAt: serverTimestamp(),
+        isActive: true // Por ahora activamos automáticamente, pero puedes cambiarlo a false si quieres que requiera aprobación
+      });
+
+      console.log('✅ Registro de empleado exitoso');
+      return { success: true };
+      
+    } catch (error: any) {
+      console.error('❌ Error en registro de empleado:', error);
+      return { success: false, error: error.message };
+    }
+  };
+  
   // Manejar envío del formulario de gimnasio
   const handleGymSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -143,22 +219,15 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
     setLoading(true);
     
     try {
-      const result = await registerGym(
-        gymData.email, 
-        gymData.password, 
-        gymData.gymName, 
-        gymData.ownerName,
-        gymData.phone,
-        gymData.cuit
-      );
+      const result = await registerGym();
       
       if (result.success) {
         setSuccess(true);
         setTimeout(() => {
-          onRegistrationSuccess();
+          navigate('/login');
         }, 2000);
       } else {
-        setError(result.error?.toString() || 'Error al registrar gimnasio');
+        setError(result.error || 'Error al registrar gimnasio');
       }
     } catch (err: any) {
       setError(err.message || 'Error al registrar gimnasio');
@@ -179,22 +248,15 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
     setLoading(true);
     
     try {
-      const result = await registerGymEmployee(
-        employeeData.email,
-        employeeData.password,
-        employeeData.name,
-        employeeData.phone,
-        employeeData.selectedGymId,
-        'user' // Rol por defecto para empleados
-      );
+      const result = await registerGymEmployee();
       
       if (result.success) {
         setSuccess(true);
         setTimeout(() => {
-          onRegistrationSuccess();
+          navigate('/login');
         }, 2000);
       } else {
-        setError(result.error?.toString() || 'Error al registrar empleado');
+        setError(result.error || 'Error al registrar empleado');
       }
     } catch (err: any) {
       setError(err.message || 'Error al registrar empleado');
@@ -241,7 +303,7 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
       
       <div className="mt-8 text-center">
         <button
-          onClick={onLoginClick}
+          onClick={() => navigate('/login')}
           className="text-blue-600 hover:text-blue-800 flex items-center justify-center mx-auto"
         >
           <ArrowLeft size={16} className="mr-1" />
@@ -456,7 +518,7 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
         <p className="text-gray-600">
           ¿Ya tienes una cuenta?{' '}
           <button 
-            onClick={onLoginClick}
+            onClick={() => navigate('/login')}
             className="text-blue-600 hover:text-blue-800 font-medium"
           >
             Inicia sesión
@@ -494,7 +556,7 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
       {success && (
         <div className="mb-4 p-3 bg-green-100 text-green-700 rounded-md flex items-center">
           <CheckCircle size={18} className="mr-2" />
-          Registro exitoso. Tu solicitud será revisada por el administrador.
+          Registro exitoso. Redirigiendo al inicio de sesión...
         </div>
       )}
       
@@ -644,7 +706,7 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
       
       <div className="mt-6 text-center">
         <p className="text-sm text-gray-600">
-          * Tu cuenta deberá ser aprobada por el administrador del gimnasio antes de poder acceder al sistema.
+          * Tu cuenta será activada automáticamente para poder acceder al sistema.
         </p>
       </div>
       
@@ -652,7 +714,7 @@ const Register: React.FC<RegisterProps> = ({ onLoginClick, onRegistrationSuccess
         <p className="text-gray-600">
           ¿Ya tienes una cuenta?{' '}
           <button 
-            onClick={onLoginClick}
+            onClick={() => navigate('/login')}
             className="text-blue-600 hover:text-blue-800 font-medium"
           >
             Inicia sesión
