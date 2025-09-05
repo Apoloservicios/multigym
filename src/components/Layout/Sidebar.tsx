@@ -266,6 +266,15 @@ const Sidebar: React.FC = () => {
                   active={isActive('attendance')}
                   onClick={() => handleNavigate('attendance')}
                 />
+
+                   {/* 🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ */}
+                <NavItem
+                  icon={<DollarSign size={20} />}
+                  text="Cobros"
+                  active={isActive('payments')}
+                  onClick={() => handleNavigate('payments')}
+                  isNew={true}
+                />
                 
                 <NavItem
                   icon={<Receipt size={20} />}

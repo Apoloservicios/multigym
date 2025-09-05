@@ -37,6 +37,9 @@ import Routines from '../pages/routines/Routines';
 import MemberRoutines from '../pages/member-routines/MemberRoutines';
 import AutoRenewalDashboard from '../components/memberships/AutoRenewalDashboard';
 
+import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
+
+
 // Componente de protección de rutas
 const ProtectedRoute: React.FC<{ 
   children: React.ReactNode;
@@ -178,6 +181,14 @@ const AppContent: React.FC = () => {
                 </ProtectedRoute>
               } />
               <Route path="reports" element={<Reports />} />
+
+          {/* 🆕 AGREGAR ESTA NUEVA RUTA AQUÍ */}
+                      <Route path="payments" element={
+                        <ProtectedRoute allowedRoles={['admin', 'user']}>
+                          <MonthlyPaymentsDashboard />
+                        </ProtectedRoute>
+                      } />
+
               <Route path="exercises" element={<Exercises />} />
               <Route path="routines" element={<Routines />} />
               <Route path="member-routines" element={<MemberRoutines />} />

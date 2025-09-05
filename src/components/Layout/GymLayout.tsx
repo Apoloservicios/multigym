@@ -1,12 +1,18 @@
-// src/components/Layout/GymLayout.tsx
 import React from 'react';
 import Sidebar from './Sidebar';
+import useMonthlyPaymentScheduler from '../../hooks/useMonthlyPaymentScheduler';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface GymLayoutProps {
   children: React.ReactNode;
 }
 
 const GymLayout: React.FC<GymLayoutProps> = ({ children }) => {
+  const { gymData } = useAuth();
+  
+  // 🤖 Activar el scheduler automático
+  useMonthlyPaymentScheduler(gymData?.id);
+  
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
