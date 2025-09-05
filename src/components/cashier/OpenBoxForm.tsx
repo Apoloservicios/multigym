@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { CheckCircle, X } from 'lucide-react';
 import { formatDateForDisplay } from '../../utils/timezone.utils';
+import useAuth from '../../hooks/useAuth';
 
 interface OpenBoxFormProps {
   selectedDate: string;
@@ -26,15 +27,11 @@ const OpenBoxForm: React.FC<OpenBoxFormProps> = ({
     formattedDate: formatDateForDisplay(selectedDate)
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('📝 Enviando apertura de caja:', {
-      selectedDate,
-      openingAmount,
-      notes
-    });
-    onOpen(openingAmount, notes);
-  };
+const { gymData, userData } = useAuth();
+const handleSubmit = (e: React.FormEvent) => {
+  e.preventDefault();
+  onOpen(openingAmount, notes);
+};
 
   return (
     <div className="p-6">

@@ -13,6 +13,32 @@ interface TransactionListProps {
   isLoading: boolean;
 }
 
+  const getDisplayInfo = (transaction: any) => {
+  const description = transaction.description?.toLowerCase() || '';
+  
+  const isRefund = transaction.category === 'refund' ||
+                  description.includes('reintegro') ||
+                  description.includes('devolución');
+  
+  const isExpense = !isRefund && (
+    transaction.type === 'expense' || 
+    transaction.category === 'expense' ||
+    transaction.category === 'withdrawal'
+  );
+  
+  const isIncome = !isRefund && !isExpense;
+  
+  return {
+    isRefund,
+    isIncome,
+    isExpense,
+    displayAmount: Math.abs(transaction.amount),
+    type: isRefund ? 'refund' : (isExpense ? 'expense' : 'income'),
+    colorClass: isIncome ? 'text-green-600' : 'text-red-600',
+    symbol: isIncome ? '+' : '-'
+  };
+};
+
 const TransactionList: React.FC<TransactionListProps> = ({
   transactions,
   selectedDate,
@@ -72,6 +98,8 @@ const TransactionList: React.FC<TransactionListProps> = ({
     }
   };
 
+
+
   // Filtrar transacciones
   const filteredTransactions = transactions.filter(tx => {
     const matchesSearch = 
@@ -122,6 +150,7 @@ const TransactionList: React.FC<TransactionListProps> = ({
       setIsExporting(false);
     }
   };
+  
 
   // Obtener el nombre del método de pago
   const getPaymentMethodName = (method: string = ''): string => {
@@ -153,29 +182,31 @@ const TransactionList: React.FC<TransactionListProps> = ({
   };
 
   // 🔧 FUNCIÓN MEJORADA PARA DETECTAR TIPO DE TRANSACCIÓN Y MOSTRAR MONTO CORRECTO
-  const getTransactionDisplay = (tx: Transaction) => {
-    const isRefund = tx.type === 'refund' || 
-                     tx.category === 'refund' || 
-                     tx.description?.toLowerCase().includes('devolución') ||
-                     tx.description?.toLowerCase().includes('devolucion');
+const getTransactionDisplay = (tx: Transaction) => {
+  const description = tx.description?.toLowerCase() || '';
+  
+  // 🔧 CORREGIR: Detectar reintegros correctamente
+  const isRefund = tx.type === 'expense' && tx.category === 'refund' ||
+                   description.includes('reintegro') ||
+                   description.includes('devolución') ||
+                   description.includes('devolucion') ||
+                   description.includes('cancelación') ||
+                   description.includes('cancelacion');
+  
+  const isExpense = !isRefund && (
+    tx.category === 'expense' ||
+    tx.category === 'withdrawal' ||
+    tx.type === 'expense'
+  );
+  
+  return {
+    isRefund,
+    isExpense,
+    isIncome: !isRefund && !isExpense,
+    displayAmount: Math.abs(tx.amount || 0),
     
-    const isExpense = !isRefund && (
-      tx.type === 'expense' || 
-      tx.category === 'expense' ||
-      tx.category === 'withdrawal'
-    );
-    
-    const isIncome = !isRefund && !isExpense;
-    
-    return {
-      isIncome,
-      isExpense,
-      isRefund,
-      displayAmount: Math.abs(tx.amount),
-      colorClass: isIncome ? 'text-green-600' : 'text-red-600',
-      symbol: isIncome ? '+' : '-'
-    };
   };
+};
 
   // Calcular totales
   const calculateTotals = () => {
@@ -333,8 +364,10 @@ const TransactionList: React.FC<TransactionListProps> = ({
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredTransactions.map((tx) => {
-                const display = getTransactionDisplay(tx);
-                
+
+                const display = getDisplayInfo(tx);      
+
+
                 return (
                   <tr key={tx.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">

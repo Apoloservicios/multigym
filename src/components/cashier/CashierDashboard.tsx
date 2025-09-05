@@ -5,12 +5,12 @@ import {
   Calendar, DollarSign, TrendingUp, TrendingDown, PlusCircle, MinusCircle, 
   RefreshCw, AlertCircle, XCircle, CheckCircle, FileText , AlertTriangle,FileSpreadsheet
 } from 'lucide-react';
-import { 
+
+import DailyCashService, {
   getDailyCashByDate, 
-  getTransactionsByDate, 
-  closeDailyCash,
-  openDailyCash
+  getTransactionsByDate 
 } from '../../services/dailyCash.service';
+
 import { 
   formatCurrency, 
   formatTime,
@@ -21,7 +21,6 @@ import {
   normalizeDailyCashForLegacy,
   calculateCashBalance 
 } from '../../utils/compatibility.utils';
-
 
 import { 
   getCurrentDateInArgentina,
@@ -41,6 +40,13 @@ import IncomeForm from './IncomeForm';
 import ExpenseForm from './ExpenseForm';
 import CloseBoxForm from './CloseBoxForm';
 import OpenBoxForm from './OpenBoxForm';
+
+
+
+const getCashProperty = (cashData: any, primaryProp: string, fallbackProp?: string) => {
+  if (!cashData) return 0;
+  return cashData[primaryProp] || (fallbackProp ? cashData[fallbackProp] : 0);
+};
 
 type ViewType = 'summary' | 'income' | 'expense' | 'transactions' | 'close' | 'open';
 
@@ -256,78 +262,81 @@ const formatDisplayDateArgentina = (dateString: string): string => {
     };
 
   // Manejar apertura de caja
-  const handleOpenBox = async (openingAmount: number, notes: string) => {
-    if (!gymData?.id || !userData?.id) {
-      setError('No se puede abrir la caja. Datos incompletos.');
-      return;
+const handleOpenBox = async (openingAmount: number, notes: string) => {
+  if (!gymData?.id || !userData?.id) {
+    setError('No se puede abrir la caja. Datos incompletos.');
+    return;
+  }
+
+  console.log('🔓 Abriendo caja:', { date: selectedDate, amount: openingAmount });
+  setLoading(true);
+  setError('');
+
+  try {
+    const result = await DailyCashService.openDailyCash(gymData.id, {
+      openingAmount,
+      notes,
+      userId: userData.id,
+      userName: userData.name || userData.email || 'Usuario',
+      date: selectedDate
+    });
+
+    if (result.success) {
+      setSuccess('Caja abierta correctamente');
+      await loadDailyCashData();
+      setView('summary');
+      
+      setTimeout(() => {
+        setSuccess('');
+      }, 3000);
+    } else {
+      throw new Error(result.error || 'Error al abrir la caja');
     }
-
-    console.log('🔓 Abriendo caja:', { date: selectedDate, amount: openingAmount });
-    setLoading(true);
-    setError('');
-
-    try {
-      const result = await openDailyCash(gymData.id, selectedDate, {
-        openingAmount,
-        notes,
-        userId: userData.id
-      });
-
-      if (result.success) {
-        setSuccess('Caja abierta correctamente');
-        await loadDailyCashData();
-        setView('summary');
-        
-        setTimeout(() => {
-          setSuccess('');
-        }, 3000);
-      } else {
-        throw new Error(result.error || 'Error al abrir la caja');
-      }
-    } catch (err: any) {
-      console.error('❌ Error opening daily cash:', err);
-      setError(err.message || 'Error al abrir la caja');
-    } finally {
-      setLoading(false);
-    }
-  };
+  } catch (err: any) {
+    console.error('❌ Error opening daily cash:', err);
+    setError(err.message || 'Error al abrir la caja');
+  } finally {
+    setLoading(false);
+  }
+};
 
   // Manejar cierre de caja
-  const handleCloseBox = async (closingAmount: number, notes: string) => {
-    if (!gymData?.id || !userData?.id || !dailyCash) {
-      setError('No se puede cerrar la caja. Datos incompletos.');
-      return;
+const handleCloseBox = async (closingAmount: number, notes: string) => {
+  if (!gymData?.id || !userData?.id || !dailyCash) {
+    setError('No se puede cerrar la caja. Datos incompletos.');
+    return;
+  }
+
+  console.log('🔒 Cerrando caja:', { date: selectedDate, amount: closingAmount });
+  setLoading(true);
+  setError('');
+
+  try {
+    const result = await DailyCashService.closeDailyCash(gymData.id, selectedDate, {
+      closingAmount,
+      notes,
+      userId: userData.id,
+      userName: userData.name || userData.email || 'Usuario'
+    });
+
+    if (result.success) {
+      setSuccess('Caja cerrada correctamente');
+      await loadDailyCashData();
+      setView('summary');
+      
+      setTimeout(() => {
+        setSuccess('');
+      }, 3000);
+    } else {
+      throw new Error(result.error || 'Error al cerrar la caja');
     }
-
-    console.log('🔒 Cerrando caja:', { date: selectedDate, amount: closingAmount });
-    setLoading(true);
-    setError('');
-
-    try {
-      const result = await closeDailyCash(gymData.id, selectedDate, {
-        closingAmount,
-        notes,
-        userId: userData.id
-      });
-
-      if (result.success) {
-        setSuccess('Caja cerrada correctamente');
-        await loadDailyCashData();
-        setView('summary');
-        
-        setTimeout(() => {
-          setSuccess('');
-        }, 3000);
-      } else {
-        throw new Error(result.error || 'Error al cerrar la caja');
-      }
-    } catch (err: any) {
-      console.error('❌ Error closing daily cash:', err);
-      setError(err.message || 'Error al cerrar la caja');
-    } finally {
-      setLoading(false);
-    }
-  };
+  } catch (err: any) {
+    console.error('❌ Error closing daily cash:', err);
+    setError(err.message || 'Error al cerrar la caja');
+  } finally {
+    setLoading(false);
+  }
+};
 
   
 
@@ -591,11 +600,11 @@ const formatDisplayDateArgentina = (dateString: string): string => {
                 </span>
                 {dailyCash.status === 'open' ? (
                   <span className="ml-2 text-xs text-gray-500">
-                    Abierta desde: {safeFormatTime(dailyCash.openingTime || dailyCash.openedAt)}
+                    Abierta desde: safeFormatTime(dailyCash.openingTime || dailyCash.openedAt)
                   </span>
                 ) : (
                   <span className="ml-2 text-xs text-gray-500">
-                    Cerrada a las: {safeFormatTime(dailyCash.closingTime || dailyCash.closedAt)}
+                    Cerrada a las: safeFormatTime(dailyCash.closingTime || dailyCash.closedAt)
                   </span>
                 )}
               </div>
@@ -616,7 +625,7 @@ const formatDisplayDateArgentina = (dateString: string): string => {
                 <div>
                   <p className="text-sm text-gray-600">Saldo Inicial</p>
                   <p className="text-lg font-semibold">
-                    {formatCurrency(dailyCash.openingAmount || dailyCash.openingBalance || 0)}
+                    {formatCurrency(getCashProperty(dailyCash, 'openingAmount', 'openingBalance'))}
                   </p>
                 </div>
                 <DollarSign className="h-8 w-8 text-blue-400" />
@@ -640,7 +649,8 @@ const formatDisplayDateArgentina = (dateString: string): string => {
                 <div>
                   <p className="text-sm text-gray-600">Egresos</p>
                   <p className="text-lg font-semibold">
-                    {formatCurrency(dailyCash.totalExpense || dailyCash.totalExpenses || 0)}
+                    {formatCurrency(getCashProperty(dailyCash, 'totalExpense', 'totalExpenses'))}
+
                   </p>
                 </div>
                 <TrendingDown className="h-8 w-8 text-red-400" />

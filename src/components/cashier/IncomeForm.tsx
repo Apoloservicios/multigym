@@ -67,8 +67,8 @@ const IncomeForm: React.FC<IncomeFormProps> = ({ selectedDate, onSuccess, onCanc
         date: selectedDate,
         userId: userData.id,
         userName: userData.name,
-        category: formData.category,
-        notes: formData.notes
+        category: (formData.category as any) || 'other',
+        notes: (formData.notes as any) || 'notes'
       });
       
       if (result.success) {

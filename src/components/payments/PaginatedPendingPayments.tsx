@@ -16,7 +16,7 @@ import {
   ChevronRight,
   Filter
 } from 'lucide-react';
-import { MonthlyPaymentsService } from '../../services/monthlyPayments.service';
+import MonthlyPaymentsService from '../../services/monthlyPayments.service';
 import { MonthlyPaymentListItem } from '../../types/monthlyPayments.types';
 import useAuth from '../../hooks/useAuth';
 

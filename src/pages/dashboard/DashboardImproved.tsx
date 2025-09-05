@@ -46,6 +46,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { exportTransactionsToExcel } from '../../utils/excel.utils';
+import DailyCashService from '../../services/dailyCash.service';
+
 
 // 🔧 INTERFACE COMPLETA CON TODAS LAS PROPIEDADES
 interface EnhancedDashboardMetrics {
@@ -64,7 +66,12 @@ interface EnhancedDashboardMetrics {
   overduePayments: number;
   overdueAmount: number;
   refundsToday: number;
-  refundsThisMonth: number; // 🔧 AGREGAR PROPIEDAD PARA REINTEGROS MENSUALES
+  refundsThisMonth: number;
+  
+  // 🆕 AGREGAR estos campos que faltan:
+  membershipIncome?: number;
+  productIncome?: number;
+  isCashOpen?: boolean;
 }
 
 interface PendingPayment {
@@ -137,6 +144,7 @@ const DashboardImproved: React.FC = () => {
     };
   }, []);
 
+  
   // 🔧 FUNCIÓN HELPER CORREGIDA para clasificar transacciones
   const getTransactionInfo = useCallback((transaction: any) => {
     const description = transaction.description?.toLowerCase() || '';
@@ -185,7 +193,9 @@ const DashboardImproved: React.FC = () => {
       isExpense,
       displayAmount: Math.abs(transaction.amount),
       originalAmount: transaction.amount,
-      type: isRefund ? 'refund' : (isExpense ? 'expense' : 'income')
+      type: isRefund ? 'refund' : (isExpense ? 'expense' : 'income'),
+       colorClass: isIncome ? 'text-green-600' : 'text-red-600',
+    symbol: isIncome ? '+' : '-'
     };
   }, []);
 
@@ -331,6 +341,8 @@ const DashboardImproved: React.FC = () => {
     }
   }, []);
 
+  
+
 // 🔧 CORRECCIÓN PARA DashboardImproved.tsx
 // Reemplaza la parte de recentActivities (alrededor de la línea 360) con esta versión corregida:
 
@@ -339,7 +351,7 @@ const recentActivities = React.useMemo(() => {
 
   // 🔍 DEBUG: Verificar transacciones de reintegro
   const refundTransactions = transactions.filter(t => 
-    t.type === 'refund' || t.category === 'refund' || 
+    (t.type === 'expense' && t.category === 'refund') || t.category === 'refund' ||
     t.description?.toLowerCase().includes('reintegro')
   );
   
@@ -377,7 +389,7 @@ const recentActivities = React.useMemo(() => {
     
     if (transaction.category === 'membership') {
       transactionDescription = 'Pago de membresía';
-    } else if (transaction.category === 'extra') {
+    } else if (transaction.category === 'other') {
       transactionDescription = 'Ingreso extra';
     } else if (transaction.category === 'refund') {
       transactionDescription = 'Devolución';
@@ -602,25 +614,7 @@ const recentActivities = React.useMemo(() => {
         console.error('Error loading pending payments:', error);
       }
 
-      // 🔧 ACTUALIZAR MÉTRICAS CON VALORES CORREGIDOS
-      setMetrics({
-        totalMembers: totalMembersSnap.size,
-        activeMembers: activeMembersSnap.size,
-        inactiveMembers: inactiveMembersSnap.size,
-        membersWithDebt: membersWithDebtSnap.size,
-        todayIncome,
-        todayExpenses,
-        todayNet: todayIncome - todayExpenses - todayRefunds,
-        monthlyIncome,
-        monthlyExpenses,
-        monthlyNet: monthlyIncome - monthlyExpenses - monthlyRefunds,
-        pendingPayments,
-        pendingAmount,
-        overduePayments,
-        overdueAmount,
-        refundsToday: todayRefunds,
-        refundsThisMonth: monthlyRefunds // 🔧 AHORA SÍ EXISTE EN LA INTERFACE
-      });
+    
 
       setLastLoadTime(Date.now());
 

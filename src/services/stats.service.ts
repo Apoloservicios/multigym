@@ -7,8 +7,11 @@ import {
   orderBy 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { Transaction, Member } from '../types/gym.types'; // 🔧 AHORA Member EXISTE
+
 import { toJsDate } from '../utils/date.utils';
+import { Transaction, Member } from '../types/gym.types';
+
+
 
 // Obtener estadísticas del dashboard
 export const getDashboardStats = async (gymId: string) => {

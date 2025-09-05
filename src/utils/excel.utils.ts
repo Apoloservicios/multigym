@@ -387,7 +387,7 @@ const addFinancialSummarySheet = (
     .reduce((sum, tx) => sum + tx.amount, 0);
 
   const totalReintegros = transactions
-    .filter(tx => tx.type === 'refund' || tx.category === 'refund')
+    .filter(tx => (tx.type === 'expense' && tx.category === 'refund') || tx.category === 'refund')
     .reduce((sum, tx) => sum + tx.amount, 0);
   
   const summaryData = [

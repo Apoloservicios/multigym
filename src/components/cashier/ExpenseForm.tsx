@@ -67,7 +67,7 @@ const ExpenseForm: React.FC<ExpenseFormProps> = ({ selectedDate, onSuccess, onCa
         date: selectedDate,
         userId: userData.id,
         userName: userData.name,
-        category: formData.category,
+        category: (formData.category as any) || 'expense',
         notes: formData.notes
       });
       
