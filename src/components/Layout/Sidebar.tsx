@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
-  Wallet, ArrowUpRight, CheckCircle, RefreshCw
+  Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -117,8 +117,8 @@ const Sidebar: React.FC = () => {
   };
 
   // Funciones auxiliares para determinar estados activos de grupos
-  const isMembershipManagementActive = (): boolean => {
-    return isActive('settings/memberships') || isActive('auto-renewals');
+ const isMembershipManagementActive = (): boolean => {
+    return isActive('settings/memberships') || isActive('auto-renewals') || isActive('membership-management');
   };
 
   const isFinancialActive = (): boolean => {
@@ -267,12 +267,11 @@ const Sidebar: React.FC = () => {
                   onClick={() => handleNavigate('attendance')}
                 />
 
-                {/* NUEVA SECCIÓN COBROS - DESTACADA */}
                 <NavItem
-                  icon={<DollarSign size={20} />}
-                  text="Cobros"
-                  active={isActive('payments')}
-                  onClick={() => handleNavigate('payments')}
+                  icon={<Zap size={20} />}
+                  text="Gestión de Membresías"
+                  active={isActive('membership-management')}
+                  onClick={() => handleNavigate('membership-management')}
                   isNew={true}
                 />
                 
@@ -283,31 +282,7 @@ const Sidebar: React.FC = () => {
                   onClick={() => handleNavigate('reports')}
                 />
                 
-                {/* Gestión de Membresías - Solo para admins */}
-                {userRole === 'admin' && (
-                  <DropdownNav
-                    icon={<CreditCard size={20} />}
-                    text="Membresías"
-                    active={isMembershipManagementActive()}
-                    isNew={true}
-                  >
-                    <div className="space-y-1 py-2">
-                      <NavItem
-                        icon={<Settings size={16} />}
-                        text="Configurar Membresías"
-                        active={isActive('settings/memberships')}
-                        onClick={() => handleNavigate('settings/memberships')}
-                      />
-                      <NavItem
-                        icon={<RefreshCw size={16} />}
-                        text="Renovaciones Automáticas"
-                        active={isActive('auto-renewals')}
-                        onClick={() => handleNavigate('auto-renewals')}
-                        isNew={true}
-                      />
-                    </div>
-                  </DropdownNav>
-                )}
+                
                 
                 {/* Finanzas - Solo para admins */}
                 {userRole === 'admin' && (
@@ -382,6 +357,15 @@ const Sidebar: React.FC = () => {
                         active={isActive('settings/activities')}
                         onClick={() => handleNavigate('settings/activities')}
                       />
+                     
+                      <NavItem
+                        icon={<Settings size={16} />}
+                        text="Configurar Membresías"
+                        active={isActive('settings/memberships')}
+                        onClick={() => handleNavigate('settings/memberships')}
+                      />
+                  
+                    
                       <NavItem
                         icon={<User size={16} />}
                         text="Usuarios"
@@ -394,9 +378,10 @@ const Sidebar: React.FC = () => {
               </>
             )}
           </nav>
-        </div>
-        
-        {/* Footer con logout */}
+
+
+
+          {/* Footer con logout */}
         <div className="border-t border-gray-200 px-4 py-4 mt-auto">
           <div className="mb-3 text-xs text-gray-500">
             {userData?.name && (
@@ -409,12 +394,15 @@ const Sidebar: React.FC = () => {
           
           <button
             onClick={handleLogout}
-            className="flex items-center px-3 py-2 w-full text-gray-700 hover:bg-gray-100 hover:text-gray-900 rounded-md transition-colors"
+            className="flex items-center px-3 py-2 w-full text-red-900 hover:bg-red-100 hover:text-gray-900 rounded-md transition-colors"
           >
             <LogOut size={20} className="mr-3" />
             <span className="text-sm font-medium">Cerrar Sesión</span>
           </button>
         </div>
+        </div>
+        
+        
       </div>
     </>
   );

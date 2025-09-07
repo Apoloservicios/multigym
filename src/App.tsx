@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 
 // Contexto de autenticación
 import { AuthProvider } from './contexts/AuthContext';
+import MembershipManagement from './pages/MembershipManagement';
 
 // Componentes principales
 import AppContent from './components/AppContent';

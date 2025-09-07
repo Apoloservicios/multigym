@@ -39,6 +39,8 @@ import AutoRenewalDashboard from '../components/memberships/AutoRenewalDashboard
 
 import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
 
+import MembershipManagement from '../pages/MembershipManagement';
+
 
 // Componente de protección de rutas
 const ProtectedRoute: React.FC<{ 
@@ -182,12 +184,20 @@ const AppContent: React.FC = () => {
               } />
               <Route path="reports" element={<Reports />} />
 
-          {/* 🆕 AGREGAR ESTA NUEVA RUTA AQUÍ */}
-                      <Route path="payments" element={
-                        <ProtectedRoute allowedRoles={['admin', 'user']}>
-                          <MonthlyPaymentsDashboard />
-                        </ProtectedRoute>
-                      } />
+          
+              <Route path="payments" element={
+                <ProtectedRoute allowedRoles={['admin', 'user']}>
+                  <MonthlyPaymentsDashboard />
+                </ProtectedRoute>
+              } />
+
+              <Route path="membership-management" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <MembershipManagement />
+                </ProtectedRoute>
+              } />
+
+
 
               <Route path="exercises" element={<Exercises />} />
               <Route path="routines" element={<Routines />} />
