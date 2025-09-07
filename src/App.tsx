@@ -1,4 +1,4 @@
-// src/App.tsx - SOLUCIÓN COMPLETA Y DEFINITIVA
+// src/App.tsx - VERSIÓN FINAL COHERENTE CON EL SISTEMA
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 
@@ -7,6 +7,9 @@ import { AuthProvider } from './contexts/AuthContext';
 
 // Componentes principales
 import AppContent from './components/AppContent';
+
+// Hook para automatización mensual
+import useMonthlyPaymentScheduler from './hooks/useMonthlyPaymentScheduler';
 
 import './index.css';
 

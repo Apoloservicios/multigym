@@ -1,4 +1,4 @@
-// src/components/Layout/Sidebar.tsx - VERSIÓN FINAL SIN PROPS REQUERIDAS
+// src/components/Layout/Sidebar.tsx - VERSIÓN FINAL CON TODAS LAS RUTAS
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
@@ -193,7 +193,7 @@ const Sidebar: React.FC = () => {
         </div>
         
         {/* Navegación */}
-        <div className="flex-1 overflow-y-auto px-4 pb-6">
+        <div className="flex-1 overflow-y-auto px-4 pb-6 max-h-[calc(100vh-320px)]">
           <nav className="space-y-1">
             {/* Panel de Superadmin */}
             {userRole === 'superadmin' && (
@@ -267,7 +267,7 @@ const Sidebar: React.FC = () => {
                   onClick={() => handleNavigate('attendance')}
                 />
 
-                   {/* 🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ */}
+                {/* NUEVA SECCIÓN COBROS - DESTACADA */}
                 <NavItem
                   icon={<DollarSign size={20} />}
                   text="Cobros"

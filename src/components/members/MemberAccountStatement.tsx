@@ -1,4 +1,4 @@
-// src/components/members/MemberAccountStatement.tsx - VERSIÓN CORREGIDA SIN ERRORES
+// src/components/members/MemberAccountStatement.tsx - VERSIÓN CORREGIDA Y OPTIMIZADA
 
 import React, { useState, useEffect } from 'react';
 import { 

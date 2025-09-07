@@ -11,7 +11,7 @@ const GymLayout: React.FC<GymLayoutProps> = ({ children }) => {
   const { gymData } = useAuth();
   
   // 🤖 Activar el scheduler automático
-  useMonthlyPaymentScheduler(gymData?.id);
+  useMonthlyPaymentScheduler();
   
   return (
     <div className="flex h-screen bg-gray-100">
