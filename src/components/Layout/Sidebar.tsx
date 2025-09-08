@@ -364,7 +364,25 @@ const Sidebar: React.FC = () => {
                         active={isActive('settings/memberships')}
                         onClick={() => handleNavigate('settings/memberships')}
                       />
-                  
+
+                      {/* 
+
+                          <NavItem
+                        icon={<RefreshCw size={16} />}
+                        text="Renovaciones Automáticas"
+                        active={isActive('auto-renewals')}
+                        onClick={() => handleNavigate('auto-renewals')}
+                        isNew={true}
+                      />
+                                  🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ 
+                        <NavItem
+                          icon={<DollarSign size={20} />}
+                          text="Cobros"
+                          active={isActive('payments')}
+                          onClick={() => handleNavigate('payments')}
+                          isNew={true}
+                        />
+                  */}
                     
                       <NavItem
                         icon={<User size={16} />}
