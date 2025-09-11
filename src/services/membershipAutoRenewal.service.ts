@@ -300,10 +300,11 @@ export const processExpiredAndAutoRenew = async (gymId: string): Promise<{
     // Importar la función existente
     const { processExpiredMemberships } = await import('./membershipExpiration.service');
     const expiredResult = await processExpiredMemberships(gymId);
-    
+   
+   
     console.log(`📊 Resumen del proceso:
-    - Membresías renovadas automáticamente: ${renewalResult.processedCount}
-    - Membresías expiradas: ${expiredResult.processedCount}`);
+- Membresías renovadas automáticamente: ${renewalResult.renewedMemberships.length}
+- Membresías expiradas: ${expiredResult.expiredMemberships.length}`);
     
     return {
       expiredResult,

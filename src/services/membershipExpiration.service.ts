@@ -1,639 +1,547 @@
-// src/services/membershipExpiration.service.ts - ACTUALIZADO CON RENOVACIÓN AUTOMÁTICA
+// src/services/membershipExpiration.service.ts
+// 🔧 VERSIÓN FINAL CORREGIDA: Compatible con tipos existentes
 
 import { 
   collection, 
-  doc, 
-  getDocs, 
-  updateDoc, 
-  addDoc,
-  getDoc,
   query, 
   where, 
-  Timestamp,
-  serverTimestamp,
-  writeBatch
+  getDocs, 
+  doc, 
+  updateDoc, 
+  addDoc,
+  orderBy,
+  limit,
+  Timestamp 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { MembershipAssignment } from '../types/member.types';
-import { safelyConvertToDate, getCurrentDateString } from '../utils/date.utils';
 
-interface ExpirationResult {
+// ==================== INTERFACES ====================
+
+export interface MembershipExpirationStats {
+  activeCount: number;
+  expiredCount: number;
+  expiringThisWeek: number;
+  expiringThisMonth: number;
+  autoRenewalCount: number;
+  totalCount: number;
+}
+
+// ✅ USAR DIRECTAMENTE MembershipAssignment en lugar de crear nuevo tipo
+export type MembershipItem = MembershipAssignment & {
+  memberName: string;
+  currentCost: number;
+};
+
+export interface ProcessResult {
   success: boolean;
-  processedCount: number;
-  expiredMemberships: MembershipAssignment[];
-  renewedMemberships: MembershipAssignment[]; // NUEVO: membresías renovadas automáticamente
+  renewedMemberships: MembershipItem[];
+  expiredMemberships: MembershipItem[];
   errors: string[];
 }
 
-/**
- * Procesar membresías vencidas: renovar automáticas y desactivar el resto
- */
-export const processExpiredMemberships = async (gymId: string): Promise<ExpirationResult> => {
-  const result: ExpirationResult = {
-    success: true,
-    processedCount: 0,
-    expiredMemberships: [],
-    renewedMemberships: [], // NUEVO
-    errors: []
-  };
+// ==================== FUNCIONES PRINCIPALES ====================
 
+/**
+ * 📊 Obtener estadísticas REALES de membresías
+ */
+export const getMembershipExpirationStats = async (gymId: string): Promise<MembershipExpirationStats> => {
   try {
-    console.log(`🔍 Procesando membresías vencidas para gimnasio: ${gymId}`);
+    console.log('📊 Calculando estadísticas reales de membresías...');
     
-    // Obtener fecha actual
-    const today = new Date();
-    today.setHours(0, 0, 0, 0); // Inicio del día
-    
-    // Obtener todos los miembros del gimnasio
+    const stats: MembershipExpirationStats = {
+      activeCount: 0,
+      expiredCount: 0,
+      expiringThisWeek: 0,
+      expiringThisMonth: 0,
+      autoRenewalCount: 0,
+      totalCount: 0
+    };
+
+    // Obtener todos los miembros activos
     const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    const batch = writeBatch(db);
-    let batchCount = 0;
-    const maxBatchSize = 400; // Reducido para dar espacio a las renovaciones automáticas
-    
+    const membersQuery = query(membersRef, where('status', '==', 'active'));
+    const membersSnapshot = await getDocs(membersQuery);
+
+    const today = new Date();
+    const oneWeekFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const oneMonthFromNow = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
     // Procesar cada miembro
     for (const memberDoc of membersSnapshot.docs) {
       const memberId = memberDoc.id;
+      
+      try {
+        // Obtener membresías del miembro
+        const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
+        const membershipsSnapshot = await getDocs(membershipsRef);
+        
+        for (const membershipDoc of membershipsSnapshot.docs) {
+          const membership = membershipDoc.data() as MembershipAssignment;
+          stats.totalCount++;
+          
+          if (membership.status === 'active') {
+            stats.activeCount++;
+            
+            // Verificar auto-renovación
+            if (membership.autoRenewal) {
+              stats.autoRenewalCount++;
+            }
+            
+            // Verificar fechas de vencimiento
+            const endDate = new Date(membership.endDate);
+            
+            if (endDate <= today) {
+              stats.expiredCount++;
+            } else if (endDate <= oneWeekFromNow) {
+              stats.expiringThisWeek++;
+            } else if (endDate <= oneMonthFromNow) {
+              stats.expiringThisMonth++;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn(`Error procesando membresías para miembro ${memberId}:`, error);
+      }
+    }
+
+    console.log('✅ Estadísticas calculadas:', stats);
+    return stats;
+    
+  } catch (error) {
+    console.error('❌ Error calculando estadísticas:', error);
+    throw new Error('Error al calcular estadísticas de membresías');
+  }
+};
+
+/**
+ * 🔍 Obtener renovaciones automáticas próximas REALES
+ */
+export const getUpcomingAutoRenewals = async (gymId: string, daysAhead: number = 7): Promise<MembershipItem[]> => {
+  try {
+    console.log(`🔍 Buscando renovaciones próximas (próximos ${daysAhead} días)...`);
+    
+    const upcomingRenewals: MembershipItem[] = [];
+    const today = new Date();
+    const futureDate = new Date(today.getTime() + daysAhead * 24 * 60 * 60 * 1000);
+
+    // Obtener todos los miembros activos
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    const membersQuery = query(membersRef, where('status', '==', 'active'));
+    const membersSnapshot = await getDocs(membersQuery);
+
+    for (const memberDoc of membersSnapshot.docs) {
       const memberData = memberDoc.data();
+      const memberId = memberDoc.id;
+      const memberName = `${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
+      
+      try {
+        // Obtener membresías con auto-renovación habilitada
+        const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
+        const membershipsQuery = query(
+          membershipsRef,
+          where('status', '==', 'active'),
+          where('autoRenewal', '==', true)
+        );
+        const membershipsSnapshot = await getDocs(membershipsQuery);
+        
+        for (const membershipDoc of membershipsSnapshot.docs) {
+          const membership = membershipDoc.data() as MembershipAssignment;
+          const endDate = new Date(membership.endDate);
+          
+          // Verificar si vence en el rango especificado (futuro, no vencida)
+          if (endDate > today && endDate <= futureDate) {
+            upcomingRenewals.push({
+              ...membership,
+              id: membershipDoc.id,
+              memberId,
+              memberName,
+              currentCost: membership.cost || 0
+            });
+          }
+        }
+      } catch (error) {
+        console.warn(`Error procesando membresías para miembro ${memberId}:`, error);
+      }
+    }
+
+    // Ordenar por fecha de vencimiento
+    upcomingRenewals.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
+
+    console.log(`✅ Encontradas ${upcomingRenewals.length} renovaciones próximas`);
+    return upcomingRenewals;
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo renovaciones próximas:', error);
+    throw new Error('Error al obtener renovaciones próximas');
+  }
+};
+
+/**
+ * 🚨 Obtener renovaciones automáticas VENCIDAS REALES
+ */
+export const getExpiredAutoRenewals = async (gymId: string): Promise<MembershipItem[]> => {
+  try {
+    console.log('🚨 Buscando renovaciones vencidas...');
+    
+    const expiredRenewals: MembershipItem[] = [];
+    const today = new Date();
+    today.setHours(23, 59, 59, 999); // Final del día actual
+
+    // Obtener todos los miembros activos
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    const membersQuery = query(membersRef, where('status', '==', 'active'));
+    const membersSnapshot = await getDocs(membersQuery);
+
+    for (const memberDoc of membersSnapshot.docs) {
+      const memberData = memberDoc.data();
+      const memberId = memberDoc.id;
+      const memberName = `${memberData.firstName || ''} ${memberData.lastName || ''}`.trim();
+      
+      try {
+        // Obtener membresías activas con auto-renovación
+        const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
+        const membershipsQuery = query(
+          membershipsRef,
+          where('status', '==', 'active'),
+          where('autoRenewal', '==', true)
+        );
+        const membershipsSnapshot = await getDocs(membershipsQuery);
+        
+        for (const membershipDoc of membershipsSnapshot.docs) {
+          const membership = membershipDoc.data() as MembershipAssignment;
+          const endDate = new Date(membership.endDate);
+          
+          // Verificar si está vencida
+          if (endDate < today) {
+            expiredRenewals.push({
+              ...membership,
+              id: membershipDoc.id,
+              memberId,
+              memberName,
+              currentCost: membership.cost || 0
+            });
+          }
+        }
+      } catch (error) {
+        console.warn(`Error procesando membresías para miembro ${memberId}:`, error);
+      }
+    }
+
+    // Ordenar por fecha de vencimiento (más vencidas primero)
+    expiredRenewals.sort((a, b) => new Date(a.endDate).getTime() - new Date(b.endDate).getTime());
+
+    console.log(`✅ Encontradas ${expiredRenewals.length} renovaciones vencidas`);
+    return expiredRenewals;
+    
+  } catch (error) {
+    console.error('❌ Error obteniendo renovaciones vencidas:', error);
+    throw new Error('Error al obtener renovaciones vencidas');
+  }
+};
+
+/**
+ * 🔄 Procesar membresías vencidas REAL
+ */
+export const processExpiredMemberships = async (gymId: string): Promise<ProcessResult> => {
+  try {
+    console.log('🔄 Iniciando proceso de renovaciones automáticas...');
+    
+    const result: ProcessResult = {
+      success: true,
+      renewedMemberships: [],
+      expiredMemberships: [],
+      errors: []
+    };
+
+    // Obtener membresías vencidas
+    const expiredMemberships = await getExpiredAutoRenewals(gymId);
+    
+    if (expiredMemberships.length === 0) {
+      console.log('✅ No hay membresías vencidas para procesar');
+      return result;
+    }
+
+    console.log(`🔄 Procesando ${expiredMemberships.length} membresías vencidas...`);
+
+    // Procesar cada membresía vencida
+    for (const membership of expiredMemberships) {
+      try {
+        // Obtener precio actual de la actividad
+        const activityRef = collection(db, `gyms/${gymId}/activities`);
+        const activityQuery = query(activityRef, where('name', '==', membership.activityName), limit(1));
+        const activitySnapshot = await getDocs(activityQuery);
+        
+        let currentPrice = membership.cost;
+        if (!activitySnapshot.empty) {
+          const activityData = activitySnapshot.docs[0].data();
+          currentPrice = activityData.price || membership.cost;
+        }
+
+        // Calcular nueva fecha de fin (1 mes desde hoy)
+        const today = new Date();
+        const newEndDate = new Date(today.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+        // Crear nueva membresía renovada
+        const newMembershipData: Partial<MembershipAssignment> = {
+          memberId: membership.memberId,
+          activityId: membership.activityId,
+          activityName: membership.activityName,
+          startDate: today.toISOString().split('T')[0],
+          endDate: newEndDate.toISOString().split('T')[0],
+          cost: currentPrice,
+          paymentStatus: 'pending',
+          status: 'active',
+          maxAttendances: membership.maxAttendances,
+          currentAttendances: 0,
+          description: membership.description,
+          autoRenewal: membership.autoRenewal,
+          renewedAutomatically: true,
+          renewalDate: Timestamp.now(),
+          previousMembershipId: membership.id,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now()
+        };
+
+        // Agregar nueva membresía
+        const newMembershipRef = await addDoc(
+          collection(db, `gyms/${gymId}/members/${membership.memberId}/memberships`),
+          newMembershipData
+        );
+
+        // Marcar la membresía anterior como cancelada
+        await updateDoc(
+          doc(db, `gyms/${gymId}/members/${membership.memberId}/memberships`, membership.id!),
+          {
+            status: 'cancelled',
+            renewedTo: newMembershipRef.id,
+            updatedAt: Timestamp.now()
+          }
+        );
+
+        // Agregar al resultado
+        result.renewedMemberships.push({
+          ...membership,
+          id: newMembershipRef.id,
+          cost: currentPrice,
+          currentCost: currentPrice,
+          endDate: newEndDate.toISOString().split('T')[0],
+          startDate: today.toISOString().split('T')[0],
+          paymentStatus: 'pending',
+          currentAttendances: 0
+        });
+
+        console.log(`✅ Renovada: ${membership.memberName} - ${membership.activityName}`);
+
+      } catch (error) {
+        console.error(`❌ Error renovando ${membership.memberName} - ${membership.activityName}:`, error);
+        result.errors.push(`Error renovando ${membership.memberName}: ${error}`);
+        result.expiredMemberships.push(membership);
+      }
+    }
+
+    // Guardar historial del proceso
+    try {
+      await addDoc(collection(db, `gyms/${gymId}/renewalHistory`), {
+        processDate: Timestamp.now(),
+        renewedCount: result.renewedMemberships.length,
+        errorCount: result.errors.length,
+        processedMemberships: result.renewedMemberships.map(m => ({
+          memberName: m.memberName,
+          activityName: m.activityName,
+          newCost: m.cost,
+          newEndDate: m.endDate
+        })),
+        errors: result.errors
+      });
+    } catch (error) {
+      console.warn('⚠️ Error guardando historial:', error);
+    }
+
+    result.success = result.errors.length === 0;
+    
+    console.log(`✅ Proceso completado: ${result.renewedMemberships.length} renovadas, ${result.errors.length} errores`);
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Error en proceso de renovaciones:', error);
+    return {
+      success: false,
+      renewedMemberships: [],
+      expiredMemberships: [],
+      errors: [`Error general: ${error}`]
+    };
+  }
+};
+
+/**
+ * 📋 Obtener historial de renovaciones REAL
+ */
+export const getRenewalHistory = async (gymId: string, limitCount: number = 10): Promise<any[]> => {
+  try {
+    console.log('📋 Cargando historial de renovaciones...');
+    
+    const historyRef = collection(db, `gyms/${gymId}/renewalHistory`);
+    const historyQuery = query(
+      historyRef,
+      orderBy('processDate', 'desc'),
+      limit(limitCount)
+    );
+    
+    const historySnapshot = await getDocs(historyQuery);
+    const history = historySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      processDate: doc.data().processDate?.toDate?.() || new Date()
+    }));
+
+    console.log(`✅ Cargadas ${history.length} entradas de historial`);
+    return history;
+    
+  } catch (error) {
+    console.error('❌ Error cargando historial:', error);
+    return [];
+  }
+};
+
+/**
+ * 💰 Calcular métricas financieras REALES de membresías
+ */
+export const getMembershipFinancialMetrics = async (gymId: string): Promise<{
+  totalToCollect: number;
+  totalCollected: number;
+  pendingPayments: number;
+  collectionPercentage: number;
+}> => {
+  try {
+    console.log('💰 Calculando métricas financieras...');
+    
+    let totalToCollect = 0;
+    let totalCollected = 0;
+    let pendingPayments = 0;
+
+    // Obtener todos los miembros activos
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    const membersQuery = query(membersRef, where('status', '==', 'active'));
+    const membersSnapshot = await getDocs(membersQuery);
+
+    const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+
+    for (const memberDoc of membersSnapshot.docs) {
+      const memberId = memberDoc.id;
       
       try {
         // Obtener membresías activas del miembro
         const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-        const activeMembershipsQuery = query(
+        const membershipsQuery = query(
           membershipsRef,
           where('status', '==', 'active')
         );
+        const membershipsSnapshot = await getDocs(membershipsQuery);
         
-        const membershipsSnapshot = await getDocs(activeMembershipsQuery);
-        
-        // Verificar cada membresía
         for (const membershipDoc of membershipsSnapshot.docs) {
-          const membershipData = membershipDoc.data() as MembershipAssignment;
-          const membershipId = membershipDoc.id;
+          const membership = membershipDoc.data() as MembershipAssignment;
           
-          // Convertir fecha de vencimiento
-          const endDate = safelyConvertToDate(membershipData.endDate);
-          
-          if (!endDate) {
-            result.errors.push(`Membresía ${membershipId} del socio ${memberId}: fecha de vencimiento inválida`);
-            continue;
-          }
-          
-          // Verificar si está vencida
-          if (endDate < today) {
-            console.log(`⏰ Membresía vencida encontrada: ${membershipData.activityName} del socio ${memberId}`);
+          // Solo contar membresías del mes actual
+          const membershipMonth = membership.startDate?.slice(0, 7);
+          if (membershipMonth === currentMonth) {
+            totalToCollect += membership.cost || 0;
             
-            // NUEVA LÓGICA: Verificar si tiene renovación automática
-            if (membershipData.autoRenewal === true) {
-              console.log(`🔄 Procesando renovación automática para: ${membershipData.activityName}`);
-              
-              try {
-                // 1. Marcar la membresía actual como renovada
-                const currentMembershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
-                batch.update(currentMembershipRef, {
-                  status: 'expired',
-                  expiredAt: serverTimestamp(),
-                  renewedAutomatically: true,
-                  updatedAt: serverTimestamp()
-                });
-                
-                // 2. Calcular nueva fecha de vencimiento
-                const newStartDate = new Date(today);
-                const newEndDate = calculateNewEndDate(newStartDate, membershipData);
-                
-                // 3. Crear nueva membresía
-                const newMembershipData = {
-                  memberId: memberId,
-                  activityId: membershipData.activityId,
-                  activityName: membershipData.activityName,
-                  startDate: newStartDate.toISOString().split('T')[0],
-                  endDate: newEndDate.toISOString().split('T')[0],
-                  cost: membershipData.cost,
-                  paymentStatus: 'pending' as const, // Generar nueva deuda
-                  status: 'active' as const,
-                  maxAttendances: membershipData.maxAttendances,
-                  currentAttendances: 0, // Resetear asistencias
-                  description: membershipData.description,
-                  autoRenewal: membershipData.autoRenewal, // Mantener renovación automática
-                  paymentFrequency: membershipData.paymentFrequency || 'single',
-                  renewalDate: serverTimestamp(),
-                  previousMembershipId: membershipId,
-                  createdAt: serverTimestamp()
-                };
-                
-                // Agregar nueva membresía al batch
-                const newMembershipRef = doc(collection(db, `gyms/${gymId}/members/${memberId}/memberships`));
-                batch.set(newMembershipRef, newMembershipData);
-                
-                // 4. Actualizar deuda del socio si la membresía tiene costo
-                if (membershipData.cost > 0) {
-                  const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-                  const memberSnap = await getDoc(memberRef);
-                  
-                  if (memberSnap.exists()) {
-                    const currentDebt = memberSnap.data().totalDebt || 0;
-                    batch.update(memberRef, {
-                      totalDebt: currentDebt + membershipData.cost,
-                      updatedAt: serverTimestamp()
-                    });
-                    batchCount++; // Contar esta operación adicional
-                  }
-                }
-                
-                batchCount += 2; // update + set
-                
-                // Agregar a resultado de renovaciones
-                result.renewedMemberships.push({
-                  ...newMembershipData,
-                  id: newMembershipRef.id,
-                  memberId: memberId
-                });
-                
-                console.log(`✅ Renovación automática programada: ${membershipData.activityName} - ${memberData.firstName} ${memberData.lastName}`);
-                
-              } catch (renewalError) {
-                console.error(`Error en renovación automática para membresía ${membershipId}:`, renewalError);
-                result.errors.push(`Error renovando membresía ${membershipId}: ${renewalError}`);
-                
-                // Si falla la renovación, proceder con expiración normal
-                const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
-                batch.update(membershipRef, {
-                  status: 'expired',
-                  expiredAt: serverTimestamp(),
-                  renewalFailed: true,
-                  updatedAt: serverTimestamp()
-                });
-                batchCount++;
-              }
-              
+            if (membership.paymentStatus === 'paid') {
+              totalCollected += membership.cost || 0;
             } else {
-              // LÓGICA ORIGINAL: Sin renovación automática, solo expirar
-              const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
-              
-              batch.update(membershipRef, {
-                status: 'expired',
-                expiredAt: serverTimestamp(),
-                updatedAt: serverTimestamp()
-              });
-              
-              batchCount++;
-              
-              // Agregar a resultado de expiradas
-              result.expiredMemberships.push({
-                ...membershipData,
-                id: membershipId,
-                memberId: memberId
-              });
-            }
-            
-            // Ejecutar batch si alcanza el límite
-            if (batchCount >= maxBatchSize) {
-              await batch.commit();
-              console.log(`📦 Batch ejecutado: ${batchCount} operaciones procesadas`);
-              
-              // Crear nuevo batch
-              const newBatch = writeBatch(db);
-              Object.assign(batch, newBatch);
-              batchCount = 0;
+              pendingPayments++;
             }
           }
         }
-      } catch (memberError) {
-        console.error(`Error procesando miembro ${memberId}:`, memberError);
-        result.errors.push(`Error procesando miembro ${memberId}: ${memberError}`);
+      } catch (error) {
+        console.warn(`Error procesando membresías financieras para ${memberId}:`, error);
       }
     }
-    
-    // Ejecutar batch final si tiene operaciones pendientes
-    if (batchCount > 0) {
-      await batch.commit();
-      console.log(`📦 Batch final ejecutado: ${batchCount} operaciones procesadas`);
-    }
-    
-    result.processedCount = result.expiredMemberships.length + result.renewedMemberships.length;
-    
-    console.log(`✅ Proceso completado:
-    - Membresías expiradas: ${result.expiredMemberships.length}
-    - Membresías renovadas automáticamente: ${result.renewedMemberships.length}
-    - Total procesadas: ${result.processedCount}`);
-    
-    return result;
+
+    const collectionPercentage = totalToCollect > 0 
+      ? (totalCollected / totalToCollect) * 100 
+      : 100;
+
+    const metrics = {
+      totalToCollect,
+      totalCollected,
+      pendingPayments,
+      collectionPercentage
+    };
+
+    console.log('✅ Métricas financieras calculadas:', metrics);
+    return metrics;
     
   } catch (error) {
-    console.error('Error en proceso de expiración de membresías:', error);
-    result.success = false;
-    result.errors.push(`Error general: ${error}`);
-    return result;
-  }
-};
-
-
-export const getExpiredAutoRenewals = async (gymId: string): Promise<MembershipAssignment[]> => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const expiredRenewals: MembershipAssignment[] = [];
-    
-    console.log(`🔍 Buscando membresías vencidas con renovación automática...`);
-    
-    // Obtener todos los miembros
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    for (const memberDoc of membersSnapshot.docs) {
-      const memberId = memberDoc.id;
-      const memberData = memberDoc.data();
-      
-      // Obtener membresías activas del miembro
-      const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-      const activeMembershipsQuery = query(
-        membershipsRef,
-        where('status', '==', 'active')
-      );
-      
-      const membershipsSnapshot = await getDocs(activeMembershipsQuery);
-      
-      for (const membershipDoc of membershipsSnapshot.docs) {
-        const membershipData = membershipDoc.data() as MembershipAssignment;
-        
-        // Verificar si tiene renovación automática Y está vencida
-        if (membershipData.autoRenewal === true) {
-          const endDate = safelyConvertToDate(membershipData.endDate);
-          
-          if (endDate && endDate < today) {
-            console.log(`🔴 Membresía vencida con auto-renovación: ${membershipData.activityName} - ${memberData.firstName} ${memberData.lastName}`);
-            
-            expiredRenewals.push({
-              ...membershipData,
-              id: membershipDoc.id,
-              memberId: memberId,
-              memberName: `${memberData.firstName} ${memberData.lastName}`
-            });
-          }
-        }
-      }
-    }
-    
-    // Ordenar por fecha de vencimiento (más antiguas primero)
-    expiredRenewals.sort((a, b) => {
-      const dateA = safelyConvertToDate(a.endDate);
-      const dateB = safelyConvertToDate(b.endDate);
-      
-      if (!dateA || !dateB) return 0;
-      return dateA.getTime() - dateB.getTime();
-    });
-    
-    console.log(`🎯 Total de membresías vencidas con auto-renovación: ${expiredRenewals.length}`);
-    
-    return expiredRenewals;
-    
-  } catch (error) {
-    console.error('Error obteniendo membresías vencidas con auto-renovación:', error);
-    throw error;
-  }
-};
-
-
-/**
- * Calcular nueva fecha de vencimiento basada en la duración original
- */
-const calculateNewEndDate = (startDate: Date, membershipData: MembershipAssignment): Date => {
-  const endDate = new Date(startDate);
-  
-  // Calcular duración original en días
-  const originalStartDate = safelyConvertToDate(membershipData.startDate);
-  const originalEndDate = safelyConvertToDate(membershipData.endDate);
-  
-  let durationInDays = 30; // Default: 1 mes
-  
-  if (originalStartDate && originalEndDate) {
-    const timeDiff = originalEndDate.getTime() - originalStartDate.getTime();
-    durationInDays = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-  }
-  
-  endDate.setDate(startDate.getDate() + durationInDays);
-  return endDate;
-};
-
-// Resto de funciones existentes se mantienen igual...
-
-/**
- * Obtener membresías que vencen próximamente (en los próximos días)
- */
-export const getMembershipsExpiringSoon = async (
-  gymId: string, 
-  daysAhead: number = 7
-): Promise<MembershipAssignment[]> => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const futureDate = new Date(today);
-    futureDate.setDate(today.getDate() + daysAhead);
-    futureDate.setHours(23, 59, 59, 999);
-    
-    const expiringSoon: MembershipAssignment[] = [];
-    
-    // Obtener todos los miembros
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    for (const memberDoc of membersSnapshot.docs) {
-      const memberId = memberDoc.id;
-      const memberData = memberDoc.data();
-      
-      // Obtener membresías activas del miembro
-      const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-      const activeMembershipsQuery = query(
-        membershipsRef,
-        where('status', '==', 'active')
-      );
-      
-      const membershipsSnapshot = await getDocs(activeMembershipsQuery);
-      
-      for (const membershipDoc of membershipsSnapshot.docs) {
-        const membershipData = membershipDoc.data() as MembershipAssignment;
-        const endDate = safelyConvertToDate(membershipData.endDate);
-        
-        if (endDate && endDate >= today && endDate <= futureDate) {
-          expiringSoon.push({
-            ...membershipData,
-            id: membershipDoc.id,
-            memberId: memberId,
-            memberName: `${memberData.firstName} ${memberData.lastName}`
-          });
-        }
-      }
-    }
-    
-    // Ordenar por fecha de vencimiento
-    expiringSoon.sort((a, b) => {
-      const dateA = safelyConvertToDate(a.endDate);
-      const dateB = safelyConvertToDate(b.endDate);
-      
-      if (!dateA || !dateB) return 0;
-      return dateA.getTime() - dateB.getTime();
-    });
-    
-    return expiringSoon;
-    
-  } catch (error) {
-    console.error('Error obteniendo membresías por vencer:', error);
-    throw error;
+    console.error('❌ Error calculando métricas financieras:', error);
+    return {
+      totalToCollect: 0,
+      totalCollected: 0,
+      pendingPayments: 0,
+      collectionPercentage: 0
+    };
   }
 };
 
 /**
- * Verificar membresías vencidas para un socio específico
+ * 🔧 Función auxiliar: Verificar si una membresía necesita renovación
  */
-export const checkMemberExpiredMemberships = async (
-  gymId: string, 
-  memberId: string
-): Promise<MembershipAssignment[]> => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const expiredMemberships: MembershipAssignment[] = [];
-    
-    // Obtener membresías activas del miembro
-    const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-    const activeMembershipsQuery = query(
-      membershipsRef,
-      where('status', '==', 'active')
-    );
-    
-    const membershipsSnapshot = await getDocs(activeMembershipsQuery);
-    
-    for (const membershipDoc of membershipsSnapshot.docs) {
-      const membershipData = membershipDoc.data() as MembershipAssignment;
-      const endDate = safelyConvertToDate(membershipData.endDate);
-      
-      if (endDate && endDate < today) {
-        expiredMemberships.push({
-          ...membershipData,
-          id: membershipDoc.id,
-          memberId: memberId
-        });
-      }
-    }
-    
-    return expiredMemberships;
-    
-  } catch (error) {
-    console.error('Error verificando membresías vencidas del socio:', error);
-    throw error;
-  }
-};
-
-/**
- * Forzar la desactivación de una membresía específica
- */
-export const forceExpireMembership = async (
-  gymId: string,
-  memberId: string,
-  membershipId: string,
-  reason?: string
-): Promise<boolean> => {
-  try {
-    const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships`, membershipId);
-    
-    await updateDoc(membershipRef, {
-      status: 'expired',
-      expiredAt: serverTimestamp(),
-      expiredReason: reason || 'Desactivación manual',
-      updatedAt: serverTimestamp()
-    });
-    
-    console.log(`✅ Membresía ${membershipId} desactivada manualmente`);
-    return true;
-    
-  } catch (error) {
-    console.error('Error desactivando membresía:', error);
+export const needsRenewal = (membership: MembershipAssignment): boolean => {
+  if (!membership.autoRenewal || membership.status !== 'active') {
     return false;
   }
+  
+  const endDate = new Date(membership.endDate);
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  
+  return endDate < today;
 };
 
 /**
- * Programar verificación automática (para usar con cron jobs o schedulers)
+ * 📅 Función auxiliar: Calcular días hasta vencimiento
  */
-export const scheduleExpirationCheck = async (gymId: string): Promise<void> => {
-  try {
-    console.log(`⏰ Iniciando verificación programada para gimnasio: ${gymId}`);
-    
-    const result = await processExpiredMemberships(gymId);
-    
-    if (result.success) {
-      console.log(`✅ Verificación completada: 
-      - ${result.expiredMemberships.length} membresías expiradas
-      - ${result.renewedMemberships.length} membresías renovadas automáticamente
-      - Total procesadas: ${result.processedCount}`);
-      
-      if (result.errors.length > 0) {
-        console.warn(`⚠️ Errores encontrados:`, result.errors);
-      }
-    } else {
-      console.error(`❌ Verificación falló:`, result.errors);
-    }
-    
-  } catch (error) {
-    console.error('Error en verificación programada:', error);
-  }
+export const getDaysUntilExpiration = (endDate: string): number => {
+  const expiration = new Date(endDate);
+  const today = new Date();
+  const diffTime = expiration.getTime() - today.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 };
 
 /**
- * Obtener estadísticas de membresías incluyendo renovaciones automáticas
+ * 🎨 Función auxiliar: Obtener estado de renovación para UI
  */
-export const getMembershipExpirationStats = async (gymId: string) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const nextWeek = new Date(today);
-    nextWeek.setDate(today.getDate() + 7);
-    
-    const nextMonth = new Date(today);
-    nextMonth.setDate(today.getDate() + 30);
-    
-    let activeCount = 0;
-    let expiredCount = 0;
-    let expiringThisWeek = 0;
-    let expiringThisMonth = 0;
-    let autoRenewalCount = 0; // NUEVO: contar membresías con renovación automática
-    
-    // Obtener todos los miembros
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    for (const memberDoc of membersSnapshot.docs) {
-      const memberId = memberDoc.id;
-      
-      const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-      const membershipsSnapshot = await getDocs(membershipsRef);
-      
-      for (const membershipDoc of membershipsSnapshot.docs) {
-        const membershipData = membershipDoc.data() as MembershipAssignment;
-        const endDate = safelyConvertToDate(membershipData.endDate);
-        
-        if (membershipData.status === 'active') {
-          activeCount++;
-          
-          // Contar renovaciones automáticas
-          if (membershipData.autoRenewal === true) {
-            autoRenewalCount++;
-          }
-          
-          if (endDate) {
-            if (endDate < today) {
-              // Esta debería ser procesada por el sistema
-            } else if (endDate <= nextWeek) {
-              expiringThisWeek++;
-            } else if (endDate <= nextMonth) {
-              expiringThisMonth++;
-            }
-          }
-        } else if (membershipData.status === 'expired') {
-          expiredCount++;
-        }
-      }
-    }
-    
+export const getRenewalStatus = (endDate: string): {
+  status: 'vencida' | 'hoy' | 'pronto' | 'programada';
+  days: number;
+  color: string;
+} => {
+  const days = getDaysUntilExpiration(endDate);
+  
+  if (days < 0) {
     return {
-      activeCount,
-      expiredCount,
-      expiringThisWeek,
-      expiringThisMonth,
-      autoRenewalCount, // NUEVO
-      totalCount: activeCount + expiredCount
+      status: 'vencida',
+      days,
+      color: 'bg-red-100 text-red-800'
     };
-    
-  } catch (error) {
-    console.error('Error obteniendo estadísticas de membresías:', error);
-    throw error;
-  }
-};
-
-/**
- * Obtener próximas renovaciones automáticas
- */
-export const getUpcomingAutoRenewals = async (
-  gymId: string, 
-  daysAhead: number = 7
-): Promise<MembershipAssignment[]> => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const futureDate = new Date(today);
-    futureDate.setDate(today.getDate() + daysAhead);
-    futureDate.setHours(23, 59, 59, 999);
-    
-    const upcomingRenewals: MembershipAssignment[] = [];
-    
-    console.log(`🔍 Buscando renovaciones automáticas entre ${today.toDateString()} y ${futureDate.toDateString()}`);
-    
-    // Obtener todos los miembros
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
-    
-    for (const memberDoc of membersSnapshot.docs) {
-      const memberId = memberDoc.id;
-      const memberData = memberDoc.data();
-      
-      // 🔧 CORREGIDO: Obtener TODAS las membresías activas (sin filtro de autoRenewal en la query)
-      const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
-      const activeMembershipsQuery = query(
-        membershipsRef,
-        where('status', '==', 'active')
-      );
-      
-      const membershipsSnapshot = await getDocs(activeMembershipsQuery);
-      console.log(`👤 Miembro ${memberData.firstName} ${memberData.lastName}: ${membershipsSnapshot.size} membresías activas`);
-      
-      for (const membershipDoc of membershipsSnapshot.docs) {
-        const membershipData = membershipDoc.data() as MembershipAssignment;
-        
-        console.log(`📋 Membresía ${membershipData.activityName}:`, {
-          autoRenewal: membershipData.autoRenewal,
-          endDate: membershipData.endDate,
-          status: membershipData.status
-        });
-        
-        // 🔧 CORREGIDO: Verificar autoRenewal después de obtener los datos
-        if (membershipData.autoRenewal === true) {
-          const endDate = safelyConvertToDate(membershipData.endDate);
-          
-          if (endDate && endDate >= today && endDate <= futureDate) {
-            console.log(`✅ Renovación automática encontrada: ${membershipData.activityName} vence ${endDate.toDateString()}`);
-            
-            upcomingRenewals.push({
-              ...membershipData,
-              id: membershipDoc.id,
-              memberId: memberId,
-              memberName: `${memberData.firstName} ${memberData.lastName}`
-            });
-          }
-        }
-      }
-    }
-    
-    // Ordenar por fecha de vencimiento
-    upcomingRenewals.sort((a, b) => {
-      const dateA = safelyConvertToDate(a.endDate);
-      const dateB = safelyConvertToDate(b.endDate);
-      
-      if (!dateA || !dateB) return 0;
-      return dateA.getTime() - dateB.getTime();
-    });
-    
-    console.log(`🎯 Total de renovaciones automáticas encontradas: ${upcomingRenewals.length}`);
-    
-    return upcomingRenewals;
-    
-  } catch (error) {
-    console.error('Error obteniendo próximas renovaciones automáticas:', error);
-    throw error;
+  } else if (days === 0) {
+    return {
+      status: 'hoy',
+      days,
+      color: 'bg-yellow-100 text-yellow-800'
+    };
+  } else if (days <= 7) {
+    return {
+      status: 'pronto',
+      days,
+      color: 'bg-orange-100 text-orange-800'
+    };
+  } else {
+    return {
+      status: 'programada',
+      days,
+      color: 'bg-green-100 text-green-800'
+    };
   }
 };

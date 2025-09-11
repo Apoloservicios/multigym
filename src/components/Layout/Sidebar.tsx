@@ -365,7 +365,7 @@ const Sidebar: React.FC = () => {
                         onClick={() => handleNavigate('settings/memberships')}
                       />
 
-                      {/* 
+                      {/*    */}
 
                           <NavItem
                         icon={<RefreshCw size={16} />}
@@ -382,7 +382,7 @@ const Sidebar: React.FC = () => {
                           onClick={() => handleNavigate('payments')}
                           isNew={true}
                         />
-                  */}
+               
                     
                       <NavItem
                         icon={<User size={16} />}

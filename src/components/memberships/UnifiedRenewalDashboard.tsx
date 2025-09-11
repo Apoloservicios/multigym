@@ -33,6 +33,9 @@ import {
 
 import useAuth from '../../hooks/useAuth';
 import { formatCurrency, formatDisplayDate } from '../../utils/format.utils';
+import MonthlyReportGenerator from './MonthlyReportGenerator';
+
+
 
 // ==========================================
 // INTERFACES
@@ -446,83 +449,22 @@ const UnifiedRenewalDashboard: React.FC = () => {
   );
 
   /**
-   * 🎨 Vista de reportes
+   * 🎨 Vista de reportes ACTUALIZADA
    */
   const ReportsView: React.FC = () => (
     <div className="space-y-6">
-      <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">
-          Reportes y Exportaciones
-        </h3>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="border border-gray-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <FileSpreadsheet className="h-8 w-8 text-green-500 mr-3" />
-              <div>
-                <h4 className="text-sm font-medium text-gray-900">
-                  Reporte Mensual de Pagos
-                </h4>
-                <p className="text-sm text-gray-500">
-                  Excel con socios, membresías y estado de pagos
-                </p>
-              </div>
-            </div>
-            
-            <div className="mt-4 text-xs text-gray-500 bg-gray-50 p-3 rounded">
-              <strong>Incluye:</strong><br/>
-              • Listado completo de socios<br/>
-              • Estado de pagos del mes seleccionado<br/>
-              • Configuración de auto-renovación<br/>
-              • Asistencias y fechas de vencimiento
-            </div>
-            
-            <button
-              onClick={generateExcelReport}
-              className="mt-3 w-full inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Configurar y Generar
-            </button>
-          </div>
-          
-          <div className="border border-gray-200 rounded-lg p-4">
-            <div className="flex items-center">
-              <TrendingUp className="h-8 w-8 text-blue-500 mr-3" />
-              <div>
-                <h4 className="text-sm font-medium text-gray-900">
-                  Estadísticas de Renovación
-                </h4>
-                <p className="text-sm text-gray-500">
-                  Análisis de tendencias y rendimiento del sistema
-                </p>
-              </div>
-            </div>
-            
-            <div className="mt-4 text-xs text-gray-500 bg-gray-50 p-3 rounded">
-              <strong>Métricas incluidas:</strong><br/>
-              • Tasa de renovación automática<br/>
-              • Tendencias de crecimiento<br/>
-              • Análisis de retención<br/>
-              • Proyecciones financieras
-            </div>
-            
-            <button
-              className="mt-3 w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-              disabled
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Próximamente
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Generador de reportes Excel */}
+      <MonthlyReportGenerator 
+        onReportGenerated={() => {
+          setSuccess('📊 Reporte generado exitosamente');
+        }}
+      />
       
       {/* Mostrar últimos resultados si existen */}
       {lastProcessResult && (
         <div className="bg-white shadow rounded-lg p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">
-            Resumen del Último Proceso
+            Resumen del Último Proceso de Renovación
           </h3>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
