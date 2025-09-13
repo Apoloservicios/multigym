@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash, ChevronDown, ChevronUp, DollarSign, Calendar, Clock, Check, X, AlertCircle, Star } from 'lucide-react';
 import { Membership, Activity, MembershipFormData, FormErrors } from '../../types/membership.types';
 import useAuth from '../../hooks/useAuth';
-import { getMemberships, createMembership, updateMembership, deleteMembership, togglePopularMembership } from '../../services/membership.service';
+import { getMemberships, createMembership, updateMembership, deleteMembership, togglePopularMembership } from '../../services/membershipService';
 import { getActiveActivities } from '../../services/activity.service';
 import { formatCurrency } from '../../utils/formatting.utils';
 import { getActivities } from '../../services/activity.service';
@@ -243,12 +243,34 @@ const MembershipManagement: React.FC = () => {
           );
         }
       } else {
-        // Crear nueva membresía
-        const newMembership = await createMembership(gymData.id, membershipData);
-        
-        // Añadir a la lista local
-        setMemberships(prev => [...prev, newMembership]);
-      }
+          // Crear nueva membresía
+          const result = await createMembership(gymData.id, membershipData);
+          
+          if (result.success && result.membershipId) {
+            // Crear el objeto membership completo para agregar al estado
+            const newMembership: Membership = {
+              id: result.membershipId,
+              activityId: formData.activityId,
+              activityName: activities.find(a => a.id === formData.activityId)?.name || '',
+              name: formData.name,
+              description: formData.description,
+              cost: Number(formData.cost),
+              duration: formData.duration,
+              maxAttendances: Number(formData.maxAttendances),
+              isActive: formData.isActive,
+              isPopular: false,
+              activeMembers: 0,
+              createdAt: new Date()
+            };
+            
+            // Añadir a la lista local
+            setMemberships(prev => [newMembership, ...prev]);
+          } else {
+            // Manejar error si la creación falló
+            setError(result.error || 'Error al crear la membresía');
+            return; // Salir para no mostrar éxito
+          }
+        }
       
       setSuccess(true);
       

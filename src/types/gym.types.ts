@@ -1,6 +1,7 @@
 // src/types/gym.types.ts
 // 🔧 TIPOS ACTUALIZADOS - PASO 4: PREPARAR PARA PRODUCTOS
 // Nuevos campos para productos + mejoras en caja diaria
+// 🆕 AGREGADO: MembershipAssignment para el nuevo sistema de renovaciones
 
 // ===================== TIPOS EXISTENTES MEJORADOS =====================
 
@@ -114,6 +115,36 @@ export interface Transaction {
   // Timestamps
   createdAt?: any;
   updatedAt?: any;
+}
+
+// ===================== 🆕 TIPOS PARA EL NUEVO SISTEMA DE RENOVACIONES =====================
+
+// 🎯 TIPO PRINCIPAL PARA MEMBRESÍAS - SOLUCIÓN AL ERROR
+export interface MembershipAssignment {
+  id: string;
+  memberId: string;
+  memberName: string;
+  activityId: string;
+  activityName: string;
+  cost: number;
+  startDate: string;
+  endDate: string;
+  
+  // 🎯 CAMPOS PRINCIPALES DEL NUEVO SISTEMA
+  autoRenewal: boolean;          // Auto-renovación activada/desactivada
+  paymentType: 'monthly';        // Solo pagos mensuales
+  paymentStatus: 'paid' | 'pending' | 'overdue';
+  
+  status: 'active' | 'expired' | 'cancelled';
+  assignedBy: string;
+  assignedAt?: any;
+  createdAt?: any;
+  updatedAt?: any;
+  
+  // Campos opcionales adicionales
+  notes?: string;
+  lastRenewalDate?: string;
+  nextBillingDate?: string;
 }
 
 // ===================== NUEVOS TIPOS PARA PRODUCTOS =====================

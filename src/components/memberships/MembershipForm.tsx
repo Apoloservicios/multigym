@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, DollarSign, Clock, Check, X, AlertCircle } from 'lucide-react';
 import { Activity } from '../../types/membership.types';
-import { getMemberships } from '../../services/membership.service';
+import { getMemberships } from '../../services/membershipService';
 import { assignMembership } from '../../services/member.service';
 import useAuth from '../../hooks/useAuth';
 import { formatCurrency } from '../../utils/formatting.utils';

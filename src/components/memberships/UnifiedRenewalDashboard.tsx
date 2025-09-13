@@ -1,452 +1,570 @@
-// DASHBOARD UNIFICADO DE RENOVACIONES - PARTE 1
+// src/components/memberships/UnifiedRenewalDashboard.tsx
+// 📊 DASHBOARD PRINCIPAL UNIFICADO - SOLUCIÓN COMPLETA
+
 import React, { useState, useEffect } from 'react';
-import { 
-  Activity, 
-  AlertTriangle, 
-  CheckCircle, 
-  RefreshCw,
+import {
   Users,
-  FileText,
-  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  RefreshCw,
   Calendar,
   DollarSign,
-  Zap
+  TrendingUp,
+  Filter,
+  Search,
+  Download,
+  Settings
 } from 'lucide-react';
-import { membershipRenewalService } from '../../services/membershipRenewalService';
-import IndividualMembershipManagement from './IndividualMembershipManagement';
-import MonthlyReportGenerator from './MonthlyReportGenerator';
 import useAuth from '../../hooks/useAuth';
-import { formatDisplayDate } from '../../utils/date.utils';
 
-interface DashboardStats {
-  totalMemberships: number;
-  withAutoRenewal: number;
+import MembershipService from '../../services/membershipService';
+import { MembershipAssignment } from '../../types/gym.types';
+import IndividualMembershipManagement from './IndividualMembershipManagement';
+interface MembershipStats {
+  total: number;
+  active: number;
   expired: number;
   expiringSoon: number;
-  renewedThisMonth: number;
+  withAutoRenewal: number;
 }
 
-interface ProcessProgress {
-  current: number;
-  total: number;
-  currentItem: string;
-  isActive: boolean;
+interface ExpiredMembershipWithDetails extends MembershipAssignment {
+  daysExpired: number;
+  totalDebt: number;
 }
 
 const UnifiedRenewalDashboard: React.FC = () => {
   const { gymData } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'expired' | 'manage' | 'reports'>('overview');
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [membershipsToRenew, setMembershipsToRenew] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [processProgress, setProcessProgress] = useState<ProcessProgress>({
-    current: 0,
+  
+  // Estados para estadísticas
+  const [stats, setStats] = useState<MembershipStats>({
     total: 0,
-    currentItem: '',
-    isActive: false
+    active: 0,
+    expired: 0,
+    expiringSoon: 0,
+    withAutoRenewal: 0
   });
+  
+  // Estados para membresías vencidas (SOLUCIÓN AL PROBLEMA)
+  const [expiredMemberships, setExpiredMemberships] = useState<ExpiredMembershipWithDetails[]>([]);
+  const [loadingExpired, setLoadingExpired] = useState<boolean>(false);
+  const [selectedMemberships, setSelectedMemberships] = useState<string[]>([]);
+  
+  // Estados de UI
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  const [success, setSuccess] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [renewalInProgress, setRenewalInProgress] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (gymData?.id) {
-      loadDashboardData();
-    }
-  }, [gymData]);
-
-  const loadDashboardData = async () => {
+  // 🔄 Cargar estadísticas principales
+  const loadStats = async () => {
     if (!gymData?.id) return;
     
-    setIsLoading(true);
-    setError('');
-    
     try {
-      const [statsData, membershipsData] = await Promise.all([
-        membershipRenewalService.getRenewalStats(gymData.id),
-        membershipRenewalService.getMembershipsNeedingRenewal(gymData.id)
-      ]);
+      setLoading(true);
+      const membershipStats = await MembershipService.getMembershipStats(gymData.id);
+      setStats(membershipStats);
       
-      setStats(statsData);
-      setMembershipsToRenew(membershipsData);
-    } catch (err: any) {
-      setError('Error cargando datos del dashboard');
-      console.error(err);
+    } catch (err) {
+      console.error('Error cargando estadísticas:', err);
+      setError('Error al cargar las estadísticas');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const processAllRenewals = async () => {
-    if (!gymData?.id || isProcessing) return;
-    
-    setIsProcessing(true);
-    setError('');
-    setSuccess('');
-    setProcessProgress({ current: 0, total: 0, currentItem: '', isActive: true });
+  // 🆕 SOLUCIÓN: Cargar membresías vencidas
+  const loadExpiredMemberships = async () => {
+    if (!gymData?.id) return;
     
     try {
-      const result = await membershipRenewalService.processAllAutoRenewals(
+      setLoadingExpired(true);
+      const expired = await MembershipService.getExpiredMemberships(gymData.id);
+      
+      // Agregar información adicional
+      const expiredWithDetails: ExpiredMembershipWithDetails[] = expired.map(membership => {
+        const today = new Date();
+        const endDate = new Date(membership.endDate);
+        const daysExpired = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        return {
+          ...membership,
+          daysExpired: Math.max(0, daysExpired),
+          totalDebt: membership.cost * Math.ceil(daysExpired / 30) // Aproximación de deuda
+        };
+      });
+      
+      setExpiredMemberships(expiredWithDetails);
+      console.log(`✅ Cargadas ${expiredWithDetails.length} membresías vencidas`);
+      
+    } catch (err) {
+      console.error('Error cargando membresías vencidas:', err);
+      setError('Error al cargar las membresías vencidas');
+    } finally {
+      setLoadingExpired(false);
+    }
+  };
+
+  // 🔄 Renovar membresía individual
+  const handleRenewMembership = async (membershipId: string, months: number = 1) => {
+    if (!gymData?.id) return;
+    
+    setRenewalInProgress(prev => [...prev, membershipId]);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const result = await MembershipService.renewExpiredMembership(
         gymData.id,
-        (current, total, currentItem) => {
-          setProcessProgress({
-            current,
-            total,
-            currentItem,
-            isActive: true
-          });
-        }
+        membershipId,
+        months
       );
       
       if (result.success) {
-        setSuccess(`✅ Proceso completado: ${result.renewedCount} membresías renovadas exitosamente`);
-        await loadDashboardData();
-      } else if (result.totalProcessed === 0) {
-        setSuccess('No hay membresías pendientes de renovación');
+        setSuccess(`Membresía renovada exitosamente por ${months} mes(es)`);
+        // Recargar datos
+        await Promise.all([loadStats(), loadExpiredMemberships()]);
+        // Limpiar mensaje después de 3 segundos
+        setTimeout(() => setSuccess(''), 3000);
       } else {
-        setError(`Se encontraron ${result.errorCount} errores durante el proceso`);
+        setError(result.error || 'Error al renovar la membresía');
       }
-    } catch (err: any) {
-      setError('Error procesando renovaciones automáticas');
-      console.error(err);
-    } finally {
-      setIsProcessing(false);
-      setProcessProgress({ current: 0, total: 0, currentItem: '', isActive: false });
       
-      // Limpiar mensajes después de 5 segundos
-      setTimeout(() => {
-        setSuccess('');
-        setError('');
-      }, 5000);
+    } catch (err) {
+      console.error('Error renovando membresía:', err);
+      setError('Error inesperado al renovar la membresía');
+    } finally {
+      setRenewalInProgress(prev => prev.filter(id => id !== membershipId));
     }
   };
 
-  // Componente de barra de progreso
-  const ProgressBar = () => {
-    if (!processProgress.isActive) return null;
+  // 🔄 Renovación masiva
+  const handleMassiveRenewal = async () => {
+    if (!gymData?.id || selectedMemberships.length === 0) return;
     
-    const percentage = processProgress.total > 0 
-      ? Math.round((processProgress.current / processProgress.total) * 100)
-      : 0;
+    setError('');
+    setSuccess('');
     
-    return (
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg p-4 z-50">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700">
-              Procesando renovaciones...
-            </span>
-            <span className="text-sm text-gray-500">
-              {processProgress.current} de {processProgress.total}
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div 
-              className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
-          <div className="mt-2 text-xs text-gray-500 truncate">
-            Procesando: {processProgress.currentItem}
-          </div>
-        </div>
-      </div>
+    try {
+      let successCount = 0;
+      let errorCount = 0;
+      
+      // Renovar cada membresía seleccionada
+      for (const membershipId of selectedMemberships) {
+        try {
+          const result = await MembershipService.renewExpiredMembership(
+            gymData.id,
+            membershipId,
+            1 // 1 mes por defecto
+          );
+          
+          if (result.success) {
+            successCount++;
+          } else {
+            errorCount++;
+          }
+          
+        } catch (err) {
+          errorCount++;
+        }
+      }
+      
+      // Mostrar resultado
+      if (successCount > 0) {
+        setSuccess(`${successCount} membresías renovadas exitosamente`);
+      }
+      if (errorCount > 0) {
+        setError(`${errorCount} membresías no pudieron renovarse`);
+      }
+      
+      // Limpiar selección y recargar datos
+      setSelectedMemberships([]);
+      await Promise.all([loadStats(), loadExpiredMemberships()]);
+      
+    } catch (err) {
+      console.error('Error en renovación masiva:', err);
+      setError('Error en la renovación masiva');
+    }
+  };
+
+  // 🔄 Toggle selección de membresía
+  const toggleMembershipSelection = (membershipId: string) => {
+    setSelectedMemberships(prev => 
+      prev.includes(membershipId)
+        ? prev.filter(id => id !== membershipId)
+        : [...prev, membershipId]
     );
   };
 
-  if (isLoading) {
+  // 🔄 Seleccionar todas las membresías vencidas
+  const toggleSelectAll = () => {
+    if (selectedMemberships.length === expiredMemberships.length) {
+      setSelectedMemberships([]);
+    } else {
+      setSelectedMemberships(expiredMemberships.map(m => m.id));
+    }
+  };
+
+  // 📊 Filtrar membresías vencidas por búsqueda
+  const filteredExpiredMemberships = expiredMemberships.filter(membership =>
+    membership.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    membership.activityName.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // 🔄 Efectos
+  useEffect(() => {
+    if (gymData?.id) {
+      loadStats();
+      if (activeTab === 'expired') {
+        loadExpiredMemberships();
+      }
+    }
+  }, [gymData?.id, activeTab]);
+
+  // 🎨 Formatear fecha
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('es-AR');
+  };
+
+  // 🎨 Obtener color para días vencidos
+  const getDaysExpiredColor = (days: number) => {
+    if (days <= 7) return 'text-yellow-600 bg-yellow-50';
+    if (days <= 30) return 'text-orange-600 bg-orange-50';
+    return 'text-red-600 bg-red-50';
+  };
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
-        <span className="ml-2 text-gray-600">Cargando dashboard...</span>
+      <div className="flex items-center justify-center p-8">
+        <RefreshCw className="animate-spin mr-2" size={24} />
+        <span>Cargando dashboard...</span>
       </div>
     );
   }
-  // CONTINUACIÓN - PARTE 2
 
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Gestión de Renovaciones</h1>
+          <p className="text-gray-600">Dashboard unificado para el control de membresías</p>
+        </div>
+        
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => {
+              loadStats();
+              if (activeTab === 'expired') loadExpiredMemberships();
+            }}
+            className="flex items-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            <RefreshCw size={16} className="mr-1" />
+            Actualizar
+          </button>
+        </div>
+      </div>
+
       {/* Mensajes de estado */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center">
-          <AlertTriangle className="h-5 w-5 mr-2" />
-          {error}
-        </div>
-      )}
-      
-      {success && (
-        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg flex items-center">
-          <CheckCircle className="h-5 w-5 mr-2" />
-          {success}
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-md">
+          <div className="flex items-center">
+            <AlertTriangle size={16} className="mr-2" />
+            {error}
+          </div>
         </div>
       )}
 
-      {/* Navegación por pestañas */}
+      {success && (
+        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-md">
+          <div className="flex items-center">
+            <CheckCircle size={16} className="mr-2" />
+            {success}
+          </div>
+        </div>
+      )}
+
+      {/* Pestañas de navegación */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
-          <button
-            onClick={() => setActiveTab('overview')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
-              activeTab === 'overview'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <TrendingUp className="h-4 w-4 mr-2" />
-            Resumen
-          </button>
-          
-          <button
-            onClick={() => setActiveTab('expired')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
-              activeTab === 'expired'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <AlertTriangle className="h-4 w-4 mr-2" />
-            Vencidas
-            {membershipsToRenew.length > 0 && (
-              <span className="ml-2 bg-red-100 text-red-600 py-0.5 px-2 rounded-full text-xs">
-                {membershipsToRenew.length}
-              </span>
-            )}
-          </button>
-          
-          <button
-            onClick={() => setActiveTab('manage')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
-              activeTab === 'manage'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <Users className="h-4 w-4 mr-2" />
-            Gestionar
-          </button>
-          
-          <button
-            onClick={() => setActiveTab('reports')}
-            className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
-              activeTab === 'reports'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-          >
-            <FileText className="h-4 w-4 mr-2" />
-            Reportes
-          </button>
+          {[
+            { key: 'overview', label: 'Resumen', icon: TrendingUp },
+            { key: 'expired', label: 'Vencidas', icon: AlertTriangle, badge: stats.expired },
+            { key: 'manage', label: 'Gestionar', icon: Users },
+            { key: 'reports', label: 'Reportes', icon: Download }
+          ].map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key as any)}
+              className={`flex items-center py-2 px-1 border-b-2 font-medium text-sm ${
+                activeTab === tab.key
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              <tab.icon size={16} className="mr-2" />
+              {tab.label}
+              {tab.badge && tab.badge > 0 && (
+                <span className="ml-2 bg-red-100 text-red-600 text-xs font-medium px-2 py-0.5 rounded-full">
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          ))}
         </nav>
       </div>
 
-      {/* Contenido de las pestañas */}
-      <div className="mt-6">
-        {/* PESTAÑA: Resumen */}
-        {activeTab === 'overview' && stats && (
-          <div className="space-y-6">
-            {/* Tarjetas de estadísticas */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <Users className="h-6 w-6 text-gray-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Total Membresías
-                        </dt>
-                        <dd className="text-lg font-medium text-gray-900">
-                          {stats.totalMemberships}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <RefreshCw className="h-6 w-6 text-green-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Con Auto-renovación
-                        </dt>
-                        <dd className="text-lg font-medium text-gray-900">
-                          {stats.withAutoRenewal}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <AlertTriangle className="h-6 w-6 text-red-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Vencidas
-                        </dt>
-                        <dd className="text-lg font-medium text-gray-900">
-                          {stats.expired}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-white overflow-hidden shadow rounded-lg">
-                <div className="p-5">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0">
-                      <CheckCircle className="h-6 w-6 text-blue-400" />
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
-                          Renovadas este mes
-                        </dt>
-                        <dd className="text-lg font-medium text-gray-900">
-                          {stats.renewedThisMonth}
-                        </dd>
-                      </dl>
-                    </div>
-                  </div>
+      {/* Contenido según pestaña activa */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {/* Estadísticas principales */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+            <div className="bg-white p-6 rounded-lg shadow">
+              <div className="flex items-center">
+                <Users className="text-blue-600 mr-3" size={24} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Membresías</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.total}</p>
                 </div>
               </div>
             </div>
 
-            {/* Panel de control rápido */}
-            <div className="bg-white shadow rounded-lg p-6">
-              <h3 className="text-lg font-medium text-gray-900 mb-4">
-                Control Rápido
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button
-                  onClick={loadDashboardData}
-                  className="inline-flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Actualizar Datos
-                </button>
-                
-                {membershipsToRenew.length > 0 && (
-                  <button
-                    onClick={processAllRenewals}
-                    disabled={isProcessing}
-                    className="inline-flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {isProcessing ? (
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Zap className="h-4 w-4 mr-2" />
-                    )}
-                    {isProcessing ? 'Procesando...' : `Procesar ${membershipsToRenew.length} Renovaciones`}
-                  </button>
-                )}
+            <div className="bg-white p-6 rounded-lg shadow">
+              <div className="flex items-center">
+                <CheckCircle className="text-green-600 mr-3" size={24} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Activas</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.active}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <div className="flex items-center">
+                <AlertTriangle className="text-red-600 mr-3" size={24} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Vencidas</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.expired}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <div className="flex items-center">
+                <Clock className="text-yellow-600 mr-3" size={24} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Por Vencer</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.expiringSoon}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-lg shadow">
+              <div className="flex items-center">
+                <RefreshCw className="text-purple-600 mr-3" size={24} />
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Auto-renovación</p>
+                  <p className="text-2xl font-semibold text-gray-900">{stats.withAutoRenewal}</p>
+                </div>
               </div>
             </div>
           </div>
-        )}
 
-        {/* PESTAÑA: Vencidas */}
-        {activeTab === 'expired' && (
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-5 sm:p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium text-gray-900">
-                  Membresías Vencidas con Auto-renovación
-                </h3>
-                {membershipsToRenew.length > 0 && (
-                  <button
-                    onClick={processAllRenewals}
-                    disabled={isProcessing}
-                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
-                  >
-                    {isProcessing ? (
-                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Zap className="h-4 w-4 mr-2" />
-                    )}
-                    {isProcessing ? 'Procesando...' : `Renovar Todas (${membershipsToRenew.length})`}
-                  </button>
-                )}
+          {/* Alertas rápidas */}
+          {stats.expired > 0 && (
+            <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <AlertTriangle className="text-red-600 mr-3" size={20} />
+                  <div>
+                    <h3 className="text-lg font-medium text-red-800">
+                      {stats.expired} membresías vencidas requieren atención
+                    </h3>
+                    <p className="text-red-600">
+                      Haz clic en la pestaña "Vencidas" para gestionarlas
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('expired')}
+                  className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700"
+                >
+                  Ver Vencidas
+                </button>
               </div>
-              
-              {membershipsToRenew.length === 0 ? (
-                <div className="text-center py-12">
-                  <CheckCircle className="mx-auto h-12 w-12 text-green-400" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">
-                    No hay renovaciones pendientes
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 🆕 PESTAÑA VENCIDAS - SOLUCIÓN AL PROBLEMA PRINCIPAL */}
+      {activeTab === 'expired' && (
+        <div className="space-y-6">
+          {/* Header de vencidas */}
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">
+                Membresías Vencidas ({expiredMemberships.length})
+              </h2>
+              <p className="text-gray-600">Gestiona las renovaciones pendientes</p>
+            </div>
+            
+            {selectedMemberships.length > 0 && (
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-600">
+                  {selectedMemberships.length} seleccionadas
+                </span>
+                <button
+                  onClick={handleMassiveRenewal}
+                  className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+                >
+                  Renovar Seleccionadas
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Buscador */}
+          <div className="flex items-center space-x-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-3 text-gray-400" size={16} />
+              <input
+                type="text"
+                placeholder="Buscar por nombre del socio o actividad..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={loadExpiredMemberships}
+              className="flex items-center px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              <RefreshCw size={16} className={`mr-1 ${loadingExpired ? 'animate-spin' : ''}`} />
+              Actualizar
+            </button>
+          </div>
+
+          {loadingExpired ? (
+            <div className="flex items-center justify-center p-8">
+              <RefreshCw className="animate-spin mr-2" size={20} />
+              <span>Cargando membresías vencidas...</span>
+            </div>
+          ) : (
+            <>
+              {filteredExpiredMemberships.length === 0 ? (
+                <div className="text-center p-8">
+                  <CheckCircle className="mx-auto text-green-600 mb-4" size={48} />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    ¡Excelente! No hay membresías vencidas
                   </h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Todas las membresías con auto-renovación están al día
+                  <p className="text-gray-600">
+                    Todas las membresías están al día
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Socio
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Actividad
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Venció
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Precio
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {membershipsToRenew.map((membership) => (
-                        <tr key={membership.id}>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                            {membership.memberName}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {membership.activityName}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-red-600">
-                            {formatDisplayDate(membership.endDate)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            ${membership.cost?.toLocaleString('es-AR') || '0'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="bg-white rounded-lg shadow overflow-hidden">
+                  {/* Header de tabla */}
+                  <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedMemberships.length === expiredMemberships.length}
+                        onChange={toggleSelectAll}
+                        className="mr-3"
+                      />
+                      <span className="text-sm font-medium text-gray-700">
+                        Seleccionar todas ({expiredMemberships.length})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Lista de membresías vencidas */}
+                  <div className="divide-y divide-gray-200">
+                    {filteredExpiredMemberships.map(membership => (
+                      <div key={membership.id} className="px-6 py-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedMemberships.includes(membership.id)}
+                              onChange={() => toggleMembershipSelection(membership.id)}
+                              className="mr-4"
+                            />
+                            
+                            <div>
+                              <h4 className="text-lg font-medium text-gray-900">
+                                {membership.memberName}
+                              </h4>
+                              <p className="text-sm text-gray-600">
+                                {membership.activityName} • ${membership.cost}/mes
+                              </p>
+                              <div className="flex items-center mt-2 space-x-4">
+                                <span className="text-sm text-gray-500">
+                                  Venció: {formatDate(membership.endDate)}
+                                </span>
+                                <span className={`text-sm px-2 py-1 rounded-full ${getDaysExpiredColor(membership.daysExpired)}`}>
+                                  {membership.daysExpired} días vencida
+                                </span>
+                                {membership.totalDebt > 0 && (
+                                  <span className="text-sm text-red-600 bg-red-50 px-2 py-1 rounded-full">
+                                    Deuda: ${membership.totalDebt}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleRenewMembership(membership.id, 1)}
+                              disabled={renewalInProgress.includes(membership.id)}
+                              className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50"
+                            >
+                              {renewalInProgress.includes(membership.id) ? (
+                                <RefreshCw size={16} className="animate-spin" />
+                              ) : (
+                                'Renovar 1 Mes'
+                              )}
+                            </button>
+                            <button
+                              onClick={() => handleRenewMembership(membership.id, 3)}
+                              disabled={renewalInProgress.includes(membership.id)}
+                              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              Renovar 3 Meses
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </div>
+      )}
 
-        {/* PESTAÑA: Gestionar */}
-        {activeTab === 'manage' && <IndividualMembershipManagement />}
-        
-        {/* PESTAÑA: Reportes */}
-        {activeTab === 'reports' && <MonthlyReportGenerator />}
-      </div>
+      {/* Placeholder para otras pestañas */}
+          {/* Pestaña GESTIONAR - Usar componente existente */}
+      {activeTab === 'manage' && (
+        <IndividualMembershipManagement />
+      )}
 
-      {/* Barra de progreso */}
-      <ProgressBar />
+      
+
+      {activeTab === 'reports' && (
+        <div className="bg-white p-8 rounded-lg shadow text-center">
+          <Download className="mx-auto text-gray-400 mb-4" size={48} />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Reportes Excel</h3>
+          <p className="text-gray-600">Aquí irán las opciones de exportación</p>
+        </div>
+      )}
     </div>
   );
 };
