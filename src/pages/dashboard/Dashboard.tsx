@@ -1011,7 +1011,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       <div className="mt-8">
         <h2 className="text-xl font-semibold text-gray-900 mb-4">Gestión de Renovaciones</h2>
         <div className="max-w-2xl">
-          <RenewalManagementCard onNavigateToRenewals={handleNavigateToRenewals} />
+          <RenewalManagementCard />
         </div>
       </div>
 

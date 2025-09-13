@@ -1,158 +1,166 @@
-// src/hooks/useConfigurableAutoRenewal.ts
-// 🔧 HOOK MEJORADO: Renovaciones automáticas configurables
-
+// src/hooks/useConfigurableAutoRenewal.ts - CORREGIDO
 import { useEffect, useState } from 'react';
-import { processExpiredMemberships } from '../services/membershipExpiration.service';
+// Cambiado al servicio correcto
+import { membershipRenewalService } from '../services/membershipRenewalService';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 interface AutoRenewalConfig {
   enabled: boolean;
-  frequency: 'daily' | 'manual' | 'weekly';
-  notifyOnly: boolean; // Solo notifica, no renueva automáticamente
-  lastCheck?: string;
+  dayOfMonth: number;
+  notifyOnly: boolean;
+  lastRun?: string;
 }
 
-const useConfigurableAutoRenewal = (gymId: string | undefined) => {
-  const [config, setConfig] = useState<AutoRenewalConfig | null>(null);
-  const [isChecking, setIsChecking] = useState(false);
+interface AutoRenewalResult {
+  success: boolean;
+  renewedCount: number;
+  errorCount: number;
+  errors: string[];
+}
 
-  // Cargar configuración del gimnasio
+export const useConfigurableAutoRenewal = (gymId: string | undefined) => {
+  const [config, setConfig] = useState<AutoRenewalConfig>({
+    enabled: false,
+    dayOfMonth: 1,
+    notifyOnly: false
+  });
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [lastResult, setLastResult] = useState<AutoRenewalResult | null>(null);
+
+  // Cargar configuración
   useEffect(() => {
     if (!gymId) return;
-
+    
     const loadConfig = async () => {
       try {
-        const configDoc = await getDoc(doc(db, `gyms/${gymId}/settings/autoRenewal`));
+        const configRef = doc(db, `gyms/${gymId}/settings`, 'autoRenewal');
+        const configSnap = await getDoc(configRef);
         
-        if (configDoc.exists()) {
-          setConfig(configDoc.data() as AutoRenewalConfig);
-        } else {
-          // Configuración por defecto: solo notificar, no renovar automáticamente
-          const defaultConfig: AutoRenewalConfig = {
-            enabled: true,
-            frequency: 'manual',
-            notifyOnly: true
-          };
-          
-          await setDoc(doc(db, `gyms/${gymId}/settings/autoRenewal`), defaultConfig);
-          setConfig(defaultConfig);
+        if (configSnap.exists()) {
+          setConfig(configSnap.data() as AutoRenewalConfig);
         }
       } catch (error) {
-        console.error('Error cargando configuración de auto-renovación:', error);
+        console.error('Error cargando configuración:', error);
       }
     };
-
+    
     loadConfig();
   }, [gymId]);
 
-  // Ejecutar verificación según configuración
-  useEffect(() => {
-    if (!gymId || !config || !config.enabled) return;
+  // Guardar configuración
+  const saveConfig = async (newConfig: AutoRenewalConfig) => {
+    if (!gymId) return;
+    
+    try {
+      const configRef = doc(db, `gyms/${gymId}/settings`, 'autoRenewal');
+      await setDoc(configRef, newConfig);
+      setConfig(newConfig);
+      return true;
+    } catch (error) {
+      console.error('Error guardando configuración:', error);
+      return false;
+    }
+  };
 
-    const executeRenewalCheck = async () => {
-      try {
-        const now = new Date();
-        const today = now.toDateString();
+  // Verificar y ejecutar si es necesario
+  const checkAndProcess = async () => {
+    if (!gymId || !config.enabled || isProcessing) return;
+    
+    const today = new Date();
+    const currentDay = today.getDate();
+    
+    // Verificar si es el día configurado
+    if (currentDay !== config.dayOfMonth) return;
+    
+    // Verificar si ya se ejecutó hoy
+    if (config.lastRun === today.toISOString().split('T')[0]) return;
+    
+    setIsProcessing(true);
+    
+    try {
+      if (config.notifyOnly) {
+        // Solo verificar y notificar, no renovar automáticamente
+        const expiredMemberships = await membershipRenewalService.getMembershipsNeedingRenewal(gymId);
         
-        // Verificar si debe ejecutarse según frecuencia
-        let shouldRun = false;
-        
-        if (config.frequency === 'daily' && config.lastCheck !== today) {
-          shouldRun = true;
-        } else if (config.frequency === 'weekly') {
-          const lastCheck = config.lastCheck ? new Date(config.lastCheck) : null;
-          const daysSinceCheck = lastCheck ? 
-            Math.floor((now.getTime() - lastCheck.getTime()) / (1000 * 60 * 60 * 24)) : 7;
+        if (expiredMemberships.length > 0) {
+          console.log(`📢 Hay ${expiredMemberships.length} membresías que necesitan renovación`);
           
-          if (daysSinceCheck >= 7) {
-            shouldRun = true;
-          }
+          // Aquí podrías enviar notificaciones por email o mostrar en el dashboard
+          setLastResult({
+            success: true,
+            renewedCount: 0,
+            errorCount: 0,
+            errors: [`${expiredMemberships.length} membresías pendientes de renovación manual`]
+          });
         }
+      } else {
+        // Procesar renovaciones automáticamente
+        const result = await membershipRenewalService.processAllAutoRenewals(gymId);
         
-        if (!shouldRun) return;
-
-        console.log('🔄 Ejecutando verificación de renovaciones...');
-        setIsChecking(true);
-        
-        if (config.notifyOnly) {
-          // Solo verificar y notificar, no renovar automáticamente
-          const { getExpiredAutoRenewals } = await import('../services/membershipExpiration.service');
-          const expiredMemberships = await getExpiredAutoRenewals(gymId);
-          
-          if (expiredMemberships.length > 0) {
-            // Enviar notificación al dashboard
-            console.log(`⚠️ ${expiredMemberships.length} membresías requieren atención`);
-            
-            // Guardar notificación en localStorage para mostrar en dashboard
-            localStorage.setItem(`pendingRenewals_${gymId}`, JSON.stringify({
-              count: expiredMemberships.length,
-              timestamp: today,
-              memberships: expiredMemberships.map(m => ({
-                memberName: m.memberName,
-                activityName: m.activityName,
-                endDate: m.endDate
-              }))
-            }));
-          }
-        } else {
-          // Procesar renovaciones automáticamente
-          const result = await processExpiredMemberships(gymId);
-          
-          if (result.success) {
-            console.log(`✅ Verificación completada: 
-            - ${result.renewedMemberships?.length || 0} renovadas automáticamente
-            - ${result.expiredMemberships?.length || 0} expiradas`);
-          }
-        }
-        
-        // Actualizar última verificación
-        await setDoc(doc(db, `gyms/${gymId}/settings/autoRenewal`), {
-          ...config,
-          lastCheck: today
+        setLastResult({
+          success: result.success,
+          renewedCount: result.renewedCount,
+          errorCount: result.errorCount,
+          errors: result.errors
         });
         
-      } catch (error) {
-        console.error('Error en verificación automática:', error);
-      } finally {
-        setIsChecking(false);
+        // Actualizar última ejecución
+        await saveConfig({
+          ...config,
+          lastRun: today.toISOString().split('T')[0]
+        });
       }
-    };
-
-    // Ejecutar inmediatamente si debe ejecutarse
-    executeRenewalCheck();
-    
-    // Configurar intervalo según frecuencia
-    let interval: NodeJS.Timeout | null = null;
-    
-    if (config.frequency === 'daily') {
-      // Verificar cada 6 horas
-      interval = setInterval(executeRenewalCheck, 6 * 60 * 60 * 1000);
+    } catch (error) {
+      console.error('Error en proceso automático:', error);
+    } finally {
+      setIsProcessing(false);
     }
+  };
+
+  // Ejecutar verificación cada hora
+  useEffect(() => {
+    if (!gymId || !config.enabled) return;
     
-    return () => {
-      if (interval) clearInterval(interval);
-    };
+    // Verificar al montar
+    checkAndProcess();
+    
+    // Configurar intervalo de verificación cada hora
+    const interval = setInterval(checkAndProcess, 60 * 60 * 1000);
+    
+    return () => clearInterval(interval);
   }, [gymId, config]);
 
-  // Función para actualizar configuración
-  const updateConfig = async (newConfig: Partial<AutoRenewalConfig>) => {
-    if (!gymId || !config) return;
-
+  // Forzar ejecución manual
+  const forceProcess = async () => {
+    if (!gymId || isProcessing) return;
+    
+    setIsProcessing(true);
+    
     try {
-      const updatedConfig = { ...config, ...newConfig };
-      await setDoc(doc(db, `gyms/${gymId}/settings/autoRenewal`), updatedConfig);
-      setConfig(updatedConfig);
+      const result = await membershipRenewalService.processAllAutoRenewals(gymId);
+      
+      setLastResult({
+        success: result.success,
+        renewedCount: result.renewedCount,
+        errorCount: result.errorCount,
+        errors: result.errors
+      });
+      
+      return result;
     } catch (error) {
-      console.error('Error actualizando configuración:', error);
+      console.error('Error en proceso manual:', error);
+      return null;
+    } finally {
+      setIsProcessing(false);
     }
   };
 
   return {
     config,
-    isChecking,
-    updateConfig
+    saveConfig,
+    isProcessing,
+    lastResult,
+    forceProcess
   };
 };
-
-export default useConfigurableAutoRenewal;

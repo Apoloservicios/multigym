@@ -203,7 +203,9 @@ export const runMigrationScript = async (gymId: string): Promise<void> => {
   
   try {
     // Importar utilidad de migración
-    const { MembershipMigrationUtil } = await import('./membershipMigration.util');
+    const MembershipMigrationUtilModule = await import('./membershipMigration.util');
+    const { MembershipMigrationUtil } = MembershipMigrationUtilModule;
+    
     
     console.log('📊 Paso 1: Migrando membresías al nuevo formato...');
     await MembershipMigrationUtil.migrateMembershipsToNewSystem(gymId);

@@ -35,7 +35,7 @@ import Users from '../pages/settings/Users';
 import Exercises from '../pages/exercises/Exercises';
 import Routines from '../pages/routines/Routines';
 import MemberRoutines from '../pages/member-routines/MemberRoutines';
-import AutoRenewalDashboard from '../components/memberships/AutoRenewalDashboard';
+import UnifiedRenewalDashboard from '../components/memberships/UnifiedRenewalDashboard';
 
 import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
 
@@ -226,9 +226,11 @@ const AppContent: React.FC = () => {
               } />
               <Route path="auto-renewals" element={
                 <ProtectedRoute allowedRoles={['admin']}>
-                  <AutoRenewalDashboard />
+                  <UnifiedRenewalDashboard  />
                 </ProtectedRoute>
               } />
+
+              
               
               {/* Ruta por defecto */}
               <Route path="/" element={<Navigate to="dashboard" replace />} />

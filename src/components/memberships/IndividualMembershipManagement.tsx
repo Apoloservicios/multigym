@@ -1,649 +1,507 @@
-// src/components/memberships/IndividualMembershipManagement.tsx
-// 👥 GESTIÓN INDIVIDUAL POR USUARIO - Vista completa de cada socio
-
-import React, { useState, useEffect } from 'react';
+// COMPONENTE OPTIMIZADO CON SCROLL VIRTUAL - PARA 500+ SOCIOS
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
-  Users, 
-  Search, 
-  Filter, 
-  RefreshCw, 
-  Calendar,
-  DollarSign,
-  Activity,
-  ToggleLeft,
-  ToggleRight,
-  Edit,
-  Plus,
-  AlertTriangle,
+  User, 
+  Search,
+  RefreshCw,
   CheckCircle,
-  Clock,
-  User,
-  Mail,
-  Phone
+  XCircle,
+  AlertCircle,
+  ToggleLeft,
+  ToggleRight
 } from 'lucide-react';
-
-import { 
-  collection, 
-  getDocs, 
-  doc, 
-  updateDoc,
-  query,
-  where,
-  orderBy 
-} from 'firebase/firestore';
+import { collection, getDocs, updateDoc, doc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import useAuth from '../../hooks/useAuth';
-import { formatCurrency, formatDisplayDate } from '../../utils/format.utils';
-import { membershipRenewalService } from '../../services/membershipRenewalService';
+import { formatDisplayDate } from '../../utils/date.utils';
 
-// ==========================================
-// INTERFACES
-// ==========================================
-
-interface MemberWithMemberships {
+interface MemberWithMembership {
   id: string;
   firstName: string;
   lastName: string;
   email: string;
   phone?: string;
-  status: 'active' | 'inactive' | 'suspended';
-  totalDebt: number;
-  memberships: MembershipDetails[];
-  lastActivity?: Date;
+  membershipId?: string;
+  activityName?: string;
+  startDate?: Date;
+  endDate?: Date;
+  cost?: number;
+  autoRenewal?: boolean;
+  status?: string;
+  paymentStatus?: string;
+  membershipLoaded?: boolean;
 }
 
-interface MembershipDetails {
-  id: string;
-  activityId: string;
-  activityName: string;
-  startDate: Date;
-  endDate: Date;
-  cost: number;
-  status: 'active' | 'expired' | 'cancelled' | 'paused';
-  autoRenewal: boolean;
-  maxAttendances: number;
-  currentAttendances: number;
-  paymentStatus: 'paid' | 'pending' | 'partial';
-  isExpired: boolean;
-  daysUntilExpiry: number;
-}
-
-// ==========================================
-// COMPONENTE PRINCIPAL
-// ==========================================
+const ITEMS_PER_BATCH = 20; // Cargar membresías de 20 en 20
+const ROW_HEIGHT = 80; // Altura estimada de cada fila en píxeles
 
 const IndividualMembershipManagement: React.FC = () => {
   const { gymData } = useAuth();
-  
-  // Estados principales
-  const [members, setMembers] = useState<MemberWithMemberships[]>([]);
-  const [filteredMembers, setFilteredMembers] = useState<MemberWithMemberships[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [allMembers, setAllMembers] = useState<MemberWithMembership[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'expired' | 'autoRenewal'>('all');
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingBatch, setLoadingBatch] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   
-  // Estados de operaciones
-  const [updatingMembership, setUpdatingMembership] = useState<string>('');
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
+  // Estados para scroll virtual
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: 30 });
+  const containerRef = useRef<HTMLDivElement>(null);
+  const loadingQueue = useRef<Set<string>>(new Set());
 
-  // ==========================================
-  // EFECTOS
-  // ==========================================
-
+  // Cargar solo datos básicos al inicio
   useEffect(() => {
     if (gymData?.id) {
-      loadMembersData();
+      loadBasicMembersData();
     }
-  }, [gymData?.id]);
+  }, [gymData]);
 
-  useEffect(() => {
-    filterMembers();
-  }, [members, searchTerm, statusFilter]);
-
-  // Auto-limpiar mensajes
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
-
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(''), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
-  // ==========================================
-  // FUNCIONES PRINCIPALES
-  // ==========================================
-
-  /**
-   * 📊 Cargar datos de todos los socios y sus membresías
-   */
-  const loadMembersData = async () => {
+  const loadBasicMembersData = async () => {
     if (!gymData?.id) return;
     
     setIsLoading(true);
-    setError('');
-    
     try {
-      console.log('📊 Cargando datos de socios y membresías...');
-      
       const membersRef = collection(db, `gyms/${gymData.id}/members`);
       const membersSnapshot = await getDocs(membersRef);
       
-      const membersData: MemberWithMemberships[] = [];
+      console.log('Total de socios encontrados:', membersSnapshot.size);
       
-      for (const memberDoc of membersSnapshot.docs) {
-        const memberData = memberDoc.data();
-        
-        // Obtener membresías del socio
-        const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
-        const membershipsSnapshot = await getDocs(membershipsRef);
-        
-        const memberships: MembershipDetails[] = [];
-        
-        for (const membershipDoc of membershipsSnapshot.docs) {
-          const membershipData = membershipDoc.data();
-          
-          const startDate = membershipData.startDate?.toDate 
-            ? membershipData.startDate.toDate() 
-            : new Date(membershipData.startDate);
-            
-          const endDate = membershipData.endDate?.toDate 
-            ? membershipData.endDate.toDate() 
-            : new Date(membershipData.endDate);
-          
-          const now = new Date();
-          const isExpired = endDate < now;
-          const daysUntilExpiry = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-          
-          memberships.push({
-            id: membershipDoc.id,
-            activityId: membershipData.activityId,
-            activityName: membershipData.activityName || 'Actividad General',
-            startDate,
-            endDate,
-            cost: membershipData.cost || 0,
-            status: membershipData.status || 'active',
-            autoRenewal: membershipData.autoRenewal || false,
-            maxAttendances: membershipData.maxAttendances || 0,
-            currentAttendances: membershipData.currentAttendances || 0,
-            paymentStatus: membershipData.paymentStatus || 'pending',
-            isExpired,
-            daysUntilExpiry
-          });
-        }
-        
-        // Ordenar membresías por fecha de vencimiento
-        memberships.sort((a, b) => a.endDate.getTime() - b.endDate.getTime());
-        
-        membersData.push({
-          id: memberDoc.id,
-          firstName: memberData.firstName || '',
-          lastName: memberData.lastName || '',
-          email: memberData.email || '',
-          phone: memberData.phone || '',
-          status: memberData.status || 'active',
-          totalDebt: memberData.totalDebt || 0,
-          memberships,
-          lastActivity: memberData.lastAttendance?.toDate ? memberData.lastAttendance.toDate() : undefined
-        });
-      }
+      const membersData: MemberWithMembership[] = membersSnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          firstName: data.firstName || '',
+          lastName: data.lastName || '',
+          email: data.email || '',
+          phone: data.phone || '',
+          membershipLoaded: false
+        };
+      });
       
       // Ordenar por nombre
-      membersData.sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+      membersData.sort((a, b) => {
+        const nameA = `${a.firstName} ${a.lastName}`.toLowerCase();
+        const nameB = `${b.firstName} ${b.lastName}`.toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
       
-      setMembers(membersData);
-      console.log(`✅ Cargados ${membersData.length} socios con sus membresías`);
+      setAllMembers(membersData);
       
-    } catch (err: any) {
-      console.error('❌ Error cargando datos:', err);
-      setError(`Error cargando datos: ${err.message}`);
+    } catch (error) {
+      console.error('Error cargando datos básicos:', error);
+      setErrorMessage('Error al cargar los datos de socios');
     } finally {
       setIsLoading(false);
     }
   };
 
-  /**
-   * 🔍 Filtrar socios según criterios
-   */
-  const filterMembers = () => {
-    let filtered = [...members];
+  // Cargar membresías en lote
+  const loadMembershipsBatch = useCallback(async (memberIds: string[]) => {
+    if (!gymData?.id || loadingBatch) return;
     
-    // Filtro por búsqueda
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(member => 
-        `${member.firstName} ${member.lastName}`.toLowerCase().includes(term) ||
-        member.email.toLowerCase().includes(term) ||
-        member.memberships.some(m => m.activityName.toLowerCase().includes(term))
-      );
-    }
+    // Filtrar solo los que no están en cola y no han sido cargados
+    const toLoad = memberIds.filter(id => {
+      const member = allMembers.find(m => m.id === id);
+      return member && !member.membershipLoaded && !loadingQueue.current.has(id);
+    });
     
-    // Filtro por estado
-    switch (statusFilter) {
-      case 'active':
-        filtered = filtered.filter(member => member.status === 'active');
-        break;
-      case 'expired':
-        filtered = filtered.filter(member => 
-          member.memberships.some(m => m.isExpired && m.status === 'active')
-        );
-        break;
-      case 'autoRenewal':
-        filtered = filtered.filter(member => 
-          member.memberships.some(m => m.autoRenewal)
-        );
-        break;
-    }
+    if (toLoad.length === 0) return;
     
-    setFilteredMembers(filtered);
-  };
-
-  /**
-   * 🔄 Cambiar auto-renovación de una membresía
-   */
-  const toggleAutoRenewal = async (
-    memberId: string, 
-    membershipId: string, 
-    currentValue: boolean
-  ) => {
-    if (!gymData?.id) return;
-    
-    setUpdatingMembership(`${memberId}-${membershipId}`);
-    setError('');
+    // Agregar a la cola
+    toLoad.forEach(id => loadingQueue.current.add(id));
+    setLoadingBatch(true);
     
     try {
-      const membershipRef = doc(db, `gyms/${gymData.id}/members/${memberId}/memberships`, membershipId);
-      await updateDoc(membershipRef, {
-        autoRenewal: !currentValue,
-        updatedAt: new Date()
+      const updates: MemberWithMembership[] = [];
+      
+      // Procesar en paralelo pero con límite
+      const promises = toLoad.slice(0, ITEMS_PER_BATCH).map(async (memberId) => {
+        try {
+          const memberMembershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
+          const memberMembershipsQuery = query(
+            memberMembershipsRef, 
+            orderBy('startDate', 'desc'),
+            limit(1)
+          );
+          const snapshot = await getDocs(memberMembershipsQuery);
+          
+          const member = allMembers.find(m => m.id === memberId);
+          if (!member) return null;
+          
+          if (!snapshot.empty) {
+            const latestMembership = snapshot.docs[0];
+            const data = latestMembership.data();
+            
+            return {
+              ...member,
+              membershipId: latestMembership.id,
+              activityName: data.activityName || data.name || '',
+              startDate: data.startDate?.toDate ? data.startDate.toDate() : 
+                        data.startDate ? new Date(data.startDate) : undefined,
+              endDate: data.endDate?.toDate ? data.endDate.toDate() : 
+                      data.endDate ? new Date(data.endDate) : undefined,
+              cost: data.cost || data.price || 0,
+              autoRenewal: data.autoRenewal || false,
+              status: data.status || 'active',
+              paymentStatus: data.paymentStatus || 'pending',
+              membershipLoaded: true
+            };
+          } else {
+            return {
+              ...member,
+              membershipLoaded: true
+            };
+          }
+        } catch (error) {
+          console.error(`Error cargando membresía para ${memberId}:`, error);
+          const member = allMembers.find(m => m.id === memberId);
+          return member ? { ...member, membershipLoaded: true } : null;
+        }
       });
       
-      // Actualizar localmente
-      setMembers(prev => 
-        prev.map(member => 
-          member.id === memberId 
-            ? {
-                ...member,
-                memberships: member.memberships.map(membership =>
-                  membership.id === membershipId
-                    ? { ...membership, autoRenewal: !currentValue }
-                    : membership
-                )
-              }
-            : member
-        )
+      const results = await Promise.all(promises);
+      const validResults = results.filter(r => r !== null) as MemberWithMembership[];
+      
+      // Actualizar estado
+      setAllMembers(prev => {
+        const updated = [...prev];
+        validResults.forEach(result => {
+          const index = updated.findIndex(m => m.id === result.id);
+          if (index !== -1) {
+            updated[index] = result;
+          }
+        });
+        return updated;
+      });
+      
+      // Limpiar cola
+      toLoad.forEach(id => loadingQueue.current.delete(id));
+      
+    } catch (error) {
+      console.error('Error cargando lote de membresías:', error);
+    } finally {
+      setLoadingBatch(false);
+    }
+  }, [gymData?.id, allMembers, loadingBatch]);
+
+  // Filtrar miembros
+  const filteredMembers = useMemo(() => {
+    if (!searchTerm || searchTerm.trim() === '') {
+      return allMembers;
+    }
+    
+    const search = searchTerm.toLowerCase().trim();
+    const words = search.split(' ').filter(w => w.length > 0);
+    
+    return allMembers.filter(member => {
+      const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
+      const email = (member.email || '').toLowerCase();
+      
+      // Buscar todas las palabras
+      return words.every(word => 
+        fullName.includes(word) || email.includes(word)
       );
-      
-      const member = members.find(m => m.id === memberId);
-      const membership = member?.memberships.find(m => m.id === membershipId);
-      setSuccess(`Auto-renovación de ${membership?.activityName} ${!currentValue ? 'activada' : 'desactivada'} para ${member?.firstName} ${member?.lastName}`);
-      
-    } catch (err: any) {
-      console.error('❌ Error cambiando auto-renovación:', err);
-      setError('Error al cambiar la auto-renovación');
-    } finally {
-      setUpdatingMembership('');
-    }
-  };
+    });
+  }, [searchTerm, allMembers]);
 
-  /**
-   * 🔄 Renovar membresía individual
-   */
-  const renewMembership = async (memberId: string, membershipId: string) => {
-    if (!gymData?.id) return;
+  // Manejar scroll
+  const handleScroll = useCallback(() => {
+    if (!containerRef.current) return;
     
-    setUpdatingMembership(`renew-${memberId}-${membershipId}`);
-    setError('');
+    const scrollTop = containerRef.current.scrollTop;
+    const containerHeight = containerRef.current.clientHeight;
     
+    const start = Math.floor(scrollTop / ROW_HEIGHT);
+    const end = Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT);
+    
+    setVisibleRange({ 
+      start: Math.max(0, start - 5), // Buffer de 5 items antes
+      end: Math.min(filteredMembers.length, end + 5) // Buffer de 5 items después
+    });
+  }, [filteredMembers.length]);
+
+  // Cargar membresías cuando cambia el rango visible
+  useEffect(() => {
+    const visibleMembers = filteredMembers.slice(visibleRange.start, visibleRange.end);
+    const memberIds = visibleMembers.map(m => m.id);
+    
+    if (memberIds.length > 0 && !isLoading) {
+      loadMembershipsBatch(memberIds);
+    }
+  }, [visibleRange, filteredMembers, isLoading, loadMembershipsBatch]);
+
+  const toggleAutoRenewal = async (member: MemberWithMembership) => {
+    if (!gymData?.id || !member.membershipId || !member.id) return;
+    
+    setProcessingId(member.id);
     try {
-      const member = members.find(m => m.id === memberId);
-      const membership = member?.memberships.find(m => m.id === membershipId);
+      const membershipRef = doc(db, `gyms/${gymData.id}/members/${member.id}/memberships`, member.membershipId);
+      await updateDoc(membershipRef, {
+        autoRenewal: !member.autoRenewal
+      });
       
-      if (!membership || !member) {
-        throw new Error('Membresía no encontrada');
-      }
+      setSuccessMessage(`Auto-renovación ${!member.autoRenewal ? 'activada' : 'desactivada'} para ${member.firstName} ${member.lastName}`);
+      setTimeout(() => setSuccessMessage(''), 3000);
       
-      // Convertir al formato esperado por el servicio
-      const membershipToRenew = {
-        id: membership.id,
-        memberId,
-        memberName: `${member.firstName} ${member.lastName}`,
-        activityId: membership.activityId,
-        activityName: membership.activityName,
-        currentCost: membership.cost,
-        endDate: membership.endDate,
-        autoRenewal: membership.autoRenewal,
-        status: membership.status,
-        maxAttendances: membership.maxAttendances
-      };
+      setAllMembers(prev => prev.map(m => 
+        m.id === member.id 
+          ? { ...m, autoRenewal: !member.autoRenewal }
+          : m
+      ));
       
-      const result = await membershipRenewalService.renewSingleMembership(gymData.id, membershipToRenew);
-      
-      if (result.success) {
-        setSuccess(`✅ Membresía de ${member.firstName} ${member.lastName} renovada exitosamente`);
-        // Recargar datos
-        await loadMembersData();
-      } else {
-        setError(`❌ Error renovando membresía: ${result.error}`);
-      }
-      
-    } catch (err: any) {
-      console.error('❌ Error renovación individual:', err);
-      setError(`Error: ${err.message}`);
+    } catch (error) {
+      console.error('Error:', error);
+      setErrorMessage('Error al actualizar');
+      setTimeout(() => setErrorMessage(''), 3000);
     } finally {
-      setUpdatingMembership('');
+      setProcessingId(null);
     }
   };
 
-  /**
-   * 🎨 Obtener color del estado de la membresía
-   */
-  const getMembershipStatusColor = (membership: MembershipDetails): string => {
-    if (membership.isExpired) return 'text-red-600 bg-red-100';
-    if (membership.daysUntilExpiry <= 7) return 'text-yellow-600 bg-yellow-100';
-    if (membership.status === 'active') return 'text-green-600 bg-green-100';
-    return 'text-gray-600 bg-gray-100';
+  const getStatusColor = (endDate?: Date) => {
+    if (!endDate) return 'text-gray-500';
+    const now = new Date();
+    const days = Math.floor((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (days < 0) return 'text-red-600';
+    if (days <= 7) return 'text-yellow-600';
+    return 'text-green-600';
   };
 
-  /**
-   * 🎨 Obtener texto del estado de la membresía
-   */
-  const getMembershipStatusText = (membership: MembershipDetails): string => {
-    if (membership.isExpired) return 'Vencida';
-    if (membership.daysUntilExpiry <= 0) return 'Vence hoy';
-    if (membership.daysUntilExpiry <= 7) return `Vence en ${membership.daysUntilExpiry} días`;
-    return 'Activa';
+  const getStatusText = (endDate?: Date) => {
+    if (!endDate) return 'Sin membresía';
+    const now = new Date();
+    const days = Math.floor((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (days < 0) return `Vencida hace ${Math.abs(days)} días`;
+    if (days === 0) return 'Vence hoy';
+    if (days === 1) return 'Vence mañana';
+    if (days <= 7) return `Vence en ${days} días`;
+    return `Activa por ${days} días`;
   };
-
-  // ==========================================
-  // COMPONENTES DE UI
-  // ==========================================
-
-  /**
-   * 🎨 Tarjeta de socio con sus membresías
-   */
-  const MemberCard: React.FC<{ member: MemberWithMemberships }> = ({ member }) => (
-    <div className="bg-white shadow rounded-lg overflow-hidden">
-      {/* Header del socio */}
-      <div className="px-6 py-4 border-b border-gray-200">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="flex-shrink-0 h-10 w-10">
-              <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                <User className="h-5 w-5 text-blue-600" />
-              </div>
-            </div>
-            <div>
-              <h3 className="text-lg font-medium text-gray-900">
-                {member.firstName} {member.lastName}
-              </h3>
-              <div className="flex items-center space-x-4 text-sm text-gray-500">
-                {member.email && (
-                  <div className="flex items-center">
-                    <Mail className="h-4 w-4 mr-1" />
-                    {member.email}
-                  </div>
-                )}
-                {member.phone && (
-                  <div className="flex items-center">
-                    <Phone className="h-4 w-4 mr-1" />
-                    {member.phone}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-3">
-            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-              member.status === 'active' ? 'bg-green-100 text-green-800' :
-              member.status === 'inactive' ? 'bg-gray-100 text-gray-800' :
-              'bg-red-100 text-red-800'
-            }`}>
-              {member.status === 'active' ? 'Activo' : 
-               member.status === 'inactive' ? 'Inactivo' : 'Suspendido'}
-            </span>
-            
-            {member.totalDebt > 0 && (
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                Deuda: {formatCurrency(member.totalDebt)}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-      
-      {/* Membresías del socio */}
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="text-md font-medium text-gray-900">
-            Membresías ({member.memberships.length})
-          </h4>
-          <button className="text-sm text-blue-600 hover:text-blue-800 flex items-center">
-            <Plus className="h-4 w-4 mr-1" />
-            Agregar
-          </button>
-        </div>
-        
-        {member.memberships.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
-            <Activity className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-            <p className="text-sm">Sin membresías activas</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {member.memberships.map((membership) => (
-              <div key={membership.id} className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-between">
-                  {/* Info de la membresía */}
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3 mb-2">
-                      <h5 className="font-medium text-gray-900">
-                        {membership.activityName}
-                      </h5>
-                      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getMembershipStatusColor(membership)}`}>
-                        {getMembershipStatusText(membership)}
-                      </span>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-600">
-                      <div>
-                        <span className="text-gray-500">Costo:</span>
-                        <p className="font-medium">{formatCurrency(membership.cost)}</p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Vencimiento:</span>
-                        <p className="font-medium">{formatDisplayDate(membership.endDate)}</p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Asistencias:</span>
-                        <p className="font-medium">
-                          {membership.currentAttendances}/{membership.maxAttendances || '∞'}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Pago:</span>
-                        <p className={`font-medium ${
-                          membership.paymentStatus === 'paid' ? 'text-green-600' :
-                          membership.paymentStatus === 'partial' ? 'text-yellow-600' :
-                          'text-red-600'
-                        }`}>
-                          {membership.paymentStatus === 'paid' ? 'Pagado' :
-                           membership.paymentStatus === 'partial' ? 'Parcial' : 'Pendiente'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Controles */}
-                  <div className="flex items-center space-x-3 ml-4">
-                    {/* Auto-renovación */}
-                    <div className="flex flex-col items-center space-y-1">
-                      <span className="text-xs text-gray-500">Auto-reno</span>
-                      <button
-                        onClick={() => toggleAutoRenewal(member.id, membership.id, membership.autoRenewal)}
-                        disabled={updatingMembership === `${member.id}-${membership.id}`}
-                        className={`p-1 rounded transition-colors ${
-                          membership.autoRenewal ? 'text-green-600' : 'text-gray-400'
-                        } hover:bg-gray-100 disabled:opacity-50`}
-                      >
-                        {membership.autoRenewal ? (
-                          <ToggleRight className="h-5 w-5" />
-                        ) : (
-                          <ToggleLeft className="h-5 w-5" />
-                        )}
-                      </button>
-                    </div>
-                    
-                    {/* Renovar manualmente */}
-                    {(membership.isExpired || membership.daysUntilExpiry <= 7) && (
-                      <button
-                        onClick={() => renewMembership(member.id, membership.id)}
-                        disabled={updatingMembership === `renew-${member.id}-${membership.id}`}
-                        className="inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
-                      >
-                        {updatingMembership === `renew-${member.id}-${membership.id}` ? (
-                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-3 w-3 mr-1" />
-                        )}
-                        Renovar
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  // ==========================================
-  // RENDER PRINCIPAL
-  // ==========================================
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
-        <span className="ml-2 text-gray-600">Cargando datos de socios...</span>
+        <span className="ml-2 text-gray-600">Cargando socios...</span>
       </div>
     );
   }
 
+  // Calcular elementos visibles para scroll virtual
+  const visibleMembers = filteredMembers.slice(visibleRange.start, visibleRange.end);
+  const totalHeight = filteredMembers.length * ROW_HEIGHT;
+  const offsetY = visibleRange.start * ROW_HEIGHT;
+
   return (
     <div className="space-y-6">
-      {/* Header con controles */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0">
-        <div>
-          <h3 className="text-lg font-medium text-gray-900">
-            Gestión Individual por Usuario
-          </h3>
-          <p className="mt-1 text-sm text-gray-500">
-            Vista detallada de cada socio con control granular de membresías
-          </p>
+      {/* Mensajes */}
+      {successMessage && (
+        <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-3 rounded-lg flex items-center">
+          <CheckCircle className="h-5 w-5 mr-2" />
+          {successMessage}
+        </div>
+      )}
+      
+      {errorMessage && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg flex items-center">
+          <XCircle className="h-5 w-5 mr-2" />
+          {errorMessage}
+        </div>
+      )}
+
+      {/* Búsqueda */}
+      <div className="bg-white shadow rounded-lg p-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Buscar por nombre o email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
         </div>
         
-        <div className="flex items-center space-x-3">
-          <span className="text-sm text-gray-500">
-            {filteredMembers.length} de {members.length} socios
-          </span>
+        <div className="mt-2 flex items-center justify-between text-sm text-gray-600">
+          <span>{filteredMembers.length} socios encontrados</span>
           <button
-            onClick={loadMembersData}
-            disabled={isLoading}
-            className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
+            onClick={loadBasicMembersData}
+            className="flex items-center text-blue-600 hover:text-blue-700"
           >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className="h-4 w-4 mr-1" />
             Actualizar
           </button>
         </div>
       </div>
 
-      {/* Mensajes */}
-      {success && (
-        <div className="rounded-md bg-green-50 p-4">
-          <div className="flex">
-            <CheckCircle className="h-5 w-5 text-green-400" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-green-800">{success}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md bg-red-50 p-4">
-          <div className="flex">
-            <AlertTriangle className="h-5 w-5 text-red-400" />
-            <div className="ml-3">
-              <p className="text-sm font-medium text-red-800">{error}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Controles de búsqueda y filtros */}
-      <div className="bg-white p-4 rounded-lg shadow border">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Búsqueda */}
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Buscar por nombre, email o actividad..."
-            />
-          </div>
-          
-          {/* Filtros */}
-          <div className="flex items-center space-x-3">
-            <Filter className="h-5 w-5 text-gray-400" />
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="block w-full pl-3 pr-10 py-2 text-base border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 rounded-md"
-            >
-              <option value="all">Todos los socios</option>
-              <option value="active">Solo activos</option>
-              <option value="expired">Con membresías vencidas</option>
-              <option value="autoRenewal">Con auto-renovación</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Lista de socios */}
+      {/* Tabla con scroll virtual */}
       {filteredMembers.length === 0 ? (
-        <div className="text-center py-12">
-          <Users className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-2 text-sm font-medium text-gray-900">
-            No se encontraron socios
-          </h3>
-          <p className="mt-1 text-sm text-gray-500">
-            {searchTerm || statusFilter !== 'all' 
-              ? 'Intenta ajustar los filtros de búsqueda' 
-              : 'No hay socios registrados en el sistema'}
+        <div className="bg-white shadow rounded-lg p-8 text-center">
+          <User className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500">
+            {searchTerm ? `No se encontraron socios` : 'No hay socios'}
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6">
-          {filteredMembers.map((member) => (
-            <MemberCard key={member.id} member={member} />
-          ))}
+        <div className="bg-white shadow rounded-lg overflow-hidden">
+          {loadingBatch && (
+            <div className="bg-blue-50 px-4 py-2 text-sm text-blue-700">
+              Cargando membresías...
+            </div>
+          )}
+          
+          {/* Header fijo */}
+          <div className="overflow-hidden">
+            <table className="min-w-full">
+              <thead className="bg-gray-50 border-b">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">
+                    Socio
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
+                    Actividad
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
+                    Vencimiento
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/6">
+                    Estado
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/4">
+                    Auto-Renovación
+                  </th>
+                </tr>
+              </thead>
+            </table>
+          </div>
+
+          {/* Contenedor con scroll virtual */}
+          <div 
+            ref={containerRef}
+            className="overflow-auto"
+            style={{ height: '600px' }}
+            onScroll={handleScroll}
+          >
+            <div style={{ height: totalHeight, position: 'relative' }}>
+              <div style={{ transform: `translateY(${offsetY}px)` }}>
+                <table className="min-w-full">
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {visibleMembers.map((member) => (
+                      <tr key={member.id} style={{ height: ROW_HEIGHT }} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap w-1/4">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0 h-10 w-10 bg-blue-100 rounded-full flex items-center justify-center">
+                              <User className="h-5 w-5 text-blue-600" />
+                            </div>
+                            <div className="ml-4">
+                              <div className="text-sm font-medium text-gray-900">
+                                {member.firstName} {member.lastName}
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                {member.email}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap w-1/6">
+                          {!member.membershipLoaded ? (
+                            <span className="text-sm text-gray-400">...</span>
+                          ) : (
+                            <div className="text-sm text-gray-900">
+                              {member.activityName || '-'}
+                              {member.cost && (
+                                <div className="text-xs text-gray-500">
+                                  ${member.cost.toLocaleString('es-AR')}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap w-1/6">
+                          {!member.membershipLoaded ? (
+                            <span className="text-sm text-gray-400">...</span>
+                          ) : member.endDate ? (
+                            <div>
+                              <div className="text-sm text-gray-900">
+                                {formatDisplayDate(member.endDate)}
+                              </div>
+                              <div className={`text-xs ${getStatusColor(member.endDate)}`}>
+                                {getStatusText(member.endDate)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-gray-500">-</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap w-1/6">
+                          {!member.membershipLoaded ? (
+                            <span className="text-sm text-gray-400">...</span>
+                          ) : member.membershipId ? (
+                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                              member.endDate && member.endDate < new Date()
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-green-100 text-green-800'
+                            }`}>
+                              {member.endDate && member.endDate < new Date() ? 'Vencida' : 'Activa'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">
+                              Sin membresía
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap w-1/4">
+                          {!member.membershipLoaded ? (
+                            <span className="text-sm text-gray-400">...</span>
+                          ) : member.membershipId ? (
+                            <button
+                              onClick={() => toggleAutoRenewal(member)}
+                              disabled={processingId === member.id}
+                              className="flex items-center space-x-2"
+                            >
+                              {member.autoRenewal ? (
+                                <ToggleRight className="h-8 w-8 text-green-600" />
+                              ) : (
+                                <ToggleLeft className="h-8 w-8 text-gray-400" />
+                              )}
+                              <span className={`text-sm ${member.autoRenewal ? 'text-green-600' : 'text-gray-500'}`}>
+                                {member.autoRenewal ? 'Activada' : 'Desactivada'}
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="text-sm text-gray-400">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* Info */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex">
+          <AlertCircle className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="ml-3">
+            <h3 className="text-sm font-medium text-blue-800">
+              Sistema optimizado para grandes volúmenes
+            </h3>
+            <div className="mt-2 text-sm text-blue-700">
+              <ul className="list-disc pl-5 space-y-1">
+                <li>Los datos se cargan mientras navegas por la lista</li>
+                <li>Solo se renderizan los elementos visibles (scroll virtual)</li>
+                <li>Búsqueda instantánea sin recargar datos</li>
+                <li>Optimizado para más de 500 socios</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

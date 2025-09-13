@@ -1,168 +1,163 @@
-// src/components/dashboard/RenewalManagementCard.tsx
-// 🆕 NUEVO: Card para gestionar renovaciones desde el dashboard principal
-
+// src/components/dashboard/RenewalManagementCard.tsx - CORREGIDO
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, Play, AlertCircle, CheckCircle, Calendar, Users } from 'lucide-react';
-import { processExpiredMemberships, getUpcomingAutoRenewals } from '../../services/membershipExpiration.service';
+// Cambiado al servicio correcto
+import { membershipRenewalService } from '../../services/membershipRenewalService';
 import useAuth from '../../hooks/useAuth';
 
 interface RenewalCardProps {
-  onNavigateToRenewals?: () => void;
+  className?: string;
 }
 
-const RenewalManagementCard: React.FC<RenewalCardProps> = ({ onNavigateToRenewals }) => {
+const RenewalManagementCard: React.FC<RenewalCardProps> = ({ className = '' }) => {
   const { gymData } = useAuth();
-  const [processing, setProcessing] = useState(false);
-  const [lastResult, setLastResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [upcomingCount, setUpcomingCount] = useState<number>(0);
-  const [loading, setLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [stats, setStats] = useState({
+    expiringSoon: 0,
+    withAutoRenewal: 0,
+    needsRenewal: 0
+  });
+  const [lastProcessed, setLastProcessed] = useState<Date | null>(null);
+  const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // Cargar próximas renovaciones al montar el componente
   useEffect(() => {
     if (gymData?.id) {
-      loadUpcomingRenewals();
+      loadStats();
     }
-  }, [gymData?.id]);
+  }, [gymData]);
 
-  const loadUpcomingRenewals = async () => {
+  const loadStats = async () => {
     if (!gymData?.id) return;
     
     try {
-      const upcoming = await getUpcomingAutoRenewals(gymData.id, 7); // Próximos 7 días
-      setUpcomingCount(upcoming.length);
-    } catch (err) {
-      console.error('Error cargando próximas renovaciones:', err);
-    } finally {
-      setLoading(false);
+      const renewalStats = await membershipRenewalService.getRenewalStats(gymData.id);
+      const membershipsNeedingRenewal = await membershipRenewalService.getMembershipsNeedingRenewal(gymData.id);
+      
+      setStats({
+        expiringSoon: renewalStats.expiringSoon,
+        withAutoRenewal: renewalStats.withAutoRenewal,
+        needsRenewal: membershipsNeedingRenewal.length
+      });
+    } catch (error) {
+      console.error('Error cargando estadísticas:', error);
     }
   };
 
-  const runManualProcess = async () => {
-    if (!gymData?.id) return;
+  const processRenewals = async () => {
+    if (!gymData?.id || isProcessing) return;
+    
+    setIsProcessing(true);
+    setMessage(null);
     
     try {
-      setProcessing(true);
-      setError(null);
-      
-      console.log('🚀 Ejecutando proceso manual de renovaciones...');
-      
-      const result = await processExpiredMemberships(gymData.id);
-      setLastResult(result);
+      const result = await membershipRenewalService.processAllAutoRenewals(gymData.id);
       
       if (result.success) {
-        console.log('✅ Proceso completado exitosamente');
-        // Recargar el conteo de próximas renovaciones
-        await loadUpcomingRenewals();
+        setMessage({
+          type: 'success',
+          text: `✅ ${result.renewedCount} membresías renovadas exitosamente`
+        });
+        setLastProcessed(new Date());
+        await loadStats();
+      } else if (result.totalProcessed === 0) {
+        setMessage({
+          type: 'info',
+          text: 'No hay membresías pendientes de renovación'
+        });
       } else {
-        setError(`Errores encontrados: ${result.errors.join(', ')}`);
+        setMessage({
+          type: 'error',
+          text: `Se encontraron ${result.errorCount} errores durante el proceso`
+        });
       }
-      
-    } catch (err: any) {
-      console.error('❌ Error en proceso manual:', err);
-      setError(err.message || 'Error ejecutando el proceso');
+    } catch (error) {
+      console.error('Error procesando renovaciones:', error);
+      setMessage({
+        type: 'error',
+        text: 'Error al procesar las renovaciones'
+      });
     } finally {
-      setProcessing(false);
+      setIsProcessing(false);
+      
+      // Limpiar mensaje después de 5 segundos
+      setTimeout(() => setMessage(null), 5000);
     }
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <div className={`bg-white rounded-lg shadow p-6 ${className}`}>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center">
-          <RefreshCw className="text-blue-600 mr-3" size={24} />
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">
-              Renovaciones Automáticas
-            </h3>
-            <p className="text-sm text-gray-600">
-              Gestiona membresías vencidas y renovaciones automáticas
-            </p>
-          </div>
+          <RefreshCw className="h-6 w-6 text-blue-600 mr-2" />
+          <h3 className="text-lg font-semibold text-gray-900">
+            Renovaciones Automáticas
+          </h3>
         </div>
-      </div>
-
-      {/* Estadísticas rápidas */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        <div className="bg-blue-50 rounded-lg p-3">
-          <div className="flex items-center">
-            <Calendar className="text-blue-600 mr-2" size={16} />
-            <div>
-              <p className="text-sm text-blue-600 font-medium">Próximas Renovaciones</p>
-              <p className="text-lg font-semibold text-blue-900">
-                {loading ? '...' : upcomingCount}
-              </p>
-            </div>
-          </div>
-        </div>
-        
-        {lastResult && (
-          <div className="bg-green-50 rounded-lg p-3">
-            <div className="flex items-center">
-              <CheckCircle className="text-green-600 mr-2" size={16} />
-              <div>
-                <p className="text-sm text-green-600 font-medium">Último Proceso</p>
-                <p className="text-lg font-semibold text-green-900">
-                  {(lastResult.renewedMemberships?.length || 0) + (lastResult.expiredMemberships?.length || 0)} procesadas
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
-          <div className="flex">
-            <AlertCircle className="text-red-400" size={16} />
-            <p className="ml-2 text-sm text-red-800">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {lastResult && lastResult.success && !error && (
-        <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-md">
-          <div className="flex">
-            <CheckCircle className="text-green-400" size={16} />
-            <div className="ml-2 text-sm text-green-800">
-              <p>Proceso completado exitosamente:</p>
-              <ul className="mt-1 list-disc list-inside">
-                <li>{lastResult.renewedMemberships?.length || 0} membresías renovadas automáticamente</li>
-                <li>{lastResult.expiredMemberships?.length || 0} membresías expiradas</li>
-                {lastResult.errors?.length > 0 && (
-                  <li className="text-red-700">{lastResult.errors.length} errores encontrados</li>
-                )}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Botones de acción */}
-      <div className="space-y-3">
         <button
-          onClick={runManualProcess}
-          disabled={processing}
-          className="w-full flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={loadStats}
+          className="text-gray-400 hover:text-gray-600"
+          title="Actualizar"
         >
-          <Play size={16} className={`mr-2 ${processing ? 'animate-pulse' : ''}`} />
-          {processing ? 'Procesando...' : 'Ejecutar Proceso Ahora'}
+          <RefreshCw className="h-4 w-4" />
         </button>
-
-        {onNavigateToRenewals && (
-          <button
-            onClick={onNavigateToRenewals}
-            className="w-full flex items-center justify-center px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 transition-colors"
-          >
-            <Users size={16} className="mr-2" />
-            Ver Dashboard Completo
-          </button>
-        )}
       </div>
 
-      <p className="mt-3 text-xs text-gray-500 text-center">
-        Recomendado ejecutar diariamente para mantener las renovaciones al día
-      </p>
+      {/* Estadísticas */}
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="text-center">
+          <div className="text-2xl font-bold text-gray-900">{stats.needsRenewal}</div>
+          <div className="text-xs text-gray-500">Pendientes</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-blue-600">{stats.withAutoRenewal}</div>
+          <div className="text-xs text-gray-500">Auto-renovación</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-yellow-600">{stats.expiringSoon}</div>
+          <div className="text-xs text-gray-500">Por vencer</div>
+        </div>
+      </div>
+
+      {/* Mensaje de estado */}
+      {message && (
+        <div className={`mb-4 p-3 rounded-lg text-sm ${
+          message.type === 'success' ? 'bg-green-50 text-green-800' :
+          message.type === 'error' ? 'bg-red-50 text-red-800' :
+          'bg-blue-50 text-blue-800'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      {/* Botón de procesamiento */}
+      <button
+        onClick={processRenewals}
+        disabled={isProcessing || stats.needsRenewal === 0}
+        className={`w-full py-2 px-4 rounded-lg font-medium flex items-center justify-center ${
+          isProcessing || stats.needsRenewal === 0
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-blue-600 text-white hover:bg-blue-700'
+        }`}
+      >
+        {isProcessing ? (
+          <>
+            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+            Procesando...
+          </>
+        ) : (
+          <>
+            <Play className="h-4 w-4 mr-2" />
+            Procesar Renovaciones
+          </>
+        )}
+      </button>
+
+      {/* Última ejecución */}
+      {lastProcessed && (
+        <div className="mt-3 text-xs text-gray-500 text-center">
+          Último proceso: {lastProcessed.toLocaleTimeString('es-AR')}
+        </div>
+      )}
     </div>
   );
 };
