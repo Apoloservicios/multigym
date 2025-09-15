@@ -9,7 +9,10 @@ import {
   query, 
   orderBy,
   Timestamp,
-  setDoc
+  setDoc,
+  where,
+  serverTimestamp,
+ 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { MembershipAssignment } from '../types/member.types';
@@ -256,84 +259,384 @@ export const renewExpiredMembership = async (
   gymId: string,
   membershipId: string,
   months: number = 1
-): Promise<{ success: boolean; error?: string; newEndDate?: string }> => {
+): Promise<{
+  success: boolean;
+  newMembershipId?: string;
+  error?: string;
+}> => {
   try {
-    const membersRef = collection(db, `gyms/${gymId}/members`);
-    const membersSnapshot = await getDocs(membersRef);
+    // 1. Obtener la membresía original
+    const membershipRef = doc(db, `gyms/${gymId}/membershipAssignments`, membershipId);
+    const membershipSnap = await getDoc(membershipRef);
     
-    let membershipFound = false;
-    let memberId = '';
-    let membershipData: any = null;
     
-    for (const memberDoc of membersSnapshot.docs) {
-      const membershipRef = doc(
-        db, 
-        `gyms/${gymId}/members/${memberDoc.id}/memberships`, 
-        membershipId
-      );
-      const membershipSnap = await getDoc(membershipRef);
-      
-      if (membershipSnap.exists()) {
-        membershipFound = true;
-        memberId = memberDoc.id;
-        membershipData = membershipSnap.data();
+    if (!membershipSnap.exists()) {
+      return { success: false, error: 'Membresía no encontrada' };
+    }
+    
+    const membershipData = membershipSnap.data();
+    
+    // 2. 🔧 CORRECCIÓN: Obtener el precio actual de la actividad
+    let currentPrice = membershipData.cost; // Precio anterior como fallback
+    
+    if (membershipData.activityId) {
+      try {
+        // Primero intentar obtener de la tabla de actividades
+        const activityRef = doc(db, `gyms/${gymId}/activities`, membershipData.activityId);
+        const activitySnap = await getDoc(activityRef);
         
-        const today = new Date();
-        const newStartDate = today.toISOString().split('T')[0];
-        const newEndDate = new Date(today);
-        newEndDate.setMonth(newEndDate.getMonth() + months);
-        const newEndDateStr = newEndDate.toISOString().split('T')[0];
-        
-        await updateDoc(membershipRef, {
-          startDate: newStartDate,
-          endDate: newEndDateStr,
-          status: 'active',
-          paymentStatus: 'pending',
-          renewedAt: Timestamp.now(),
-          renewalMonths: months,
-          updatedAt: Timestamp.now()
-        });
-        
-        const transactionData = {
-          memberId,
-          membershipId,
-          memberName: membershipData.memberName || 'Sin nombre',
-          activityName: membershipData.activityName || '',
-          amount: (membershipData.cost || 0) * months,
-          type: 'income',
-          category: 'membership',
-          description: `Renovación de ${membershipData.activityName} - ${months} ${months === 1 ? 'mes' : 'meses'}`,
-          status: 'pending',
-          date: Timestamp.now(),
-          createdAt: Timestamp.now()
-        };
-        
-        const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-        await addDoc(transactionsRef, transactionData);
-        
-        return {
-          success: true,
-          newEndDate: newEndDateStr
-        };
+        if (activitySnap.exists()) {
+          const activityData = activitySnap.data();
+          // Usar el precio actual de la actividad
+          currentPrice = activityData.price || activityData.cost || currentPrice;
+          console.log(`✅ Precio actualizado desde actividad: $${currentPrice}`);
+        } else {
+          // Si no existe en activities, buscar en memberships (planes)
+          const membershipPlanRef = doc(db, `gyms/${gymId}/memberships`, membershipData.activityId);
+          const membershipPlanSnap = await getDoc(membershipPlanRef);
+          
+          if (membershipPlanSnap.exists()) {
+            const planData = membershipPlanSnap.data();
+            currentPrice = planData.cost || planData.price || currentPrice;
+            console.log(`✅ Precio actualizado desde plan de membresía: $${currentPrice}`);
+          }
+        }
+      } catch (error) {
+        console.error('Error obteniendo precio actual:', error);
+        // Mantener el precio anterior si hay error
       }
     }
     
-    if (!membershipFound) {
-      return { 
-        success: false, 
-        error: 'Membresía no encontrada' 
-      };
+    // 3. Calcular fechas
+    const today = new Date();
+    const startDate = today.toISOString().split('T')[0];
+    const endDate = new Date(today);
+    endDate.setMonth(endDate.getMonth() + months);
+    const endDateStr = endDate.toISOString().split('T')[0];
+    
+    // 4. Calcular costo total con precio actualizado
+    const totalCost = currentPrice * months;
+    
+    // 5. Crear nueva membresía con precio actualizado
+    const newMembershipData = {
+      ...membershipData,
+      startDate: startDate,
+      endDate: endDateStr,
+      cost: currentPrice, // 🔧 USAR PRECIO ACTUAL
+      totalCost: totalCost,
+      status: 'active',
+      paymentStatus: 'pending',
+      renewedAt: serverTimestamp(),
+      renewedFrom: membershipId,
+      autoRenewal: membershipData.autoRenewal !== false,
+      paymentType: 'monthly'
+    };
+    
+    // 6. Crear la nueva membresía
+    const newMembershipRef = await addDoc(
+      collection(db, `gyms/${gymId}/membershipAssignments`),
+      newMembershipData
+    );
+    
+    // 7. También crear en la colección del socio
+    if (membershipData.memberId) {
+      const memberMembershipRef = await addDoc(
+        collection(db, `gyms/${gymId}/members/${membershipData.memberId}/memberships`),
+        {
+          ...newMembershipData,
+          id: newMembershipRef.id
+        }
+      );
+      
+      // 8. 🔧 CORRECCIÓN: Actualizar deuda del socio
+      const memberRef = doc(db, `gyms/${gymId}/members`, membershipData.memberId);
+      const memberSnap = await getDoc(memberRef);
+      
+      if (memberSnap.exists()) {
+        const memberData = memberSnap.data();
+        const currentDebt = memberData.totalDebt || 0;
+        const newDebt = currentDebt + totalCost;
+        
+        await updateDoc(memberRef, {
+          totalDebt: newDebt,
+          updatedAt: serverTimestamp()
+        });
+        
+        console.log(`💰 Deuda actualizada: $${currentDebt} → $${newDebt}`);
+      }
     }
     
-    return { success: true };
+    // 9. Marcar la membresía anterior como renovada
+    await updateDoc(membershipRef, {
+      status: 'renewed',
+      renewedTo: newMembershipRef.id,
+      renewedAt: serverTimestamp()
+    });
+    
+    console.log(`✅ Membresía renovada con precio actual: $${currentPrice}`);
+    
+    return {
+      success: true,
+      newMembershipId: newMembershipRef.id
+    };
     
   } catch (error) {
     console.error('Error renovando membresía:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Error desconocido'
+      error: 'Error al renovar la membresía'
     };
   }
+};
+
+
+// ============= CORRECCIÓN 2: SINCRONIZACIÓN DE DEUDA Y ESTADO =============
+export const syncMemberDebtStatus = async (
+  gymId: string,
+  memberId: string
+): Promise<void> => {
+  try {
+    // 1. Obtener todas las membresías del socio
+    const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
+    const membershipsSnap = await getDocs(membershipsRef);
+    
+    let totalDebt = 0;
+    let hasPendingMemberships = false;
+    
+    // 2. Calcular deuda total
+    membershipsSnap.forEach(doc => {
+      const membership = doc.data();
+      if (membership.paymentStatus === 'pending' && membership.status === 'active') {
+        totalDebt += membership.cost || 0;
+        hasPendingMemberships = true;
+      }
+    });
+    
+    // 3. Actualizar el socio
+    const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+    await updateDoc(memberRef, {
+      totalDebt: totalDebt,
+      hasDebt: hasPendingMemberships,
+      updatedAt: serverTimestamp()
+    });
+    
+    console.log(`✅ Estado de deuda sincronizado para ${memberId}: $${totalDebt}`);
+    
+  } catch (error) {
+    console.error('Error sincronizando deuda:', error);
+  }
+};
+
+// ============= CORRECCIÓN 3: EVITAR DUPLICACIÓN EN CAJA =============
+export const registerMembershipPaymentFixed = async (payment: {
+  gymId: string;
+  memberId: string;
+  memberName: string;
+  membershipIds: string[];
+  amount: number;
+  paymentMethod: string;
+  paymentDate: string;
+  userId: string;
+  userName: string;
+}): Promise<{ success: boolean; transactionId?: string; error?: string }> => {
+  try {
+    const memberRef = doc(db, `gyms/${payment.gymId}/members`, payment.memberId);
+    const dailyCashRef = doc(db, `gyms/${payment.gymId}/dailyCash`, payment.paymentDate);
+    
+    // 1. Obtener membresías a pagar
+    const membershipsToUpdate = [];
+    let description = `Pago de membresías: `;
+    
+    for (const membershipId of payment.membershipIds) {
+      const membershipRef = doc(
+        db, 
+        `gyms/${payment.gymId}/members/${payment.memberId}/memberships`, 
+        membershipId
+      );
+      const membershipSnap = await getDoc(membershipRef);
+      
+      if (membershipSnap.exists()) {
+        const membershipData = membershipSnap.data();
+        membershipsToUpdate.push({
+          ref: membershipRef,
+          data: membershipData
+        });
+        description += `${membershipData.activityName} ($${membershipData.cost}), `;
+      }
+    }
+    
+    description = description.slice(0, -2) + ` - ${payment.memberName}`;
+    
+    // 2. 🔧 CORRECCIÓN: Crear UNA SOLA transacción en caja
+    const transactionData = {
+      id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'income',
+      category: 'memberships',
+      amount: payment.amount,
+      description: description,
+      date: Timestamp.fromDate(new Date(payment.paymentDate + 'T12:00:00')),
+      userId: payment.userId,
+      userName: payment.userName,
+      paymentMethod: payment.paymentMethod,
+      status: 'completed',
+      memberId: payment.memberId,
+      memberName: payment.memberName,
+      membershipIds: payment.membershipIds, // Guardar IDs de todas las membresías pagadas
+      createdAt: serverTimestamp()
+    };
+    
+    // 3. Agregar transacción a la caja diaria (UNA SOLA VEZ)
+    const transactionRef = await addDoc(
+      collection(db, `gyms/${payment.gymId}/dailyCash/${payment.paymentDate}/transactions`),
+      transactionData
+    );
+    
+    // 4. Actualizar el total de la caja diaria
+    const dailyCashSnap = await getDoc(dailyCashRef);
+    const currentIncome = dailyCashSnap.exists() ? (dailyCashSnap.data().totalIncome || 0) : 0;
+    
+    await updateDoc(dailyCashRef, {
+      totalIncome: currentIncome + payment.amount,
+      lastTransaction: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    
+    // 5. Actualizar estado de pago de las membresías
+    for (const membership of membershipsToUpdate) {
+      await updateDoc(membership.ref, {
+        paymentStatus: 'paid',
+        paidAmount: membership.data.cost,
+        paidAt: serverTimestamp(),
+        transactionId: transactionRef.id, // Referenciar la transacción única
+        updatedAt: serverTimestamp()
+      });
+    }
+    
+    // 6. Actualizar deuda del socio
+    const memberSnap = await getDoc(memberRef);
+    if (memberSnap.exists()) {
+      const currentDebt = memberSnap.data().totalDebt || 0;
+      const newDebt = Math.max(0, currentDebt - payment.amount);
+      
+      await updateDoc(memberRef, {
+        totalDebt: newDebt,
+        lastPaymentDate: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    }
+    
+    console.log(`✅ Pago registrado correctamente sin duplicación: ${transactionRef.id}`);
+    
+    return {
+      success: true,
+      transactionId: transactionRef.id
+    };
+    
+  } catch (error) {
+    console.error('Error registrando pago:', error);
+    return {
+      success: false,
+      error: 'Error al registrar el pago'
+    };
+  }
+};
+
+// ============= FUNCIÓN AUXILIAR: Obtener precio actual de actividad =============
+export const getCurrentActivityPrice = async (
+  gymId: string,
+  activityId: string
+): Promise<number | null> => {
+  try {
+    // Intentar primero en activities
+    const activityRef = doc(db, `gyms/${gymId}/activities`, activityId);
+    const activitySnap = await getDoc(activityRef);
+    
+    if (activitySnap.exists()) {
+      const data = activitySnap.data();
+      return data.price || data.cost || null;
+    }
+    
+    // Si no existe, intentar en memberships (planes)
+    const membershipRef = doc(db, `gyms/${gymId}/memberships`, activityId);
+    const membershipSnap = await getDoc(membershipRef);
+    
+    if (membershipSnap.exists()) {
+      const data = membershipSnap.data();
+      return data.cost || data.price || null;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error obteniendo precio de actividad:', error);
+    return null;
+  }
+};
+
+// ============= PROCESO AUTOMÁTICO MENSUAL CORREGIDO =============
+export const processMonthlyRenewalsFixed = async (gymId: string): Promise<{
+  success: boolean;
+  renewed: number;
+  errors: string[];
+}> => {
+  const results = {
+    success: true,
+    renewed: 0,
+    errors: [] as string[]
+  };
+  
+  try {
+    // 1. Obtener membresías con auto-renovación activa que vencen este mes
+    const today = new Date();
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    
+    const membershipsRef = collection(db, `gyms/${gymId}/membershipAssignments`);
+    const q = query(
+      membershipsRef,
+      where('autoRenewal', '==', true),
+      where('status', '==', 'active'),
+      where('endDate', '<=', endOfMonth.toISOString().split('T')[0])
+    );
+    
+    const querySnapshot = await getDocs(q);
+    
+    for (const docSnap of querySnapshot.docs) {
+      try {
+        const membershipData = docSnap.data();
+        
+        // 🔧 USAR PRECIO ACTUAL DE LA ACTIVIDAD
+        let renewalPrice = membershipData.cost;
+        
+        if (membershipData.activityId) {
+          const currentPrice = await getCurrentActivityPrice(gymId, membershipData.activityId);
+          if (currentPrice !== null) {
+            renewalPrice = currentPrice;
+          }
+        }
+        
+        // Crear renovación con precio actualizado
+        const result = await renewExpiredMembership(gymId, docSnap.id, 1);
+        
+        if (result.success) {
+          results.renewed++;
+          console.log(`✅ Renovada: ${membershipData.memberName} - ${membershipData.activityName} a $${renewalPrice}`);
+        } else {
+          results.errors.push(`Error renovando ${membershipData.memberName}: ${result.error}`);
+        }
+        
+      } catch (error) {
+        results.errors.push(`Error procesando membresía ${docSnap.id}: ${error}`);
+      }
+    }
+    
+    console.log(`📊 Proceso mensual completado: ${results.renewed} renovaciones`);
+    
+  } catch (error) {
+    console.error('Error en proceso mensual:', error);
+    results.success = false;
+    results.errors.push(`Error general: ${error}`);
+  }
+  
+  return results;
 };
 
 export const getMembershipStats = async (gymId: string): Promise<{
