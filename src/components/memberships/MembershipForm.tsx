@@ -1,20 +1,20 @@
+// src/components/memberships/MembershipForm.tsx
+// VERSIÓN CORREGIDA - Valores por defecto ajustados
+
 import React, { useState, useEffect } from 'react';
-import { Calendar, DollarSign, Clock, Check, X, AlertCircle } from 'lucide-react';
-import { Activity } from '../../types/membership.types';
-import { getMemberships } from '../../services/membershipService';
-import { assignMembership } from '../../services/member.service';
+import { AlertCircle, Check, Calendar, DollarSign, Users } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
-import { formatCurrency } from '../../utils/formatting.utils';
-import { calculateEndDate, getCurrentDateString, htmlDateToLocalDate } from '../../utils/date.utils';
+import { getMemberships, assignMembership } from '../../services/membershipService';
+import { getCurrentDateString, htmlDateToLocalDate, calculateEndDate } from '../../utils/date.utils';
 
 interface FormData {
   membershipId: string;
   startDate: string;
-  cost: number | string;
+  cost: string | number;
   paymentStatus: 'paid' | 'pending';
   notes: string;
-  autoRenewal: boolean; // Nuevo campo
-  paymentFrequency: 'single' | 'monthly'; // Nuevo campo
+  autoRenewal: boolean;
+  paymentFrequency: 'monthly' | 'single'; // Cambiado para siempre ser monthly
 }
 
 interface FormErrors {
@@ -46,14 +46,15 @@ interface MembershipFormProps {
 const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, onSave, onCancel }) => {
   const { gymData } = useAuth();
   
+  // 🔧 CORREGIDO: Valores por defecto actualizados
   const [formData, setFormData] = useState<FormData>({
     membershipId: '',
     startDate: '',
     cost: '',
-    paymentStatus: 'pending',
+    paymentStatus: 'pending', // Por defecto PENDIENTE
     notes: '',
-    autoRenewal: false,
-    paymentFrequency: 'single'
+    autoRenewal: true, // Por defecto ACTIVADA
+    paymentFrequency: 'monthly' // Por defecto MENSUAL
   });
   
   const [loading, setLoading] = useState<boolean>(false);
@@ -74,12 +75,8 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
       setLoadingMemberships(true);
       
       try {
-        // Obtener todas las membresías
         const allMemberships = await getMemberships(gymData.id);
-        
-        // Filtrar solo las membresías activas
         const activeMemberships = allMemberships.filter(m => m.isActive !== false);
-        
         setMemberships(activeMemberships);
       } catch (error) {
         console.error('Error loading memberships:', error);
@@ -91,23 +88,23 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
     fetchMemberships();
     
     // Establecer fecha de inicio al día actual por defecto
-   const today = getCurrentDateString();
-    setFormData({
-      ...formData,
+    const today = getCurrentDateString();
+    setFormData(prev => ({
+      ...prev,
       startDate: today
-    });
+    }));
   }, [gymData?.id]);
   
-  // Actualizar costo y seleccionar la membresía cuando se selecciona
+  // Actualizar costo cuando se selecciona una membresía
   useEffect(() => {
     if (formData.membershipId) {
       const selected = memberships.find(m => m.id === formData.membershipId);
       if (selected) {
         setSelectedMembership(selected);
-        setFormData({
-          ...formData,
+        setFormData(prev => ({
+          ...prev,
           cost: selected.cost
-        });
+        }));
       }
     } else {
       setSelectedMembership(null);
@@ -117,20 +114,25 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     
-    // Convertir a número cuando sea apropiado
-    const parsedValue = type === 'number' ? (value === '' ? '' : parseFloat(value)) : value;
+    let parsedValue: any = value;
     
-    setFormData({
-      ...formData,
+    if (type === 'checkbox') {
+      parsedValue = (e.target as HTMLInputElement).checked;
+    } else if (type === 'number') {
+      parsedValue = value === '' ? '' : parseFloat(value);
+    }
+    
+    setFormData(prev => ({
+      ...prev,
       [name]: parsedValue
-    });
+    }));
     
     // Limpiar error del campo cuando se edita
     if (errors[name as keyof FormErrors]) {
-      setErrors({
-        ...errors,
+      setErrors(prev => ({
+        ...prev,
         [name]: undefined
-      });
+      }));
     }
   };
   
@@ -153,75 +155,72 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
     return Object.keys(newErrors).length === 0;
   };
   
-const getEndDateString = (): string => {
-  if (!selectedMembership || !formData.startDate) return 'No disponible';
-  
-  const startDate = htmlDateToLocalDate(formData.startDate);
-  const endDate = calculateEndDate(startDate, selectedMembership.duration);
-  
-  return endDate.toLocaleDateString('es-AR');
-};
+  const getEndDateString = (): string => {
+    if (!selectedMembership || !formData.startDate) return 'No disponible';
+    
+    const startDate = htmlDateToLocalDate(formData.startDate);
+    const endDate = calculateEndDate(startDate, selectedMembership.duration);
+    
+    return endDate.toLocaleDateString('es-AR');
+  };
   
   const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  
-  if (!validateForm() || !gymData?.id) {
-    return;
-  }
-  
-  setLoading(true);
-  setErrors({});
-  
-  try {
-    if (!selectedMembership) {
-      throw new Error('No se ha seleccionado una membresía válida');
+    e.preventDefault();
+    
+    if (!validateForm() || !gymData?.id) {
+      return;
     }
     
-    // 🔧 CORREGIDO: Incluir autoRenewal y paymentFrequency
-    const membershipData = {
-      memberId,
-      activityId: selectedMembership.activityId,
-      activityName: selectedMembership.activityName,
-      startDate: formData.startDate,
-      endDate: calculateEndDate(
-        htmlDateToLocalDate(formData.startDate), 
-        selectedMembership.duration
-      ).toISOString().split('T')[0],
-      cost: Number(formData.cost),
-      paymentStatus: formData.paymentStatus as 'paid' | 'pending',
-      status: 'active' as 'active' | 'expired' | 'cancelled',
-      maxAttendances: selectedMembership.maxAttendances,
-      currentAttendances: 0,
-      description: formData.notes || selectedMembership.description,
-      // 🆕 AGREGAR ESTOS CAMPOS QUE FALTABAN:
-      autoRenewal: formData.autoRenewal,
-      paymentFrequency: formData.paymentFrequency
-    };
+    setLoading(true);
+    setErrors({});
     
-    console.log('🔍 Datos enviados:', membershipData); // Debug
-    
-    // Asignar membresía al socio
-    const result = await assignMembership(gymData.id, memberId, membershipData);
-    
-    if (result) {
-      setSuccess(true);
+    try {
+      if (!selectedMembership) {
+        throw new Error('No se ha seleccionado una membresía válida');
+      }
       
-      // Esperar un momento antes de cerrar
-      setTimeout(() => {
-        if (onSave) {
-          onSave(membershipData);
-        }
-      }, 1500);
+      const membershipData = {
+        memberId,
+        activityId: selectedMembership.activityId,
+        activityName: selectedMembership.activityName,
+        startDate: formData.startDate,
+        endDate: calculateEndDate(
+          htmlDateToLocalDate(formData.startDate), 
+          selectedMembership.duration
+        ).toISOString().split('T')[0],
+        cost: Number(formData.cost),
+        paymentStatus: formData.paymentStatus,
+        status: 'active' as const,
+        maxAttendances: selectedMembership.maxAttendances,
+        currentAttendances: 0,
+        description: formData.notes || selectedMembership.description,
+        // ✅ INCLUIR CAMPOS IMPORTANTES
+        autoRenewal: formData.autoRenewal,
+        paymentFrequency: formData.paymentFrequency,
+        paymentType: 'monthly' // Siempre mensual
+      };
+      
+      console.log('📊 Datos de membresía a guardar:', membershipData);
+      
+      const result = await assignMembership(gymData.id, memberId, membershipData);
+      
+      if (result) {
+        setSuccess(true);
+        setTimeout(() => {
+          if (onSave) {
+            onSave(membershipData);
+          }
+        }, 1500);
+      }
+    } catch (error: any) {
+      console.error('Error assigning membership:', error);
+      setErrors({
+        form: error.message || 'Error al asignar membresía. Intente nuevamente.'
+      });
+    } finally {
+      setLoading(false);
     }
-  } catch (error: any) {
-    console.error('Error assigning membership:', error);
-    setErrors({
-      form: error.message || 'Error al asignar membresía. Intente nuevamente.'
-    });
-  } finally {
-    setLoading(false);
-  }
-};
+  };
   
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
@@ -260,174 +259,162 @@ const getEndDateString = (): string => {
                 name="membershipId"
                 value={formData.membershipId}
                 onChange={handleChange}
-                className={`w-full px-4 py-2 border ${errors.membershipId ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                disabled={loading || success}
+                className={`w-full px-4 py-2 border ${
+                  errors.membershipId ? 'border-red-500' : 'border-gray-300'
+                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                required
               >
-                <option value="">Seleccionar membresía</option>
+                <option value="">Seleccione una membresía</option>
                 {memberships.map(membership => (
                   <option key={membership.id} value={membership.id}>
-                    {membership.name} - {membership.activityName} - {formatCurrency(membership.cost)}
+                    {membership.activityName} - {membership.name} - ${membership.cost}
                   </option>
                 ))}
               </select>
               {errors.membershipId && (
                 <p className="mt-1 text-sm text-red-600">{errors.membershipId}</p>
               )}
-              
-              {selectedMembership && (
-                <div className="mt-2 p-3 bg-gray-50 rounded-md text-sm">
-                  <p className="font-medium">{selectedMembership.description}</p>
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2 text-gray-600">
-                    <span className="flex items-center">
-                      <Calendar size={14} className="mr-1" />
-                      Duración: {selectedMembership.duration} días
-                    </span>
-                    <span className="flex items-center">
-                      <Clock size={14} className="mr-1" />
-                      Asistencias: {selectedMembership.maxAttendances}
-                    </span>
+            </div>
+            
+            {/* Información de la membresía seleccionada */}
+            {selectedMembership && (
+              <div className="bg-blue-50 p-4 rounded-md">
+                <h4 className="font-medium text-blue-900 mb-2">Detalles de la membresía</h4>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-600">Duración:</span>{' '}
+                    <span className="font-medium">{selectedMembership.duration} días</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Asistencias:</span>{' '}
+                    <span className="font-medium">{selectedMembership.maxAttendances}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Fecha de fin:</span>{' '}
+                    <span className="font-medium">{getEndDateString()}</span>
                   </div>
                 </div>
-              )}
-            </div>
-            
-            {/* Fecha de inicio */}
-            <div>
-              <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">
-                Fecha de Inicio *
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Calendar size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="date"
-                  id="startDate"
-                  name="startDate"
-                  value={formData.startDate}
-                  onChange={handleChange}
-                  className={`pl-10 w-full px-4 py-2 border ${errors.startDate ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                  disabled={loading || success}
-                />
               </div>
-              {errors.startDate && (
-                <p className="mt-1 text-sm text-red-600">{errors.startDate}</p>
-              )}
+            )}
+            
+            {/* Fecha de inicio y Costo */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">
+                  Fecha de inicio *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Calendar size={18} className="text-gray-400" />
+                  </div>
+                  <input
+                    type="date"
+                    id="startDate"
+                    name="startDate"
+                    value={formData.startDate}
+                    onChange={handleChange}
+                    className={`pl-10 w-full px-4 py-2 border ${
+                      errors.startDate ? 'border-red-500' : 'border-gray-300'
+                    } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    required
+                  />
+                </div>
+                {errors.startDate && (
+                  <p className="mt-1 text-sm text-red-600">{errors.startDate}</p>
+                )}
+              </div>
               
-              {selectedMembership && formData.startDate && (
-                <p className="mt-1 text-sm text-gray-500">
-                  Fecha de finalización: {getEndDateString()}
-                </p>
-              )}
-            </div>
-            
-            {/* Costo */}
-            <div>
-              <label htmlFor="cost" className="block text-sm font-medium text-gray-700 mb-1">
-                Costo *
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <DollarSign size={18} className="text-gray-400" />
+              <div>
+                <label htmlFor="cost" className="block text-sm font-medium text-gray-700 mb-1">
+                  Costo *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <DollarSign size={18} className="text-gray-400" />
+                  </div>
+                  <input
+                    type="number"
+                    id="cost"
+                    name="cost"
+                    value={formData.cost}
+                    onChange={handleChange}
+                    className={`pl-10 w-full px-4 py-2 border ${
+                      errors.cost ? 'border-red-500' : 'border-gray-300'
+                    } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                    min="0"
+                    step="0.01"
+                    required
+                  />
                 </div>
-                <input
-                  type="number"
-                  id="cost"
-                  name="cost"
-                  value={formData.cost}
-                  onChange={handleChange}
-                  className={`pl-10 w-full px-4 py-2 border ${errors.cost ? 'border-red-500' : 'border-gray-300'} rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                  placeholder="0.00"
-                  min="0"
-                  disabled={loading || success}
-                />
+                {errors.cost && (
+                  <p className="mt-1 text-sm text-red-600">{errors.cost}</p>
+                )}
               </div>
-              {errors.cost && (
-                <p className="mt-1 text-sm text-red-600">{errors.cost}</p>
-              )}
             </div>
             
-            {/* Estado de pago */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Estado de Pago
-              </label>
-              <div className="flex space-x-4">
-                <label className="inline-flex items-center">
-                  <input
-                    type="radio"
-                    name="paymentStatus"
-                    value="paid"
-                    checked={formData.paymentStatus === 'paid'}
-                    onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    disabled={loading || success}
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Pagada</span>
+            {/* 🔧 SECCIÓN CORREGIDA - Estado de Pago y Auto-renovación */}
+            <div className="space-y-4 bg-gray-50 p-4 rounded-md">
+              <h4 className="font-medium text-gray-700">Configuración de pago</h4>
+              
+              {/* Estado de pago - Por defecto PENDIENTE */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Estado de pago inicial
                 </label>
-                <label className="inline-flex items-center">
-                  <input
-                    type="radio"
-                    name="paymentStatus"
-                    value="pending"
-                    checked={formData.paymentStatus === 'pending'}
-                    onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    disabled={loading || success}
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Pendiente</span>
-                </label>
+                <div className="flex space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="paymentStatus"
+                      value="pending"
+                      checked={formData.paymentStatus === 'pending'}
+                      onChange={handleChange}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Pendiente</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="paymentStatus"
+                      value="paid"
+                      checked={formData.paymentStatus === 'paid'}
+                      onChange={handleChange}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">Pagado</span>
+                  </label>
+                </div>
               </div>
-            </div>
-
-
-
-            <div>
-              <div className="flex items-center mt-4">
-                <input
-                  type="checkbox"
-                  id="autoRenewal"
-                  name="autoRenewal"
-                  checked={formData.autoRenewal}
-                  onChange={(e) => setFormData({...formData, autoRenewal: e.target.checked})}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                />
-                <label htmlFor="autoRenewal" className="ml-2 block text-sm text-gray-700">
-                  Renovación automática
+              
+              {/* Auto-renovación - Por defecto ACTIVADA */}
+              <div className="flex items-center justify-between">
+                <label htmlFor="autoRenewal" className="text-sm font-medium text-gray-700">
+                  Auto-renovación mensual
                 </label>
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="autoRenewal"
+                    name="autoRenewal"
+                    checked={formData.autoRenewal}
+                    onChange={handleChange}
+                    className="mr-2 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  />
+                  <span className={`text-sm ${formData.autoRenewal ? 'text-green-600' : 'text-gray-500'}`}>
+                    {formData.autoRenewal ? 'Activada' : 'Desactivada'}
+                  </span>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 ml-6">
-                La membresía se renovará automáticamente al vencimiento
-              </p>
-            </div>
-
-            <div className="mt-3">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Frecuencia de pago
-              </label>
-              <div className="flex space-x-4">
-                <label className="inline-flex items-center">
-                  <input
-                    type="radio"
-                    name="paymentFrequency"
-                    value="single"
-                    checked={formData.paymentFrequency === 'single'}
-                    onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Pago único</span>
-                </label>
-                <label className="inline-flex items-center">
-                  <input
-                    type="radio"
-                    name="paymentFrequency"
-                    value="monthly"
-                    checked={formData.paymentFrequency === 'monthly'}
-                    onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Pago mensual</span>
-                </label>
+              
+              {/* Información sobre pago mensual */}
+              <div className="bg-blue-50 border border-blue-200 p-3 rounded text-sm text-blue-700">
+                <p className="font-medium mb-1">ℹ️ Información importante:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Todas las membresías se cobran mensualmente</li>
+                  <li>Con auto-renovación activada, se renovará automáticamente cada mes</li>
+                  <li>El socio puede pagar en cualquier momento del mes</li>
+                </ul>
               </div>
             </div>
             
@@ -444,33 +431,32 @@ const getEndDateString = (): string => {
                 rows={3}
                 className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Agregar notas o comentarios sobre esta membresía"
-                disabled={loading || success}
               />
             </div>
           </div>
           
           {/* Botones de acción */}
-          <div className="mt-8 flex justify-end space-x-3">
+          <div className="flex justify-end space-x-4 mt-6">
             <button
               type="button"
               onClick={onCancel}
-              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center"
-              disabled={loading}
+              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500"
             >
-              <X size={18} className="mr-2" />
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={loading || success}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors flex items-center"
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
             >
               {loading ? (
-                <span className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                <>
+                  <div className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                  Asignando...
+                </>
               ) : (
-                <Check size={18} className="mr-2" />
+                'Asignar Membresía'
               )}
-              {loading ? 'Guardando...' : success ? 'Asignado' : 'Asignar Membresía'}
             </button>
           </div>
         </form>

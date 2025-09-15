@@ -1,5 +1,5 @@
 // src/components/memberships/UnifiedRenewalDashboard.tsx
-// 📊 DASHBOARD PRINCIPAL UNIFICADO - SOLUCIÓN COMPLETA
+// VERSIÓN CORREGIDA - Opciones de renovación mejoradas
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -14,13 +14,15 @@ import {
   Filter,
   Search,
   Download,
-  Settings
+  Settings,
+  ChevronDown
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
-
 import MembershipService from '../../services/membershipService';
 import { MembershipAssignment } from '../../types/gym.types';
 import IndividualMembershipManagement from './IndividualMembershipManagement';
+import { MonthlyReportGenerator } from './MonthlyReportGenerator';
+
 interface MembershipStats {
   total: number;
   active: number;
@@ -47,10 +49,11 @@ const UnifiedRenewalDashboard: React.FC = () => {
     withAutoRenewal: 0
   });
   
-  // Estados para membresías vencidas (SOLUCIÓN AL PROBLEMA)
+  // Estados para membresías vencidas
   const [expiredMemberships, setExpiredMemberships] = useState<ExpiredMembershipWithDetails[]>([]);
   const [loadingExpired, setLoadingExpired] = useState<boolean>(false);
   const [selectedMemberships, setSelectedMemberships] = useState<string[]>([]);
+  const [expandedMembership, setExpandedMembership] = useState<string | null>(null);
   
   // Estados de UI
   const [loading, setLoading] = useState<boolean>(true);
@@ -58,6 +61,7 @@ const UnifiedRenewalDashboard: React.FC = () => {
   const [success, setSuccess] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [renewalInProgress, setRenewalInProgress] = useState<string[]>([]);
+  const [defaultRenewalMonths, setDefaultRenewalMonths] = useState<number>(1); // Por defecto 1 mes
 
   // 🔄 Cargar estadísticas principales
   const loadStats = async () => {
@@ -67,7 +71,6 @@ const UnifiedRenewalDashboard: React.FC = () => {
       setLoading(true);
       const membershipStats = await MembershipService.getMembershipStats(gymData.id);
       setStats(membershipStats);
-      
     } catch (err) {
       console.error('Error cargando estadísticas:', err);
       setError('Error al cargar las estadísticas');
@@ -76,7 +79,7 @@ const UnifiedRenewalDashboard: React.FC = () => {
     }
   };
 
-  // 🆕 SOLUCIÓN: Cargar membresías vencidas
+  // 🔄 Cargar membresías vencidas
   const loadExpiredMemberships = async () => {
     if (!gymData?.id) return;
     
@@ -84,7 +87,6 @@ const UnifiedRenewalDashboard: React.FC = () => {
       setLoadingExpired(true);
       const expired = await MembershipService.getExpiredMemberships(gymData.id);
       
-      // Agregar información adicional
       const expiredWithDetails: ExpiredMembershipWithDetails[] = expired.map(membership => {
         const today = new Date();
         const endDate = new Date(membership.endDate);
@@ -93,7 +95,7 @@ const UnifiedRenewalDashboard: React.FC = () => {
         return {
           ...membership,
           daysExpired: Math.max(0, daysExpired),
-          totalDebt: membership.cost * Math.ceil(daysExpired / 30) // Aproximación de deuda
+          totalDebt: membership.cost * Math.ceil(daysExpired / 30)
         };
       });
       
@@ -124,10 +126,8 @@ const UnifiedRenewalDashboard: React.FC = () => {
       );
       
       if (result.success) {
-        setSuccess(`Membresía renovada exitosamente por ${months} mes(es)`);
-        // Recargar datos
+        setSuccess(`Membresía renovada exitosamente por ${months} ${months === 1 ? 'mes' : 'meses'}`);
         await Promise.all([loadStats(), loadExpiredMemberships()]);
-        // Limpiar mensaje después de 3 segundos
         setTimeout(() => setSuccess(''), 3000);
       } else {
         setError(result.error || 'Error al renovar la membresía');
@@ -152,13 +152,12 @@ const UnifiedRenewalDashboard: React.FC = () => {
       let successCount = 0;
       let errorCount = 0;
       
-      // Renovar cada membresía seleccionada
       for (const membershipId of selectedMemberships) {
         try {
           const result = await MembershipService.renewExpiredMembership(
             gymData.id,
             membershipId,
-            1 // 1 mes por defecto
+            defaultRenewalMonths
           );
           
           if (result.success) {
@@ -172,15 +171,13 @@ const UnifiedRenewalDashboard: React.FC = () => {
         }
       }
       
-      // Mostrar resultado
       if (successCount > 0) {
-        setSuccess(`${successCount} membresías renovadas exitosamente`);
+        setSuccess(`${successCount} membresías renovadas exitosamente por ${defaultRenewalMonths} ${defaultRenewalMonths === 1 ? 'mes' : 'meses'}`);
       }
       if (errorCount > 0) {
         setError(`${errorCount} membresías no pudieron renovarse`);
       }
       
-      // Limpiar selección y recargar datos
       setSelectedMemberships([]);
       await Promise.all([loadStats(), loadExpiredMemberships()]);
       
@@ -190,7 +187,7 @@ const UnifiedRenewalDashboard: React.FC = () => {
     }
   };
 
-  // 🔄 Toggle selección de membresía
+  // Toggle selección de membresía
   const toggleMembershipSelection = (membershipId: string) => {
     setSelectedMemberships(prev => 
       prev.includes(membershipId)
@@ -199,7 +196,7 @@ const UnifiedRenewalDashboard: React.FC = () => {
     );
   };
 
-  // 🔄 Seleccionar todas las membresías vencidas
+  // Seleccionar todas las membresías vencidas
   const toggleSelectAll = () => {
     if (selectedMemberships.length === expiredMemberships.length) {
       setSelectedMemberships([]);
@@ -208,13 +205,13 @@ const UnifiedRenewalDashboard: React.FC = () => {
     }
   };
 
-  // 📊 Filtrar membresías vencidas por búsqueda
+  // Filtrar membresías vencidas por búsqueda
   const filteredExpiredMemberships = expiredMemberships.filter(membership =>
     membership.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     membership.activityName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // 🔄 Efectos
+  // Efectos
   useEffect(() => {
     if (gymData?.id) {
       loadStats();
@@ -224,13 +221,13 @@ const UnifiedRenewalDashboard: React.FC = () => {
     }
   }, [gymData?.id, activeTab]);
 
-  // 🎨 Formatear fecha
+  // Formatear fecha
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('es-AR');
   };
 
-  // 🎨 Obtener color para días vencidos
+  // Obtener color para días vencidos
   const getDaysExpiredColor = (days: number) => {
     if (days <= 7) return 'text-yellow-600 bg-yellow-50';
     if (days <= 30) return 'text-orange-600 bg-orange-50';
@@ -401,10 +398,10 @@ const UnifiedRenewalDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* 🆕 PESTAÑA VENCIDAS - SOLUCIÓN AL PROBLEMA PRINCIPAL */}
+      {/* 🔧 PESTAÑA VENCIDAS - CORREGIDA */}
       {activeTab === 'expired' && (
         <div className="space-y-6">
-          {/* Header de vencidas */}
+          {/* Header de vencidas con selector de meses */}
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
@@ -414,21 +411,37 @@ const UnifiedRenewalDashboard: React.FC = () => {
             </div>
             
             {selectedMemberships.length > 0 && (
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-600">
-                  {selectedMemberships.length} seleccionadas
-                </span>
-                <button
-                  onClick={handleMassiveRenewal}
-                  className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
-                >
-                  Renovar Seleccionadas
-                </button>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <label className="text-sm text-gray-600">Renovar por:</label>
+                  <select
+                    value={defaultRenewalMonths}
+                    onChange={(e) => setDefaultRenewalMonths(Number(e.target.value))}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm"
+                  >
+                    <option value="1">1 mes</option>
+                    <option value="2">2 meses</option>
+                    <option value="3">3 meses</option>
+                    <option value="6">6 meses</option>
+                    <option value="12">12 meses</option>
+                  </select>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm text-gray-600">
+                    {selectedMemberships.length} seleccionadas
+                  </span>
+                  <button
+                    onClick={handleMassiveRenewal}
+                    className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+                  >
+                    Renovar Seleccionadas
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Buscador */}
+          {/* Buscador y controles */}
           <div className="flex items-center space-x-4">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-3 text-gray-400" size={16} />
@@ -440,6 +453,16 @@ const UnifiedRenewalDashboard: React.FC = () => {
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            
+            {expiredMemberships.length > 0 && (
+              <button
+                onClick={toggleSelectAll}
+                className="flex items-center px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                {selectedMemberships.length === expiredMemberships.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+              </button>
+            )}
+            
             <button
               onClick={loadExpiredMemberships}
               className="flex items-center px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
@@ -467,79 +490,99 @@ const UnifiedRenewalDashboard: React.FC = () => {
                   </p>
                 </div>
               ) : (
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                  {/* Header de tabla */}
-                  <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
-                    <div className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={selectedMemberships.length === expiredMemberships.length}
-                        onChange={toggleSelectAll}
-                        className="mr-3"
-                      />
-                      <span className="text-sm font-medium text-gray-700">
-                        Seleccionar todas ({expiredMemberships.length})
-                      </span>
-                    </div>
+                <div className="bg-white shadow rounded-lg">
+                  <div className="px-4 py-3 border-b border-gray-200">
+                    <h3 className="text-sm font-medium text-gray-700">
+                      Membresías que requieren renovación
+                    </h3>
                   </div>
-
-                  {/* Lista de membresías vencidas */}
+                  
                   <div className="divide-y divide-gray-200">
-                    {filteredExpiredMemberships.map(membership => (
-                      <div key={membership.id} className="px-6 py-4">
+                    {filteredExpiredMemberships.map((membership) => (
+                      <div key={membership.id} className="p-4 hover:bg-gray-50">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center">
+                          <div className="flex items-center space-x-4">
                             <input
                               type="checkbox"
                               checked={selectedMemberships.includes(membership.id)}
                               onChange={() => toggleMembershipSelection(membership.id)}
-                              className="mr-4"
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                             />
                             
-                            <div>
-                              <h4 className="text-lg font-medium text-gray-900">
-                                {membership.memberName}
-                              </h4>
-                              <p className="text-sm text-gray-600">
-                                {membership.activityName} • ${membership.cost}/mes
-                              </p>
-                              <div className="flex items-center mt-2 space-x-4">
-                                <span className="text-sm text-gray-500">
-                                  Venció: {formatDate(membership.endDate)}
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2">
+                                <h4 className="text-sm font-medium text-gray-900">
+                                  {membership.memberName}
+                                </h4>
+                                <span className="text-sm text-gray-500">•</span>
+                                <span className="text-sm text-gray-600">
+                                  {membership.activityName}
                                 </span>
-                                <span className={`text-sm px-2 py-1 rounded-full ${getDaysExpiredColor(membership.daysExpired)}`}>
+                              </div>
+                              
+                              <div className="mt-1 flex items-center space-x-4 text-sm text-gray-500">
+                                <span>Venció: {formatDate(membership.endDate)}</span>
+                                <span>Costo: ${membership.cost}</span>
+                                <span className={`px-2 py-1 rounded-full ${getDaysExpiredColor(membership.daysExpired)}`}>
                                   {membership.daysExpired} días vencida
                                 </span>
                                 {membership.totalDebt > 0 && (
-                                  <span className="text-sm text-red-600 bg-red-50 px-2 py-1 rounded-full">
-                                    Deuda: ${membership.totalDebt}
+                                  <span className="text-red-600 bg-red-50 px-2 py-1 rounded-full">
+                                    Deuda estimada: ${membership.totalDebt}
                                   </span>
                                 )}
                               </div>
                             </div>
                           </div>
                           
+                          {/* 🔧 BOTONES DE RENOVACIÓN CORREGIDOS */}
                           <div className="flex items-center space-x-2">
                             <button
                               onClick={() => handleRenewMembership(membership.id, 1)}
                               disabled={renewalInProgress.includes(membership.id)}
-                              className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 disabled:opacity-50"
+                              className="bg-green-600 text-white px-3 py-1.5 text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
                             >
                               {renewalInProgress.includes(membership.id) ? (
-                                <RefreshCw size={16} className="animate-spin" />
+                                <RefreshCw size={14} className="animate-spin" />
                               ) : (
-                                'Renovar 1 Mes'
+                                '1 Mes'
                               )}
                             </button>
+                            
                             <button
-                              onClick={() => handleRenewMembership(membership.id, 3)}
-                              disabled={renewalInProgress.includes(membership.id)}
-                              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
+                              onClick={() => setExpandedMembership(
+                                expandedMembership === membership.id ? null : membership.id
+                              )}
+                              className="text-gray-500 hover:text-gray-700 p-1"
                             >
-                              Renovar 3 Meses
+                              <ChevronDown 
+                                size={16} 
+                                className={`transform transition-transform ${
+                                  expandedMembership === membership.id ? 'rotate-180' : ''
+                                }`}
+                              />
                             </button>
                           </div>
                         </div>
+                        
+                        {/* Opciones expandidas de renovación */}
+                        {expandedMembership === membership.id && (
+                          <div className="mt-3 pt-3 border-t border-gray-200">
+                            <div className="flex items-center justify-end space-x-2">
+                              <span className="text-sm text-gray-600 mr-2">Más opciones:</span>
+                              {[2, 3, 6, 12].map(months => (
+                                <button
+                                  key={months}
+                                  onClick={() => handleRenewMembership(membership.id, months)}
+                                  disabled={renewalInProgress.includes(membership.id)}
+                                  className="bg-blue-600 text-white px-3 py-1.5 text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {months} {months === 1 ? 'Mes' : 'Meses'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -550,20 +593,14 @@ const UnifiedRenewalDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Placeholder para otras pestañas */}
-          {/* Pestaña GESTIONAR - Usar componente existente */}
+      {/* Pestaña GESTIONAR */}
       {activeTab === 'manage' && (
         <IndividualMembershipManagement />
       )}
 
-      
-
+      {/* Pestaña REPORTES */}
       {activeTab === 'reports' && (
-        <div className="bg-white p-8 rounded-lg shadow text-center">
-          <Download className="mx-auto text-gray-400 mb-4" size={48} />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Reportes Excel</h3>
-          <p className="text-gray-600">Aquí irán las opciones de exportación</p>
-        </div>
+        <MonthlyReportGenerator />
       )}
     </div>
   );
