@@ -427,11 +427,11 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
                     </div>
                   )}
                   
-                  {membership.renewalDate && (
+                 {membership.renewedAt && (
                     <div>
                       <span className="text-gray-500">Renovada el:</span>
                       <p className="font-medium">
-                        {formatDate(membership.renewalDate.toDate().toISOString())}
+                        {formatDate(membership.renewedAt.toDate().toISOString())}
                       </p>
                     </div>
                   )}

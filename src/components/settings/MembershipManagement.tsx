@@ -34,6 +34,11 @@ const MembershipManagement: React.FC = () => {
   const [errors, setErrors] = useState<FormErrors>({});
   const [success, setSuccess] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
+const [editingMembership, setEditingMembership] = useState<Membership | null>(null);
+const [successMessage, setSuccessMessage] = useState<string>('');
+const [showForm, setShowForm] = useState<boolean>(false);
   
   // Cargar membresías y actividades al montar el componente
  // Cargar membresías y actividades al montar el componente
@@ -105,39 +110,41 @@ const MembershipManagement: React.FC = () => {
   };
   
   // Validar formulario
-  const validateForm = () => {
-    if (!formData.activityId) {
-      setError('Debe seleccionar una actividad');
-      return false;
-    }
-    
-    if (!formData.name.trim()) {
-      setError('El nombre es obligatorio');
-      return false;
-    }
-    
-    if (!formData.description.trim()) {
-      setError('La descripción es obligatoria');
-      return false;
-    }
-    
-    if (!formData.cost || Number(formData.cost) <= 0) {
-      setError('El costo debe ser mayor a 0');
-      return false;
-    }
-    
-    if (!formData.duration || formData.duration <= 0) {
-      setError('La duración debe ser mayor a 0');
-      return false;
-    }
-    
-    if (!formData.maxAttendances || Number(formData.maxAttendances) <= 0) {
-      setError('Las asistencias máximas deben ser mayor a 0');
-      return false;
-    }
-    
-    return true;
-  };
+  // ================= FUNCIÓN DE VALIDACIÓN =================
+
+const validateForm = (): FormErrors => {
+  const errors: FormErrors = {};
+  
+  if (!formData.activityId) {
+    errors.activityId = 'Debe seleccionar una actividad';
+  }
+  
+  if (!formData.name.trim()) {
+    errors.name = 'El nombre es requerido';
+  }
+  
+  if (!formData.description.trim()) {
+    errors.description = 'La descripción es requerida';
+  }
+  
+  const cost = typeof formData.cost === 'string' ? parseFloat(formData.cost) : formData.cost;
+  if (!cost || cost <= 0) {
+    errors.cost = 'El costo debe ser mayor a 0';
+  }
+  
+  if (!formData.duration || formData.duration <= 0) {
+    errors.duration = 'La duración debe ser mayor a 0';
+  }
+  
+  const maxAttendances = typeof formData.maxAttendances === 'string' 
+    ? parseInt(formData.maxAttendances) 
+    : formData.maxAttendances;
+  if (maxAttendances !== undefined && maxAttendances < 0) {
+    errors.maxAttendances = 'Las asistencias no pueden ser negativas';
+  }
+  
+  return errors;
+};
   
   // Abrir modal para nueva membresía
   const handleNewMembership = () => {
@@ -203,87 +210,102 @@ const MembershipManagement: React.FC = () => {
   
   // Manejar envío del formulario
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!gymData?.id) {
-      setError('No se encontró información del gimnasio');
-      return;
-    }
-    
-    if (!validateForm()) {
-      return;
-    }
-    
-    setError('');
-    setSuccess(false);
-    
-    try {
-      // Preparar datos para guardar
-      const membershipData = {
-        activityId: formData.activityId,
-        activityName: activities.find(a => a.id === formData.activityId)?.name || '',
-        name: formData.name,
-        description: formData.description,
-        cost: Number(formData.cost),
-        duration: formData.duration,
-        maxAttendances: Number(formData.maxAttendances),
-        isActive: formData.isActive,
-        isPopular: currentMembership?.isPopular || false,
-        activeMembers: currentMembership?.activeMembers || 0
-      };
+      e.preventDefault();
       
-      if (isEditing && currentMembership) {
-        // Actualizar membresía existente
-        const result = await updateMembership(gymData.id, currentMembership.id, membershipData);
-        
-        if (result) {
-          // Actualizar en la lista local
-          setMemberships(prev => 
-            prev.map(m => m.id === currentMembership.id ? { ...m, ...membershipData } : m)
+      // Validar formulario
+      const errors = validateForm();
+      if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        return;
+      }
+
+      if (!gymData?.id) {
+        setError('No se pudo obtener la información del gimnasio');
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError('');
+
+        // Preparar datos de la membresía
+        const membershipData = {
+          activityId: formData.activityId,
+          name: formData.name,
+          description: formData.description,
+          cost: typeof formData.cost === 'string' ? parseFloat(formData.cost) : formData.cost,
+          duration: formData.duration,
+          maxAttendances: typeof formData.maxAttendances === 'string' 
+            ? parseInt(formData.maxAttendances) 
+            : formData.maxAttendances,
+          isActive: formData.isActive
+        };
+
+        if (editingMembership) {
+          // Actualizar membresía existente
+          const success = await updateMembership(
+            gymData.id, 
+            editingMembership.id, 
+            membershipData
           );
-        }
-      } else {
-          // Crear nueva membresía
+          
+          if (success) {
+            // Actualizar estado local
+            setMemberships(prev => prev.map(m => 
+              m.id === editingMembership.id 
+                ? { ...m, ...membershipData } 
+                : m
+            ));
+            
+            setSuccessMessage('Membresía actualizada exitosamente');
+            setShowForm(false);
+            setEditingMembership(null);
+            resetForm();
+          } else {
+            setError('Error al actualizar la membresía');
+          }
+        } else {
+          // 🔧 CREAR NUEVA MEMBRESÍA - USANDO LA NUEVA ESTRUCTURA
           const result = await createMembership(gymData.id, membershipData);
           
-          if (result.success && result.membershipId) {
-            // Crear el objeto membership completo para agregar al estado
-            const newMembership: Membership = {
-              id: result.membershipId,
-              activityId: formData.activityId,
-              activityName: activities.find(a => a.id === formData.activityId)?.name || '',
-              name: formData.name,
-              description: formData.description,
-              cost: Number(formData.cost),
-              duration: formData.duration,
-              maxAttendances: Number(formData.maxAttendances),
-              isActive: formData.isActive,
-              isPopular: false,
-              activeMembers: 0,
-              createdAt: new Date()
-            };
+          if (result.success && result.membershipId && result.membership) {
+            // Agregar la nueva membresía al estado
+            setMemberships(prev => [result.membership!, ...prev]);
             
-            // Añadir a la lista local
-            setMemberships(prev => [newMembership, ...prev]);
+            setSuccessMessage('Membresía creada exitosamente');
+            setShowForm(false);
+            resetForm();
           } else {
             // Manejar error si la creación falló
             setError(result.error || 'Error al crear la membresía');
             return; // Salir para no mostrar éxito
           }
         }
-      
-      setSuccess(true);
-      
-      // Cerrar modal después de un breve retraso
-      setTimeout(() => {
-        setIsModalOpen(false);
-        setSuccess(false);
-      }, 1500);
-    } catch (err: any) {
-      console.error('Error saving membership:', err);
-      setError(err.message || 'Error al guardar la membresía');
-    }
+      } catch (error) {
+        console.error('Error en formulario:', error);
+        setError('Error inesperado al procesar la membresía');
+      } finally {
+        setLoading(false);
+      }
   };
+  
+
+const resetForm = () => {
+  setFormData({
+    activityId: '',
+    name: '',
+    description: '',
+    cost: '',
+    duration: 30,
+    maxAttendances: '',
+    isActive: true
+  });
+  setFormErrors({});
+  setEditingMembership(null);
+};
+
+
+
   
   // Manejar estado de "popular"
   const handleTogglePopular = async (membership: Membership) => {

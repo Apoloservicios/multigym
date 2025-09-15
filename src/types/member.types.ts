@@ -1,4 +1,5 @@
-// src/types/member.types.ts - ACTUALIZADO SIN PERDER FUNCIONALIDADES
+// src/types/member.types.ts - VERSIÓN CORREGIDA PARA ERRORES DE TIPOS
+// ✅ AGREGANDO TODOS LOS CAMPOS REQUERIDOS
 
 import { FirebaseDate as CentralFirebaseDate } from './firebase.types';
 
@@ -35,9 +36,11 @@ export interface MemberFormData {
   status: 'active' | 'inactive';
 }
 
+// 🔧 INTERFAZ CORREGIDA CON TODOS LOS CAMPOS NECESARIOS
 export interface MembershipAssignment {
   id?: string;
   memberId: string;
+  memberName?: string; // Hacer opcional
   activityId: string;
   activityName: string;
   startDate: string;
@@ -45,12 +48,13 @@ export interface MembershipAssignment {
   cost: number;
   paymentStatus: 'paid' | 'pending' | 'partial';
   status: 'active' | 'expired' | 'cancelled';
+  
+  // 🔧 CAMPOS REQUERIDOS QUE ESTABAN FALTANDO
   maxAttendances: number;
   currentAttendances: number;
   description: string;
   
   // Campos adicionales para mejor gestión financiera
-  memberName?: string;
   autoRenewal?: boolean;
   paymentFrequency?: 'single' | 'monthly';
   lastRenewalDate?: string;
@@ -59,7 +63,7 @@ export interface MembershipAssignment {
   renewedAutomatically?: boolean;  // Si fue renovada automáticamente
   renewedManually?: boolean;       // Si fue renovada manualmente
   previousMembershipId?: string;   // ID de la membresía anterior (para renovaciones)
-  renewalDate?: any;               // Firebase Timestamp - fecha de renovación
+  renewedAt?: any;                 // Firebase Timestamp - fecha de renovación
   
   // 🆕 PROPIEDADES AGREGADAS PARA CANCELACIONES MEJORADAS
   cancelReason?: string;           // Motivo de cancelación

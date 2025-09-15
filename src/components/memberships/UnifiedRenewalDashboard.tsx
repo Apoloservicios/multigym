@@ -87,16 +87,20 @@ const UnifiedRenewalDashboard: React.FC = () => {
       setLoadingExpired(true);
       const expired = await MembershipService.getExpiredMemberships(gymData.id);
       
-      const expiredWithDetails: ExpiredMembershipWithDetails[] = expired.map(membership => {
+      const expiredWithDetails = expired.map(membership => {
         const today = new Date();
         const endDate = new Date(membership.endDate);
         const daysExpired = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
         
         return {
           ...membership,
-          daysExpired: Math.max(0, daysExpired),
-          totalDebt: membership.cost * Math.ceil(daysExpired / 30)
-        };
+          id: membership.id || `membership_${Date.now()}_${Math.random()}`,
+          memberName: membership.memberName || 'Sin nombre',
+          daysExpired,
+          totalDebt: membership.cost || 0,
+          paymentType: 'monthly' as const,
+          assignedBy: 'Sistema'
+        } as ExpiredMembershipWithDetails;
       });
       
       setExpiredMemberships(expiredWithDetails);
