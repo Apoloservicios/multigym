@@ -183,6 +183,7 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
         memberId,
         activityId: selectedMembership.activityId,
         activityName: selectedMembership.activityName,
+        membershipName: selectedMembership.name, // Agregar nombre de la membresía
         startDate: formData.startDate,
         endDate: calculateEndDate(
           htmlDateToLocalDate(formData.startDate), 
@@ -191,13 +192,14 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
         cost: Number(formData.cost),
         paymentStatus: formData.paymentStatus,
         status: 'active' as const,
+        active: true, // 🔧 AGREGAR ESTE CAMPO
         maxAttendances: selectedMembership.maxAttendances,
         currentAttendances: 0,
         description: formData.notes || selectedMembership.description,
-        // ✅ INCLUIR CAMPOS IMPORTANTES
         autoRenewal: formData.autoRenewal,
         paymentFrequency: formData.paymentFrequency,
-        paymentType: 'monthly' // Siempre mensual
+        paymentType: 'monthly',
+        membershipId: formData.membershipId // ID de la definición de membresía
       };
       
       console.log('📊 Datos de membresía a guardar:', membershipData);

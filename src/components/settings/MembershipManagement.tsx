@@ -209,85 +209,102 @@ const validateForm = (): FormErrors => {
   };
   
   // Manejar envío del formulario
-  const handleSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      
-      // Validar formulario
-      const errors = validateForm();
-      if (Object.keys(errors).length > 0) {
-        setFormErrors(errors);
-        return;
-      }
+  // En MembershipManagement.tsx, reemplaza la función handleSubmit completa:
 
-      if (!gymData?.id) {
-        setError('No se pudo obtener la información del gimnasio');
-        return;
-      }
-
-      try {
-        setLoading(true);
-        setError('');
-
-        // Preparar datos de la membresía
-        const membershipData = {
-          activityId: formData.activityId,
-          name: formData.name,
-          description: formData.description,
-          cost: typeof formData.cost === 'string' ? parseFloat(formData.cost) : formData.cost,
-          duration: formData.duration,
-          maxAttendances: typeof formData.maxAttendances === 'string' 
-            ? parseInt(formData.maxAttendances) 
-            : formData.maxAttendances,
-          isActive: formData.isActive
-        };
-
-        if (editingMembership) {
-          // Actualizar membresía existente
-          const success = await updateMembership(
-            gymData.id, 
-            editingMembership.id, 
-            membershipData
-          );
-          
-          if (success) {
-            // Actualizar estado local
-            setMemberships(prev => prev.map(m => 
-              m.id === editingMembership.id 
-                ? { ...m, ...membershipData } 
-                : m
-            ));
-            
-            setSuccessMessage('Membresía actualizada exitosamente');
-            setShowForm(false);
-            setEditingMembership(null);
-            resetForm();
-          } else {
-            setError('Error al actualizar la membresía');
-          }
-        } else {
-          // 🔧 CREAR NUEVA MEMBRESÍA - USANDO LA NUEVA ESTRUCTURA
-          const result = await createMembership(gymData.id, membershipData);
-          
-          if (result.success && result.membershipId && result.membership) {
-            // Agregar la nueva membresía al estado
-            setMemberships(prev => [result.membership!, ...prev]);
-            
-            setSuccessMessage('Membresía creada exitosamente');
-            setShowForm(false);
-            resetForm();
-          } else {
-            // Manejar error si la creación falló
-            setError(result.error || 'Error al crear la membresía');
-            return; // Salir para no mostrar éxito
-          }
+      const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        
+        // Validar formulario
+        const errors = validateForm();
+        if (Object.keys(errors).length > 0) {
+          setFormErrors(errors);
+          return;
         }
-      } catch (error) {
-        console.error('Error en formulario:', error);
-        setError('Error inesperado al procesar la membresía');
-      } finally {
-        setLoading(false);
-      }
-  };
+
+        if (!gymData?.id) {
+          setError('No se pudo obtener la información del gimnasio');
+          return;
+        }
+
+        try {
+          setLoading(true);
+          setError('');
+
+          // Obtener el nombre de la actividad
+          const selectedActivity = activities.find(a => a.id === formData.activityId);
+          
+          // Preparar datos de la membresía
+          const membershipData = {
+            activityId: formData.activityId,
+            activityName: selectedActivity?.name || '',
+            name: formData.name,
+            description: formData.description,
+            cost: typeof formData.cost === 'string' ? parseFloat(formData.cost) : formData.cost,
+            duration: formData.duration,
+            maxAttendances: typeof formData.maxAttendances === 'string' 
+              ? parseInt(formData.maxAttendances) 
+              : formData.maxAttendances,
+            isActive: formData.isActive
+          };
+
+          if (isEditing && currentMembership) {
+            // 🔧 ACTUALIZAR membresía existente
+            const success = await updateMembership(
+              gymData.id, 
+              currentMembership.id, 
+              membershipData
+            );
+            
+            if (success) {
+              // Actualizar estado local
+              setMemberships(prev => prev.map(m => 
+                m.id === currentMembership.id 
+                  ? { ...m, ...membershipData, activeMembers: m.activeMembers || 0 } 
+                  : m
+              ));
+              
+              setSuccess(true);
+              setSuccessMessage('Membresía actualizada exitosamente');
+              
+              // Cerrar modal después de un breve delay
+              setTimeout(() => {
+                setIsModalOpen(false);
+                setIsEditing(false);
+                setCurrentMembership(null);
+                resetForm();
+                setSuccess(false);
+              }, 1500);
+            } else {
+              setError('Error al actualizar la membresía');
+            }
+          } else {
+            // CREAR nueva membresía
+            const result = await createMembership(gymData.id, membershipData);
+            
+            if (result.success && result.membershipId && result.membership) {
+              // Agregar la nueva membresía al estado
+              setMemberships(prev => [result.membership!, ...prev]);
+              
+              setSuccess(true);
+              setSuccessMessage('Membresía creada exitosamente');
+              
+              // Cerrar modal después de un breve delay
+              setTimeout(() => {
+                setIsModalOpen(false);
+                resetForm();
+                setSuccess(false);
+              }, 1500);
+            } else {
+              setError(result.error || 'Error al crear la membresía');
+            }
+          }
+        } catch (error) {
+          console.error('Error en formulario:', error);
+          setError('Error inesperado al procesar la membresía');
+        } finally {
+          setLoading(false);
+        }
+      };
   
 
 const resetForm = () => {
@@ -662,10 +679,20 @@ const resetForm = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors flex items-center"
+                  disabled={loading} // Deshabilitar mientras carga
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <Check size={18} className="mr-2" />
-                  {isEditing ? 'Actualizar' : 'Crear'}
+                  {loading ? (
+                    <>
+                      <div className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                      Procesando...
+                    </>
+                  ) : (
+                    <>
+                      <Check size={18} className="mr-2" />
+                      {isEditing ? 'Actualizar' : 'Crear'}
+                    </>
+                  )}
                 </button>
               </div>
             </form>

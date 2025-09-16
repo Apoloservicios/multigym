@@ -39,6 +39,7 @@ import {
   limit,
   updateDoc, 
   addDoc,
+  increment
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
@@ -58,6 +59,7 @@ interface MembershipManagementProps {
   searchTerm: string;
   onRenew: (id: string, months: number) => Promise<void>;
   onPayment: (id: string) => Promise<void>;
+  onToggleActive?: (id: string, memberId: string, currentActive: boolean) => Promise<void>; // Nueva prop
   renewalInProgress: string[];
   paymentInProgress: string[];
   gymId: string;
@@ -72,11 +74,18 @@ interface ManageMembership extends MembershipAssignment {
   memberEmail?: string;
   memberPhone?: string;
   daysUntilExpiration?: number;
+  active?: boolean; // Agregar campo active
+
 }
 
-const UnifiedRenewalDashboard: React.FC = () => {
+  const UnifiedRenewalDashboard: React.FC = () => {
   const { gymData, userData } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'expired' | 'manage' | 'reports'>('overview');
+
+    // Estados adicionales para filtros y paginación (agregar al inicio del componente)
+  const [includeInactive, setIncludeInactive] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [itemsPerPage] = useState<number>(10); // 10 items por página
   
   // Estados para estadísticas
   const [stats, setStats] = useState<MembershipStats>({
@@ -112,365 +121,439 @@ const UnifiedRenewalDashboard: React.FC = () => {
 // Reemplaza las funciones loadStats, loadExpiredMemberships y loadAllMemberships
 
   // 🔄 Cargar estadísticas principales ESTRUCTURA CORRECTA
-  const loadStats = async () => {
-    if (!gymData?.id) return;
-    
-    try {
-      setLoading(true);
+    const loadStats = async () => {
+      if (!gymData?.id) return;
       
-      // Obtener todos los miembros
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      const membersSnapshot = await getDocs(membersRef);
-      
-      const today = new Date();
-      let totalCount = 0;
-      let activeCount = 0;
-      let expiredCount = 0;
-      let expiringSoonCount = 0;
-      let withAutoRenewalCount = 0;
-      let pendingPaymentsCount = 0;
-      let totalDebtAmount = 0;
-      
-      // Por cada miembro, obtener sus membresías
-      for (const memberDoc of membersSnapshot.docs) {
-        const memberData = memberDoc.data();
-        const memberName = `${memberData.firstName} ${memberData.lastName}`;
+      try {
+        setLoading(true);
         
-        // Obtener las membresías del miembro
-        const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
-        const membershipsSnapshot = await getDocs(membershipsRef);
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const membersSnapshot = await getDocs(membersRef);
         
-        membershipsSnapshot.forEach((membershipDoc) => {
-          const data = membershipDoc.data() as MembershipAssignment;
-          totalCount++;
+        const today = new Date();
+        let totalCount = 0;
+        let activeCount = 0;
+        let expiredCount = 0;
+        let expiringSoonCount = 0;
+        let withAutoRenewalCount = 0;
+        let pendingPaymentsCount = 0;
+        let totalDebtAmount = 0;
+        
+        for (const memberDoc of membersSnapshot.docs) {
+          const memberData = memberDoc.data();
           
-          // Verificar estado
-          const endDate = new Date(data.endDate);
-          const daysUntilExpiration = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
+          const membershipsSnapshot = await getDocs(membershipsRef);
           
-          if (data.status === 'active' && daysUntilExpiration >= 0) {
-            activeCount++;
-            if (daysUntilExpiration <= 7) {
-              expiringSoonCount++;
+          membershipsSnapshot.forEach((membershipDoc) => {
+            const data = membershipDoc.data() as any;
+            
+            // 🔧 SOLO contar como vencida si está activa Y vencida
+            const endDate = new Date(data.endDate);
+            const daysUntilExpiration = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+            const isActive = data.active !== false;
+            const isValidStatus = data.status === 'active' || !data.status;
+            
+            totalCount++;
+            
+            if (isActive && isValidStatus) {
+              if (daysUntilExpiration >= 0) {
+                activeCount++;
+                if (daysUntilExpiration <= 7) {
+                  expiringSoonCount++;
+                }
+              } else {
+                // Solo contar como vencida si está activa
+                expiredCount++;
+              }
             }
-          } else if (data.status === 'expired' || daysUntilExpiration < 0) {
-            expiredCount++;
-          }
-          
-          // Verificar auto-renovación
-          if (data.autoRenewal === true) {
-            withAutoRenewalCount++;
-          }
-          
-          // Verificar pagos pendientes
-          if (data.paymentStatus === 'pending') {
-            pendingPaymentsCount++;
-            totalDebtAmount += data.cost || 0;
-          }
+            
+            if (data.autoRenewal === true) {
+              withAutoRenewalCount++;
+            }
+            
+            if (data.paymentStatus === 'pending') {
+              pendingPaymentsCount++;
+              totalDebtAmount += data.cost || 0;
+            }
+          });
+        }
+        
+        setStats({
+          total: totalCount,
+          active: activeCount,
+          expired: expiredCount,
+          expiringSoon: expiringSoonCount,
+          withAutoRenewal: withAutoRenewalCount,
+          pendingPayments: pendingPaymentsCount,
+          totalDebt: totalDebtAmount
         });
+        
+      } catch (err) {
+        console.error('Error cargando estadísticas:', err);
+        setError('Error al cargar las estadísticas');
+      } finally {
+        setLoading(false);
       }
-      
-      setStats({
-        total: totalCount,
-        active: activeCount,
-        expired: expiredCount,
-        expiringSoon: expiringSoonCount,
-        withAutoRenewal: withAutoRenewalCount,
-        pendingPayments: pendingPaymentsCount,
-        totalDebt: totalDebtAmount
-      });
-      
-      console.log('✅ Estadísticas cargadas:', {
-        total: totalCount,
-        active: activeCount,
-        expired: expiredCount
-      });
-      
-    } catch (err) {
-      console.error('Error cargando estadísticas:', err);
-      setError('Error al cargar las estadísticas');
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
 
-  // 🔄 Cargar membresías vencidas ESTRUCTURA CORRECTA
-  const loadExpiredMemberships = async () => {
-    if (!gymData?.id) return;
+ // 🔄 CARGAR MEMBRESÍAS VENCIDAS - Solo activas
+const loadExpiredMemberships = async () => {
+  if (!gymData?.id) return;
+  
+  try {
+    setLoadingExpired(true);
     
-    try {
-      setLoadingExpired(true);
+    const membersRef = collection(db, `gyms/${gymData.id}/members`);
+    const membersSnapshot = await getDocs(membersRef);
+    
+    const today = new Date();
+    const expiredList: ExpiredMembershipWithDetails[] = [];
+    
+    for (const memberDoc of membersSnapshot.docs) {
+      const memberData = memberDoc.data();
+      const memberName = `${memberData.firstName} ${memberData.lastName}`;
+      const memberId = memberDoc.id;
       
-      // Obtener todos los miembros
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      const membersSnapshot = await getDocs(membersRef);
+      // Obtener membresías del miembro
+      const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
+      const membershipsSnapshot = await getDocs(membershipsRef);
       
-      const today = new Date();
-      const expiredList: ExpiredMembershipWithDetails[] = [];
-      
-      // Por cada miembro, obtener sus membresías
-      for (const memberDoc of membersSnapshot.docs) {
-        const memberData = memberDoc.data();
-        const memberName = `${memberData.firstName} ${memberData.lastName}`;
-        const memberId = memberDoc.id;
+      membershipsSnapshot.forEach((membershipDoc) => {
+        const data = membershipDoc.data() as any;
+        const endDate = new Date(data.endDate);
+        const daysExpired = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
         
-        // Obtener las membresías del miembro
-        const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
-        const membershipsSnapshot = await getDocs(membershipsRef);
+        // 🔧 LÓGICA MEJORADA:
+        // - Si tiene campo active en false, no mostrar
+        // - Si NO tiene campo active, considerarla activa (compatibilidad)
+        // - Si status es 'cancelled' o 'renewed', no mostrar
+        const isActive = data.active !== false; // undefined o true = activa
+        const isValidStatus = data.status === 'active' || !data.status;
         
-        membershipsSnapshot.forEach((membershipDoc) => {
-          const data = membershipDoc.data() as MembershipAssignment;
-          const endDate = new Date(data.endDate);
-          const daysExpired = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
-          
-          // Solo incluir si está realmente vencida
-          if (daysExpired > 0 && data.status !== 'cancelled') {
-            expiredList.push({
-              ...data,
-              id: membershipDoc.id,
-              memberId: memberId, // Asegurar que tenga el memberId
-              memberName: memberName, // Usar el nombre del miembro
-              daysExpired,
-              totalDebt: data.paymentStatus === 'pending' ? (data.cost || 0) : 0
-            });
-          }
+        // Solo incluir si:
+        // 1. Está vencida (días > 0)
+        // 2. No está explícitamente desactivada
+        // 3. No está cancelada o renovada
+        if (daysExpired > 0 && isActive && isValidStatus) {
+          expiredList.push({
+            ...data,
+            id: membershipDoc.id,
+            memberId: memberId,
+            memberName: memberName,
+            daysExpired,
+            totalDebt: data.paymentStatus === 'pending' ? (data.cost || 0) : 0
+          });
+        }
+      });
+    }
+    
+    expiredList.sort((a, b) => b.daysExpired - a.daysExpired);
+    setExpiredMemberships(expiredList);
+    
+  } catch (err) {
+    console.error('Error cargando membresías vencidas:', err);
+    setError('Error al cargar las membresías vencidas');
+  } finally {
+    setLoadingExpired(false);
+  }
+};
+
+// 🔄 CARGAR TODAS LAS MEMBRESÍAS - Con opción de incluir inactivas
+const loadAllMemberships = async () => {
+  if (!gymData?.id) return;
+  
+  try {
+    setLoading(true);
+    
+    const membersRef = collection(db, `gyms/${gymData.id}/members`);
+    const membersSnapshot = await getDocs(membersRef);
+    
+    const membershipsList: ManageMembership[] = [];
+    const today = new Date();
+    
+    for (const memberDoc of membersSnapshot.docs) {
+      const memberData = memberDoc.data();
+      const memberName = `${memberData.firstName} ${memberData.lastName}`;
+      const memberId = memberDoc.id;
+      const memberEmail = memberData.email || '';
+      const memberPhone = memberData.phone || '';
+      
+      const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
+      const membershipsSnapshot = await getDocs(membershipsRef);
+      
+      membershipsSnapshot.forEach((membershipDoc) => {
+        const data = membershipDoc.data() as any;
+        const endDate = new Date(data.endDate);
+        const daysUntilExpiration = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        
+        // 🔧 LÓGICA MEJORADA:
+        // Si active no existe o es true = activa
+        // Si active es false = inactiva
+        const isActive = data.active !== false;
+        
+        // Aplicar filtro según includeInactive
+        if (!includeInactive && !isActive) {
+          return; // Saltar membresías inactivas si no se incluyen
+        }
+        
+        // No incluir membresías canceladas o renovadas a menos que se incluyan inactivas
+        if (!includeInactive && (data.status === 'cancelled' || data.status === 'renewed')) {
+          return;
+        }
+        
+        membershipsList.push({
+          ...data,
+          id: membershipDoc.id,
+          memberId: memberId,
+          memberName: memberName,
+          memberEmail: memberEmail,
+          memberPhone: memberPhone,
+          daysUntilExpiration,
+          active: isActive // Normalizar el campo active
         });
-      }
-      
-      // Ordenar por días vencidos (más tiempo primero)
-      expiredList.sort((a, b) => b.daysExpired - a.daysExpired);
-      
-      setExpiredMemberships(expiredList);
-      console.log(`✅ Cargadas ${expiredList.length} membresías vencidas`);
-      
-    } catch (err) {
-      console.error('Error cargando membresías vencidas:', err);
-      setError('Error al cargar las membresías vencidas');
-    } finally {
-      setLoadingExpired(false);
-    }
-  };
-
-  // 🔄 Cargar todas las membresías para gestionar ESTRUCTURA CORRECTA
-  const loadAllMemberships = async () => {
-    if (!gymData?.id) return;
-    
-    try {
-      setLoading(true);
-      
-      // Obtener todos los miembros
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      const membersSnapshot = await getDocs(membersRef);
-      
-      const membershipsList: ManageMembership[] = [];
-      const today = new Date();
-      
-      // Por cada miembro, obtener sus membresías
-      for (const memberDoc of membersSnapshot.docs) {
-        const memberData = memberDoc.data();
-        const memberName = `${memberData.firstName} ${memberData.lastName}`;
-        const memberId = memberDoc.id;
-        const memberEmail = memberData.email || '';
-        const memberPhone = memberData.phone || '';
-        
-        // Obtener las membresías del miembro
-        const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
-        const membershipsSnapshot = await getDocs(membershipsRef);
-        
-        membershipsSnapshot.forEach((membershipDoc) => {
-          const data = membershipDoc.data() as MembershipAssignment;
-          const endDate = new Date(data.endDate);
-          const daysUntilExpiration = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-          
-          // Solo incluir membresías activas o vencidas (no canceladas)
-          if (data.status !== 'cancelled') {
-            membershipsList.push({
-              ...data,
-              id: membershipDoc.id,
-              memberId: memberId,
-              memberName: memberName,
-              memberEmail: memberEmail,
-              memberPhone: memberPhone,
-              daysUntilExpiration
-            });
-          }
-        });
-      }
-      
-      // Ordenar por fecha de vencimiento
-      membershipsList.sort((a, b) => {
-        const dateA = new Date(a.endDate).getTime();
-        const dateB = new Date(b.endDate).getTime();
-        return dateA - dateB;
       });
-      
-      setAllMemberships(membershipsList);
-      console.log(`✅ Cargadas ${membershipsList.length} membresías totales`);
-      
-    } catch (err) {
-      console.error('Error cargando membresías:', err);
-      setError('Error al cargar las membresías');
-    } finally {
-      setLoading(false);
     }
-  };
+    
+    membershipsList.sort((a, b) => {
+      const dateA = new Date(a.endDate).getTime();
+      const dateB = new Date(b.endDate).getTime();
+      return dateA - dateB;
+    });
+    
+    setAllMemberships(membershipsList);
+    setCurrentPage(1);
+    
+  } catch (err) {
+    console.error('Error cargando membresías:', err);
+    setError('Error al cargar las membresías');
+  } finally {
+    setLoading(false);
+  }
+};
 
-  // 🔄 CORREGIR: Renovar membresía - necesita el memberId
-  const handleRenewMembership = async (membershipId: string, months: number = 1) => {
-    if (!gymData?.id) return;
+
+
+// 🔄 RENOVAR MEMBRESÍA - LÓGICA CORREGIDA
+const handleRenewMembership = async (membershipId: string, months: number = 1) => {
+  if (!gymData?.id) return;
+  
+  setRenewalInProgress(prev => [...prev, membershipId]);
+  setError('');
+  setSuccess('');
+  
+  try {
+    const membership = [...expiredMemberships, ...allMemberships].find(m => m.id === membershipId);
     
-    setRenewalInProgress(prev => [...prev, membershipId]);
-    setError('');
-    setSuccess('');
+    if (!membership || !membership.memberId) {
+      throw new Error('No se pudo encontrar la información del miembro');
+    }
     
+    const membershipRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships/${membershipId}`);
+    const membershipSnap = await getDoc(membershipRef);
+    
+    if (!membershipSnap.exists()) {
+      throw new Error('Membresía no encontrada');
+    }
+    
+    const membershipData = membershipSnap.data();
+    
+    // 🔧 OBTENER PRECIO ACTUAL DE LA DEFINICIÓN DE MEMBRESÍA
+    let currentPrice = membershipData.cost; // Precio por defecto
+    
+    // Intentar obtener el precio actualizado desde la configuración de membresías
     try {
-      // Encontrar la membresía en la lista para obtener el memberId
-      const membership = [...expiredMemberships, ...allMemberships].find(m => m.id === membershipId);
-      
-      if (!membership || !membership.memberId) {
-        throw new Error('No se pudo encontrar la información del miembro');
-      }
-      
-      // Usar la función correcta con la estructura de Firebase
-      const membershipRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships/${membershipId}`);
-      const membershipSnap = await getDoc(membershipRef);
-      
-      if (!membershipSnap.exists()) {
-        throw new Error('Membresía no encontrada');
-      }
-      
-      const membershipData = membershipSnap.data();
-      
-      // Obtener precio actual si es posible
-      let currentPrice = membershipData.cost;
-      
-      // Calcular fechas
-      const today = new Date();
-      const startDate = today.toISOString().split('T')[0];
-      const endDate = new Date(today);
-      endDate.setMonth(endDate.getMonth() + months);
-      const endDateStr = endDate.toISOString().split('T')[0];
-      
-      // Crear nueva membresía con deuda pendiente
-      const newMembershipData = {
-        ...membershipData,
-        startDate: startDate,
-        endDate: endDateStr,
-        cost: currentPrice,
-        status: 'active',
-        paymentStatus: 'pending', // SIEMPRE pendiente
-        renewedAt: new Date().toISOString(),
-        renewedManually: true,
-        previousMembershipId: membershipId
-      };
-      
-      // Agregar la nueva membresía
-      const newMembershipRef = await addDoc(
-        collection(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships`),
-        newMembershipData
+      const membershipsConfigRef = collection(db, `gyms/${gymData.id}/memberships`);
+      const q = query(
+        membershipsConfigRef,
+        where('name', '==', membershipData.membershipName || membershipData.activityName)
       );
+      const snapshot = await getDocs(q);
       
-      // Marcar la anterior como renovada
-      await updateDoc(membershipRef, {
-        status: 'renewed',
-        renewedToId: newMembershipRef.id,
-        renewedAt: new Date().toISOString()
-      });
-      
-      setSuccess(`Membresía renovada por ${months} ${months === 1 ? 'mes' : 'meses'}. Se generó una deuda pendiente de pago.`);
-      
-      // Recargar datos
-      await Promise.all([loadStats(), loadExpiredMemberships()]);
-      
-      setTimeout(() => setSuccess(''), 5000);
-      
-    } catch (err: any) {
-      console.error('Error renovando membresía:', err);
-      setError(err.message || 'Error al renovar la membresía');
-    } finally {
-      setRenewalInProgress(prev => prev.filter(id => id !== membershipId));
+      if (!snapshot.empty) {
+        const configData = snapshot.docs[0].data();
+        currentPrice = configData.cost || currentPrice;
+        console.log('✅ Usando precio actualizado:', currentPrice);
+      }
+    } catch (error) {
+      console.log('⚠️ Usando precio anterior:', currentPrice);
     }
-  };
-
-  // 💰 CORREGIR: Registrar pago - necesita el memberId
-  const handleRegisterPayment = async (membershipId: string) => {
-    if (!gymData?.id || !userData?.id) return;
     
-    setPaymentInProgress(prev => [...prev, membershipId]);
-    setError('');
-    setSuccess('');
+    // Calcular fechas
+    const today = new Date();
+    const startDate = today.toISOString().split('T')[0];
+    const endDate = new Date(today);
+    endDate.setMonth(endDate.getMonth() + months);
+    const endDateStr = endDate.toISOString().split('T')[0];
     
-    try {
-      // Encontrar la membresía en la lista para obtener el memberId
-      const membership = allMemberships.find(m => m.id === membershipId);
-      
-      if (!membership || !membership.memberId) {
-        throw new Error('No se pudo encontrar la información del miembro');
-      }
-      
-      // Usar la estructura correcta de Firebase
-      const membershipRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships/${membershipId}`);
-      
-      // Actualizar el estado de pago
-      await updateDoc(membershipRef, {
-        paymentStatus: 'paid',
-        paidAt: new Date().toISOString(),
-        paidBy: userData.id
-      });
-      
-      // Actualizar deuda del miembro
-      const memberRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}`);
-      const memberSnap = await getDoc(memberRef);
-      
-      if (memberSnap.exists()) {
-        const memberData = memberSnap.data();
-        const currentDebt = memberData.totalDebt || 0;
-        const newDebt = Math.max(0, currentDebt - membership.cost);
-        
-        await updateDoc(memberRef, {
-          totalDebt: newDebt,
-          lastPaymentDate: new Date().toISOString()
-        });
-      }
-      
-      // Registrar en caja diaria
-      const today = new Date().toISOString().split('T')[0];
-      const transactionData = {
-        type: 'income',
-        category: 'membership',
-        amount: membership.cost,
-        description: `Pago de membresía: ${membership.activityName} - ${membership.memberName}`,
+    const totalCost = currentPrice * months;
+    
+    // Desactivar la membresía anterior
+    await updateDoc(membershipRef, {
+      status: 'renewed',
+      active: false,
+      renewedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    
+    // Crear nueva membresía activa
+    const newMembershipData: any = {
+      ...membershipData,
+      startDate: startDate,
+      endDate: endDateStr,
+      cost: currentPrice, // Precio actualizado
+      totalCost: totalCost,
+      status: 'active',
+      active: true,
+      paymentStatus: 'pending',
+      renewedAt: new Date().toISOString(),
+      renewedManually: true,
+      previousMembershipId: membershipId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    // Limpiar campos que no deben duplicarse
+    if ('id' in newMembershipData) delete newMembershipData.id;
+    if ('renewedToId' in newMembershipData) delete newMembershipData.renewedToId;
+    
+    const newMembershipRef = await addDoc(
+      collection(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships`),
+      newMembershipData
+    );
+    
+    // Actualizar deuda del socio
+    const memberRef = doc(db, `gyms/${gymData.id}/members`, membership.memberId);
+    await updateDoc(memberRef, {
+      totalDebt: increment(totalCost),
+      hasDebt: true,
+      updatedAt: new Date().toISOString()
+    });
+    
+    // Crear registro de deuda pendiente
+    await addDoc(
+      collection(db, `gyms/${gymData.id}/pendingPayments`),
+      {
+        membershipId: newMembershipRef.id,
         memberId: membership.memberId,
         memberName: membership.memberName,
-        membershipId: membershipId,
-        date: new Date().toISOString(),
-        userId: userData.id,
-        userName: userData.name || userData.email || 'Usuario',
-        paymentMethod: 'cash',
-        status: 'completed',
-        notes: 'Pago registrado desde dashboard de renovaciones',
-        createdAt: new Date().toISOString()
-      };
-      
-      await addDoc(collection(db, `gyms/${gymData.id}/transactions`), transactionData);
-      
-      setSuccess('Pago registrado exitosamente. Movimiento agregado a caja diaria.');
-      
-      // Recargar datos
-      await Promise.all([
-        loadStats(),
-        activeTab === 'manage' && loadAllMemberships()
-      ]);
-      
-      setTimeout(() => setSuccess(''), 3000);
-      
-    } catch (err: any) {
-      console.error('Error registrando pago:', err);
-      setError(err.message || 'Error al registrar el pago');
-    } finally {
-      setPaymentInProgress(prev => prev.filter(id => id !== membershipId));
+        activityName: membership.activityName,
+        amount: totalCost,
+        months: months,
+        status: 'pending',
+        dueDate: startDate,
+        createdAt: new Date().toISOString(),
+        type: 'membership_renewal'
+      }
+    );
+    
+    setSuccess(`Membresía renovada por ${months} ${months === 1 ? 'mes' : 'meses'}. Precio actualizado: ${formatCurrency(currentPrice)}. Deuda generada: ${formatCurrency(totalCost)}`);
+    
+    await Promise.all([loadStats(), loadExpiredMemberships()]);
+    
+    setTimeout(() => setSuccess(''), 5000);
+    
+  } catch (err: any) {
+    console.error('Error renovando membresía:', err);
+    setError(err.message || 'Error al renovar la membresía');
+  } finally {
+    setRenewalInProgress(prev => prev.filter(id => id !== membershipId));
+  }
+};
+
+// 💰 REGISTRAR PAGO - Actualizar deuda del socio
+const handleRegisterPayment = async (membershipId: string) => {
+  if (!gymData?.id || !userData?.id) return;
+  
+  setPaymentInProgress(prev => [...prev, membershipId]);
+  setError('');
+  setSuccess('');
+  
+  try {
+    const membership = allMemberships.find(m => m.id === membershipId);
+    
+    if (!membership || !membership.memberId) {
+      throw new Error('No se pudo encontrar la información del miembro');
     }
-  };
+    
+    const membershipRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}/memberships/${membershipId}`);
+    
+    // Actualizar estado de pago de la membresía
+    await updateDoc(membershipRef, {
+      paymentStatus: 'paid',
+      paidAt: new Date().toISOString(),
+      paidBy: userData.id
+    });
+    
+    // ACTUALIZAR DEUDA DEL MIEMBRO (decrementar)
+    const memberRef = doc(db, `gyms/${gymData.id}/members/${membership.memberId}`);
+    const memberSnap = await getDoc(memberRef);
+    
+    if (memberSnap.exists()) {
+      const memberData = memberSnap.data();
+      const currentDebt = memberData.totalDebt || 0;
+      const newDebt = Math.max(0, currentDebt - membership.cost);
+      
+      await updateDoc(memberRef, {
+        totalDebt: newDebt,
+        hasDebt: newDebt > 0,
+        lastPaymentDate: new Date().toISOString()
+      });
+    }
+    
+    // Actualizar registro de pago pendiente si existe
+    const pendingPaymentsRef = collection(db, `gyms/${gymData.id}/pendingPayments`);
+    const pendingQuery = query(
+      pendingPaymentsRef,
+      where('membershipId', '==', membershipId),
+      where('status', '==', 'pending')
+    );
+    const pendingSnap = await getDocs(pendingQuery);
+    
+    pendingSnap.forEach(async (doc) => {
+      await updateDoc(doc.ref, {
+        status: 'paid',
+        paidAt: new Date().toISOString()
+      });
+    });
+    
+    // Registrar transacción en caja diaria
+    const today = new Date().toISOString().split('T')[0];
+    const transactionData = {
+      type: 'income',
+      category: 'membership',
+      amount: membership.cost,
+      description: `Pago de membresía: ${membership.activityName} - ${membership.memberName}`,
+      memberId: membership.memberId,
+      memberName: membership.memberName,
+      membershipId: membershipId,
+      date: new Date().toISOString(),
+      userId: userData.id,
+      userName: userData.name || userData.email || 'Usuario',
+      paymentMethod: 'cash',
+      status: 'completed',
+      notes: 'Pago registrado desde dashboard de renovaciones',
+      createdAt: new Date().toISOString()
+    };
+    
+    await addDoc(collection(db, `gyms/${gymData.id}/transactions`), transactionData);
+    
+    setSuccess('Pago registrado exitosamente. Deuda actualizada y movimiento agregado a caja diaria.');
+    
+    await Promise.all([
+      loadStats(),
+      activeTab === 'manage' && loadAllMemberships()
+    ]);
+    
+    setTimeout(() => setSuccess(''), 3000);
+    
+  } catch (err: any) {
+    console.error('Error registrando pago:', err);
+    setError(err.message || 'Error al registrar el pago');
+  } finally {
+    setPaymentInProgress(prev => prev.filter(id => id !== membershipId));
+  }
+};
 
   // 🔄 Renovación masiva
   const handleMassiveRenewal = async () => {
@@ -517,6 +600,85 @@ const UnifiedRenewalDashboard: React.FC = () => {
       setError('Error en la renovación masiva');
     }
   };
+
+  // Función para activar/desactivar membresía
+const handleToggleMembershipActive = async (membershipId: string, memberId: string, currentActive: boolean) => {
+  if (!gymData?.id) return; // Agregar verificación
+  
+  try {
+    const membershipRef = doc(db, `gyms/${gymData.id}/members/${memberId}/memberships/${membershipId}`);
+    
+    const newStatus = !currentActive ? 'active' : 'cancelled'; // Usar 'cancelled' en lugar de 'inactive'
+    
+    await updateDoc(membershipRef, {
+      active: !currentActive,
+      status: newStatus,
+      updatedAt: new Date().toISOString()
+    });
+    
+    // Actualizar lista local
+    setAllMemberships(prev => prev.map(m => 
+      m.id === membershipId 
+        ? {...m, active: !currentActive, status: newStatus} 
+        : m
+    ));
+    
+    setSuccess(`Membresía ${!currentActive ? 'activada' : 'desactivada'} correctamente`);
+    setTimeout(() => setSuccess(''), 3000);
+    
+  } catch (error) {
+    console.error('Error toggling membership:', error);
+    setError('Error al cambiar el estado de la membresía');
+  }
+};
+
+
+
+// Filtrar y paginar membresías
+const getPaginatedMemberships = () => {
+  let filtered = [...allMemberships];
+  
+  // Filtro de búsqueda
+  if (searchTerm) {
+    const term = searchTerm.toLowerCase();
+    filtered = filtered.filter(m => 
+      m.memberName.toLowerCase().includes(term) ||
+      m.activityName.toLowerCase().includes(term) ||
+      m.memberEmail?.toLowerCase().includes(term)
+    );
+  }
+  
+  // Filtro de estado
+  if (statusFilter !== 'all') {
+    if (statusFilter === 'pending') {
+      filtered = filtered.filter(m => m.paymentStatus === 'pending');
+    } else if (statusFilter === 'expired') {
+      filtered = filtered.filter(m => (m.daysUntilExpiration || 0) < 0);
+    } else if (statusFilter === 'active') {
+      filtered = filtered.filter(m => m.status === 'active' && (m.daysUntilExpiration || 0) >= 0);
+    }
+  }
+  
+  // Filtro de pago
+  if (paymentFilter !== 'all') {
+    filtered = filtered.filter(m => m.paymentStatus === paymentFilter);
+  }
+  
+  // Calcular paginación
+  const totalPages = Math.ceil(filtered.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginated = filtered.slice(startIndex, endIndex);
+  
+  return {
+    data: paginated,
+    totalItems: filtered.length,
+    totalPages,
+    currentPage,
+    hasMore: endIndex < filtered.length
+  };
+};
+
 
   // Filtrar membresías en gestionar
   const getFilteredMemberships = () => {
@@ -933,52 +1095,136 @@ const UnifiedRenewalDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* PESTAÑA GESTIONAR */}
-      {/* PESTAÑA GESTIONAR - MEJORADA */}
-      {activeTab === 'manage' && (
-        <div className="space-y-6">
-          {/* Buscador de miembros */}
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-center space-x-4">
-              <div className="flex-1 relative">
-                <Search className="absolute left-3 top-3 text-gray-400" size={16} />
-                <input
-                  type="text"
-                  placeholder="Buscar miembro por nombre, email o actividad..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+{activeTab === 'manage' && (
+  <div className="space-y-6">
+    {/* Filtros y controles */}
+    <div className="bg-white rounded-lg shadow p-4">
+      <div className="flex flex-wrap gap-4">
+        <div className="flex-1 min-w-[200px] relative">
+          <Search className="absolute left-3 top-3 text-gray-400" size={16} />
+          <input
+            type="text"
+            placeholder="Buscar por nombre, email o actividad..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as any)}
+          className="px-4 py-2 border border-gray-300 rounded-md"
+        >
+          <option value="all">Todos los estados</option>
+          <option value="active">Activas</option>
+          <option value="expired">Vencidas</option>
+          <option value="pending">Con deuda</option>
+        </select>
+        
+        <select
+          value={paymentFilter}
+          onChange={(e) => setPaymentFilter(e.target.value as any)}
+          className="px-4 py-2 border border-gray-300 rounded-md"
+        >
+          <option value="all">Todos los pagos</option>
+          <option value="paid">Pagadas</option>
+          <option value="pending">Pendientes</option>
+        </select>
+        
+        <label className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={includeInactive}
+            onChange={(e) => {
+              setIncludeInactive(e.target.checked);
+              loadAllMemberships(); // Recargar con nuevo filtro
+            }}
+            className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+          />
+          <span>Incluir desactivadas</span>
+        </label>
+        
+        <button
+          onClick={loadAllMemberships}
+          className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center"
+        >
+          <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+          Actualizar
+        </button>
+      </div>
+    </div>
+
+    {loading ? (
+      <div className="flex items-center justify-center p-8">
+        <RefreshCw className="animate-spin mr-2" size={20} />
+        <span>Cargando membresías...</span>
+      </div>
+    ) : (
+      <>
+        {/* Lista de membresías con paginación */}
+        <MembershipManagementList 
+          memberships={getPaginatedMemberships().data}
+          searchTerm={searchTerm}
+          onRenew={handleRenewMembership}
+          onPayment={handleRegisterPayment}
+          onToggleActive={handleToggleMembershipActive} // Agregar esta prop
+          renewalInProgress={renewalInProgress}
+          paymentInProgress={paymentInProgress}
+          gymId={gymData?.id || ''}
+        />
+        
+        {/* Controles de paginación */}
+        {getPaginatedMemberships().totalPages > 1 && (
+          <div className="flex items-center justify-between bg-white rounded-lg shadow p-4">
+            <div className="text-sm text-gray-700">
+              Mostrando {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, getPaginatedMemberships().totalItems)} de {getPaginatedMemberships().totalItems} membresías
+            </div>
+            
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Anterior
+              </button>
+              
+              {[...Array(Math.min(5, getPaginatedMemberships().totalPages))].map((_, i) => {
+                const pageNum = i + 1;
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`px-3 py-1 border rounded-md ${
+                      currentPage === pageNum
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+              
+              {getPaginatedMemberships().totalPages > 5 && (
+                <span className="px-2 py-1">...</span>
+              )}
               
               <button
-                onClick={loadAllMemberships}
-                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center"
+                onClick={() => setCurrentPage(prev => Math.min(getPaginatedMemberships().totalPages, prev + 1))}
+                disabled={currentPage === getPaginatedMemberships().totalPages}
+                className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RefreshCw size={16} className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
-                Actualizar
+                Siguiente
               </button>
             </div>
           </div>
-
-          {loading ? (
-            <div className="flex items-center justify-center p-8">
-              <RefreshCw className="animate-spin mr-2" size={20} />
-              <span>Cargando membresías...</span>
-            </div>
-          ) : (
-            <MembershipManagementList 
-              memberships={allMemberships}
-              searchTerm={searchTerm}
-              onRenew={handleRenewMembership}
-              onPayment={handleRegisterPayment}
-              renewalInProgress={renewalInProgress}
-              paymentInProgress={paymentInProgress}
-              gymId={gymData?.id || ''}
-            />
-          )}
-        </div>
-      )}
+        )}
+      </>
+    )}
+  </div>
+)}
 
       {/* PESTAÑA REPORTES */}
       {activeTab === 'reports' && (
@@ -997,15 +1243,36 @@ const MembershipManagementList: React.FC<MembershipManagementProps> = ({
   paymentInProgress,
   gymId
 }) => {
+  // Estados locales
   const [expandedMember, setExpandedMember] = useState<string | null>(null);
   const [editingMembership, setEditingMembership] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<any>({});
   const [savingChanges, setSavingChanges] = useState<string[]>([]);
-
+  
   // Función para formatear fecha
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('es-AR');
+  };
+
+  // 🔧 FUNCIÓN LOCAL para activar/desactivar membresía
+  const handleToggleActive = async (membershipId: string, memberId: string, currentActive: boolean) => {
+    if (!gymId) return;
+    
+    try {
+      const membershipRef = doc(db, `gyms/${gymId}/members/${memberId}/memberships/${membershipId}`);
+      
+      await updateDoc(membershipRef, {
+        active: !currentActive,
+        updatedAt: new Date().toISOString()
+      });
+      
+      // Recargar la página para mostrar cambios (temporal)
+      window.location.reload();
+      
+    } catch (error) {
+      console.error('Error toggling membership:', error);
+    }
   };
 
   // Agrupar membresías por miembro
@@ -1187,6 +1454,8 @@ const MembershipManagementList: React.FC<MembershipManagementProps> = ({
                               }
                               <span>{editForm.autoRenewal ? 'Activada' : 'Desactivada'}</span>
                             </button>
+
+                            
                           </div>
 
                           <div>
@@ -1260,62 +1529,81 @@ const MembershipManagementList: React.FC<MembershipManagementProps> = ({
                             </div>
                           </div>
 
-                          <div className="flex space-x-2">
-                            <button
-                              onClick={() => {
-                                setEditingMembership(membership.id);
-                                setEditForm({
-                                  autoRenewal: membership.autoRenewal,
-                                  paymentStatus: membership.paymentStatus,
-                                  notes: ''
-                                });
-                              }}
-                              className="text-gray-600 hover:text-gray-900"
-                              title="Editar"
-                            >
-                              <Edit2 size={18} />
-                            </button>
-
-                            {(membership.daysUntilExpiration || 0) < 0 && (
+                          {/* Sección de botones de acción - MODO VISTA */}
+                            <div className="flex space-x-2">
                               <button
-                                onClick={() => onRenew(membership.id, 1)}
-                                disabled={renewalInProgress.includes(membership.id)}
-                                className="text-green-600 hover:text-green-700 disabled:opacity-50"
-                                title="Renovar 1 mes"
+                                onClick={() => {
+                                  setEditingMembership(membership.id);
+                                  setEditForm({
+                                    autoRenewal: membership.autoRenewal,
+                                    paymentStatus: membership.paymentStatus,
+                                    notes: ''
+                                  });
+                                }}
+                                className="text-gray-600 hover:text-gray-900"
+                                title="Editar"
                               >
-                                {renewalInProgress.includes(membership.id) ? (
-                                  <RefreshCw className="animate-spin" size={18} />
+                                <Edit2 size={18} />
+                              </button>
+
+                              <button
+                                onClick={() => handleToggleActive(membership.id, membership.memberId, membership.active !== false)}
+                                className={`${
+                                  membership.active === false 
+                                    ? 'text-green-600 hover:text-green-700' 
+                                    : 'text-yellow-600 hover:text-yellow-700'
+                                }`}
+                                title={membership.active === false ? 'Activar membresía' : 'Desactivar membresía'}
+                              >
+                                {membership.active === false ? (
+                                  <ToggleLeft size={18} />
                                 ) : (
-                                  <RefreshCw size={18} />
+                                  <ToggleRight size={18} />
                                 )}
                               </button>
-                            )}
 
-                            {membership.paymentStatus === 'pending' && (
-                              <button
-                                onClick={() => onPayment(membership.id)}
-                                disabled={paymentInProgress.includes(membership.id)}
-                                className="text-blue-600 hover:text-blue-700 disabled:opacity-50"
-                                title="Registrar pago"
-                              >
-                                {paymentInProgress.includes(membership.id) ? (
-                                  <RefreshCw className="animate-spin" size={18} />
-                                ) : (
-                                  <CreditCard size={18} />
-                                )}
-                              </button>
-                            )}
+                              {(membership.daysUntilExpiration || 0) < 0 && (
+                                <button
+                                  onClick={() => onRenew(membership.id, 1)}
+                                  disabled={renewalInProgress.includes(membership.id)}
+                                  className="text-green-600 hover:text-green-700 disabled:opacity-50"
+                                  title="Renovar 1 mes"
+                                >
+                                  {renewalInProgress.includes(membership.id) ? (
+                                    <RefreshCw className="animate-spin" size={18} />
+                                  ) : (
+                                    <RefreshCw size={18} />
+                                  )}
+                                </button>
+                              )}
 
-                            {membership.status === 'active' && (
-                              <button
-                                onClick={() => handleCancelMembership(membership.id, membership.memberId)}
-                                className="text-red-600 hover:text-red-700"
-                                title="Cancelar membresía"
-                              >
-                                <X size={18} />
-                              </button>
-                            )}
-                          </div>
+                              {membership.paymentStatus === 'pending' && (
+                                <button
+                                  onClick={() => onPayment(membership.id)}
+                                  disabled={paymentInProgress.includes(membership.id)}
+                                  className="text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                                  title="Registrar pago"
+                                >
+                                  {paymentInProgress.includes(membership.id) ? (
+                                    <RefreshCw className="animate-spin" size={18} />
+                                  ) : (
+                                    <CreditCard size={18} />
+                                  )}
+                                </button>
+                              )}
+
+                              {membership.status === 'active' && (
+                                <button
+                                  onClick={() => handleCancelMembership(membership.id, membership.memberId)}
+                                  className="text-red-600 hover:text-red-700"
+                                  title="Cancelar membresía"
+                                >
+                                  <X size={18} />
+                                </button>
+                              )}
+                            </div>
+
+                           
                         </div>
                       </div>
                     )}
