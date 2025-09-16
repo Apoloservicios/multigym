@@ -255,10 +255,13 @@ export const getExpiredMemberships = async (gymId: string): Promise<MembershipAs
   }
 };
 
+// VERSIÓN CORREGIDA de renewExpiredMembership para membershipService.ts
+// Reemplaza tu función actual con esta versión
+
 export const renewExpiredMembership = async (
   gymId: string,
   membershipId: string,
-  months: number = 1
+  months: number = 1  // Por defecto 1 mes
 ): Promise<{
   success: boolean;
   newMembershipId?: string;
@@ -269,9 +272,11 @@ export const renewExpiredMembership = async (
     const membershipRef = doc(db, `gyms/${gymId}/membershipAssignments`, membershipId);
     const membershipSnap = await getDoc(membershipRef);
     
-    
     if (!membershipSnap.exists()) {
-      return { success: false, error: 'Membresía no encontrada' };
+      return { 
+        success: false, 
+        error: 'Membresía no encontrada' 
+      };
     }
     
     const membershipData = membershipSnap.data();
@@ -287,49 +292,63 @@ export const renewExpiredMembership = async (
         
         if (activitySnap.exists()) {
           const activityData = activitySnap.data();
-          // Usar el precio actual de la actividad
-          currentPrice = activityData.price || activityData.cost || currentPrice;
-          console.log(`✅ Precio actualizado desde actividad: $${currentPrice}`);
-        } else {
-          // Si no existe en activities, buscar en memberships (planes)
-          const membershipPlanRef = doc(db, `gyms/${gymId}/memberships`, membershipData.activityId);
-          const membershipPlanSnap = await getDoc(membershipPlanRef);
-          
-          if (membershipPlanSnap.exists()) {
-            const planData = membershipPlanSnap.data();
-            currentPrice = planData.cost || planData.price || currentPrice;
-            console.log(`✅ Precio actualizado desde plan de membresía: $${currentPrice}`);
+          // Buscar el precio en las membresías de la actividad
+          if (activityData.memberships && activityData.memberships.length > 0) {
+            // Usar el primer precio de membresía o buscar una que coincida
+            currentPrice = activityData.memberships[0].cost || currentPrice;
           }
         }
       } catch (error) {
-        console.error('Error obteniendo precio actual:', error);
-        // Mantener el precio anterior si hay error
+        console.log('⚠️ No se pudo obtener precio de actividad, usando precio anterior');
       }
     }
     
-    // 3. Calcular fechas
+    // Si hay membershipId (de la definición general de membresía), intentar obtener precio de ahí
+    if (membershipData.membershipId) {
+      try {
+        const membershipDefRef = doc(db, `gyms/${gymId}/memberships`, membershipData.membershipId);
+        const membershipDefSnap = await getDoc(membershipDefRef);
+        
+        if (membershipDefSnap.exists()) {
+          const membershipDef = membershipDefSnap.data();
+          currentPrice = membershipDef.cost || currentPrice;
+        }
+      } catch (error) {
+        console.log('⚠️ No se pudo obtener precio de membresía general');
+      }
+    }
+    
+    // 3. Calcular fechas para la nueva membresía
     const today = new Date();
     const startDate = today.toISOString().split('T')[0];
+    
     const endDate = new Date(today);
     endDate.setMonth(endDate.getMonth() + months);
     const endDateStr = endDate.toISOString().split('T')[0];
     
-    // 4. Calcular costo total con precio actualizado
+    // 4. Calcular el costo total
     const totalCost = currentPrice * months;
     
-    // 5. Crear nueva membresía con precio actualizado
+    // 5. 🔧 IMPORTANTE: Crear nueva membresía SIEMPRE con estado PENDIENTE
+    // Copiar todos los campos del documento original EXCEPTO algunos específicos
+    const { id, ...membershipDataWithoutId } = { id: membershipId, ...membershipData };
+    
     const newMembershipData = {
-      ...membershipData,
+      ...membershipDataWithoutId, // Copiar todos los campos excepto id
       startDate: startDate,
       endDate: endDateStr,
-      cost: currentPrice, // 🔧 USAR PRECIO ACTUAL
+      cost: currentPrice, // Precio actualizado
       totalCost: totalCost,
       status: 'active',
-      paymentStatus: 'pending',
-      renewedAt: serverTimestamp(),
-      renewedFrom: membershipId,
+      paymentStatus: 'pending', // 🔧 SIEMPRE pendiente al renovar
+      paymentType: 'monthly',
       autoRenewal: membershipData.autoRenewal !== false,
-      paymentType: 'monthly'
+      renewedAt: serverTimestamp(),
+      renewedManually: true,
+      renewalMonths: months,
+      previousMembershipId: membershipId,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     };
     
     // 6. Crear la nueva membresía
@@ -338,53 +357,60 @@ export const renewExpiredMembership = async (
       newMembershipData
     );
     
-    // 7. También crear en la colección del socio
-    if (membershipData.memberId) {
-      const memberMembershipRef = await addDoc(
-        collection(db, `gyms/${gymId}/members/${membershipData.memberId}/memberships`),
-        {
-          ...newMembershipData,
-          id: newMembershipRef.id
-        }
-      );
-      
-      // 8. 🔧 CORRECCIÓN: Actualizar deuda del socio
-      const memberRef = doc(db, `gyms/${gymId}/members`, membershipData.memberId);
-      const memberSnap = await getDoc(memberRef);
-      
-      if (memberSnap.exists()) {
-        const memberData = memberSnap.data();
-        const currentDebt = memberData.totalDebt || 0;
-        const newDebt = currentDebt + totalCost;
-        
-        await updateDoc(memberRef, {
-          totalDebt: newDebt,
-          updatedAt: serverTimestamp()
-        });
-        
-        console.log(`💰 Deuda actualizada: $${currentDebt} → $${newDebt}`);
-      }
-    }
-    
-    // 9. Marcar la membresía anterior como renovada
+    // 7. Marcar la membresía anterior como renovada
     await updateDoc(membershipRef, {
       status: 'renewed',
-      renewedTo: newMembershipRef.id,
-      renewedAt: serverTimestamp()
+      renewedToId: newMembershipRef.id,
+      renewedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     });
     
-    console.log(`✅ Membresía renovada con precio actual: $${currentPrice}`);
+    // 8. 🔧 NUEVO: Crear registro de pago pendiente
+    try {
+      const pendingPaymentData = {
+        membershipId: newMembershipRef.id,
+        memberId: membershipData.memberId,
+        memberName: membershipData.memberName,
+        activityName: membershipData.activityName,
+        amount: totalCost,
+        months: months,
+        status: 'pending',
+        dueDate: startDate,
+        createdAt: serverTimestamp(),
+        type: 'membership_renewal',
+        description: `Renovación de ${membershipData.activityName} por ${months} ${months === 1 ? 'mes' : 'meses'}`
+      };
+      
+      await addDoc(
+        collection(db, `gyms/${gymId}/pendingPayments`),
+        pendingPaymentData
+      );
+    } catch (error) {
+      console.log('⚠️ No se pudo crear registro de pago pendiente:', error);
+      // No fallar la renovación si no se puede crear el registro pendiente
+    }
+    
+    // 9. 🔧 IMPORTANTE: NO crear transacción en caja aquí
+    // La transacción en caja se creará cuando se registre el pago
+    
+    console.log('✅ Membresía renovada exitosamente:', {
+      newMembershipId: newMembershipRef.id,
+      cost: currentPrice,
+      totalCost: totalCost,
+      months: months,
+      paymentStatus: 'pending' // Siempre pendiente
+    });
     
     return {
       success: true,
       newMembershipId: newMembershipRef.id
     };
     
-  } catch (error) {
-    console.error('Error renovando membresía:', error);
+  } catch (error: any) {
+    console.error('❌ Error renovando membresía:', error);
     return {
       success: false,
-      error: 'Error al renovar la membresía'
+      error: error.message || 'Error al renovar la membresía'
     };
   }
 };

@@ -427,6 +427,220 @@ export const registerRefund = async (
   }
 };
 
+// AGREGAR ESTA FUNCIÓN A tu payment.service.ts existente
+// NO reemplaces el archivo, solo agrega esta función
+
+/**
+ * 📝 NUEVA FUNCIÓN: Registrar pago de membresía renovada con deuda pendiente
+ * Esta función se usa específicamente después de renovar una membresía
+ */
+export const registerRenewalPayment = async (
+  gymId: string,
+  membershipId: string,
+  paymentData: {
+    amount: number;
+    paymentMethod: 'cash' | 'transfer' | 'card' | 'other';
+    userId: string;
+    userName: string;
+    notes?: string;
+  }
+): Promise<{
+  success: boolean;
+  transactionId?: string;
+  error?: string;
+}> => {
+  console.log('💰 Registrando pago de renovación:', {
+    gymId,
+    membershipId,
+    amount: paymentData.amount
+  });
+  
+  try {
+    return await runTransaction(db, async (transaction) => {
+      // 1. Obtener la membresía de membershipAssignments
+      const membershipRef = doc(db, `gyms/${gymId}/membershipAssignments`, membershipId);
+      const membershipSnap = await transaction.get(membershipRef);
+      
+      if (!membershipSnap.exists()) {
+        throw new Error('Membresía no encontrada');
+      }
+      
+      const membership = membershipSnap.data();
+      
+      // 2. Verificar que la membresía tiene pago pendiente
+      if (membership.paymentStatus === 'paid') {
+        throw new Error('Esta membresía ya está pagada');
+      }
+      
+      // 3. Actualizar estado de pago de la membresía
+      transaction.update(membershipRef, {
+        paymentStatus: 'paid',
+        paymentDate: serverTimestamp(),
+        paymentMethod: paymentData.paymentMethod,
+        paidBy: paymentData.userId,
+        paidAmount: paymentData.amount,
+        updatedAt: serverTimestamp()
+      });
+      
+      // 4. Buscar y actualizar el pago pendiente si existe
+      const pendingPaymentsRef = collection(db, `gyms/${gymId}/pendingPayments`);
+      const pendingQuery = query(
+        pendingPaymentsRef, 
+        where('membershipId', '==', membershipId),
+        where('status', '==', 'pending')
+      );
+      const pendingSnap = await getDocs(pendingQuery);
+      
+      pendingSnap.forEach(doc => {
+        transaction.update(doc.ref, {
+          status: 'paid',
+          paidAt: serverTimestamp(),
+          paymentMethod: paymentData.paymentMethod,
+          paidBy: paymentData.userId
+        });
+      });
+      
+      // 5. Actualizar la deuda del miembro si existe
+      if (membership.memberId) {
+        const memberRef = doc(db, `gyms/${gymId}/members`, membership.memberId);
+        const memberSnap = await transaction.get(memberRef);
+        
+        if (memberSnap.exists()) {
+          const memberData = memberSnap.data();
+          const currentDebt = memberData.totalDebt || 0;
+          const newDebt = Math.max(0, currentDebt - paymentData.amount);
+          
+          transaction.update(memberRef, {
+            totalDebt: newDebt,
+            lastPaymentDate: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+      
+      // 6. Crear transacción en caja diaria
+      const today = new Date();
+      const dateStr = today.toISOString().split('T')[0];
+      const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, dateStr);
+      const dailyCashSnap = await transaction.get(dailyCashRef);
+      
+      // Crear descripción detallada
+      const description = `Pago de renovación: ${membership.activityName} - ${membership.memberName} (${membership.renewalMonths || 1} ${membership.renewalMonths === 1 ? 'mes' : 'meses'})`;
+      
+      const transactionData = {
+        type: 'income' as const,
+        category: 'membership',
+        amount: paymentData.amount,
+        description: description,
+        memberId: membership.memberId,
+        memberName: membership.memberName,
+        membershipId: membershipId,
+        date: Timestamp.now(),
+        userId: paymentData.userId,
+        userName: paymentData.userName,
+        paymentMethod: paymentData.paymentMethod,
+        status: 'completed',
+        notes: paymentData.notes || 'Pago de renovación mensual',
+        isRenewalPayment: true, // Marcar como pago de renovación
+        createdAt: serverTimestamp()
+      };
+      
+      // Actualizar o crear registro de caja diaria
+      if (dailyCashSnap.exists()) {
+        const cashData = dailyCashSnap.data();
+        transaction.update(dailyCashRef, {
+          totalIncome: (cashData.totalIncome || 0) + paymentData.amount,
+          membershipIncome: (cashData.membershipIncome || 0) + paymentData.amount,
+          updatedAt: serverTimestamp()
+        });
+      } else {
+        transaction.set(dailyCashRef, {
+          date: dateStr,
+          openingTime: Timestamp.now(),
+          openingAmount: 0,
+          totalIncome: paymentData.amount,
+          totalExpense: 0,
+          membershipIncome: paymentData.amount,
+          otherIncome: 0,
+          status: 'open',
+          openedBy: paymentData.userId,
+          notes: 'Creado automáticamente al registrar pago de renovación',
+          createdAt: serverTimestamp()
+        });
+      }
+      
+      // 7. Agregar la transacción individual
+      const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
+      const newTransactionRef = doc(transactionsRef);
+      transaction.set(newTransactionRef, transactionData);
+      
+      console.log('✅ Pago de renovación registrado exitosamente');
+      
+      return {
+        success: true,
+        transactionId: newTransactionRef.id
+      };
+    });
+    
+  } catch (error: any) {
+    console.error('❌ Error registrando pago de renovación:', error);
+    return {
+      success: false,
+      error: error.message || 'Error al registrar el pago'
+    };
+  }
+};
+
+/**
+ * 🔍 NUEVA FUNCIÓN: Obtener pagos pendientes de renovación
+ */
+export const getPendingRenewalPayments = async (
+  gymId: string,
+  memberId?: string
+): Promise<Array<{
+  id: string;
+  membershipId: string;
+  memberName: string;
+  activityName: string;
+  amount: number;
+  dueDate: string;
+  months: number;
+  status: string;
+}>> => {
+  try {
+    const pendingPaymentsRef = collection(db, `gyms/${gymId}/pendingPayments`);
+    
+    let q;
+    if (memberId) {
+      // Obtener pagos pendientes de un miembro específico
+      q = query(
+        pendingPaymentsRef,
+        where('memberId', '==', memberId),
+        where('status', '==', 'pending'),
+        where('type', '==', 'membership_renewal')
+      );
+    } else {
+      // Obtener todos los pagos pendientes de renovación
+      q = query(
+        pendingPaymentsRef,
+        where('status', '==', 'pending'),
+        where('type', '==', 'membership_renewal')
+      );
+    }
+    
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    })) as any;
+    
+  } catch (error) {
+    console.error('Error obteniendo pagos pendientes de renovación:', error);
+    return [];
+  }
+};
+
 export default {
   getPendingMemberships,
   registerMembershipPayment,
