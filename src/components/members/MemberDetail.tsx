@@ -42,6 +42,7 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
+  const [calculatedDebt, setCalculatedDebt] = useState<number>(0);
   
   // 🆕 ESTADOS PARA EL MODAL DE CANCELACIÓN MEJORADO
   const [showCancellationModal, setShowCancellationModal] = useState(false);
@@ -64,20 +65,41 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   };
   
   // Cargar membresías del socio
-  const loadMemberMemberships = async () => {
-    if (!gymData?.id || !member.id) return;
+ const loadMemberMemberships = async () => {
+  if (!gymData?.id || !member.id) return;
+  
+  setLoading(true);
+  try {
+    const membershipData = await getMemberMemberships(gymData.id, member.id);
+    setMemberships(membershipData);
     
-    setLoading(true);
-    try {
-      const membershipData = await getMemberMemberships(gymData.id, member.id);
-      setMemberships(membershipData);
-    } catch (error) {
-      console.error('Error loading memberships:', error);
-      setError('Error al cargar las membresías del socio');
-    } finally {
-      setLoading(false);
-    }
-  };
+    // 🔧 CALCULAR DEUDA DE MEMBRESÍAS PENDIENTES
+    let totalPendingDebt = 0;
+    membershipData.forEach(membership => {
+      if (membership.paymentStatus === 'pending' && 
+          membership.status !== 'cancelled' && 
+          membership.cost > 0) {
+        totalPendingDebt += membership.cost;
+      }
+    });
+    
+    setCalculatedDebt(totalPendingDebt);
+    console.log('💰 Deuda calculada de membresías pendientes:', totalPendingDebt);
+    
+  } catch (error) {
+    console.error('Error loading memberships:', error);
+    setError('Error al cargar las membresías del socio');
+  } finally {
+    setLoading(false);
+  }
+};
+
+useEffect(() => {
+  // Recargar membresías cuando se vuelve a la vista de cuenta o membresías
+  if (activeView === 'account' || activeView === 'memberships') {
+    loadMemberMemberships();
+  }
+}, [activeView]);
 
   useEffect(() => {
     loadMemberMemberships();
@@ -108,50 +130,54 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   };
 
   // 🆕 FUNCIÓN: Ejecutar la cancelación con gestión de deuda
-  const performCancellation = async (
-    membership: MembershipAssignment, 
-    debtAction: 'keep' | 'cancel', 
-    reason: string
-  ) => {
-    if (!gymData?.id || !membership.id) return;
-    
-    try {
-      setCancelling(true);
-      setError('');
+    const performCancellation = async (
+      membership: MembershipAssignment, 
+      debtAction: 'keep' | 'cancel', 
+      reason: string
+    ) => {
+      if (!gymData?.id || !membership.id) return;
       
-      console.log('🚀 MEMBER DETAIL: Ejecutando cancelación:', {
-        membershipId: membership.id,
-        debtAction,
-        reason,
-        paymentStatus: membership.paymentStatus,
-        cost: membership.cost
-      });
-      
-      await confirmMembershipCancellation(
-        gymData.id,
-        member.id,
-        membership.id,
-        debtAction,
-        reason
-      );
-      
-      setSuccess(`Membresía ${membership.activityName} cancelada exitosamente`);
-      
-      // Recargar datos
-      await loadMemberMemberships();
-      if (onRefreshMember) {
-        onRefreshMember();
+      try {
+        setCancelling(true);
+        setError('');
+        
+        console.log('🚀 MEMBER DETAIL: Ejecutando cancelación:', {
+          membershipId: membership.id,
+          debtAction,
+          reason,
+          paymentStatus: membership.paymentStatus,
+          cost: membership.cost
+        });
+        
+        await confirmMembershipCancellation(
+          gymData.id,
+          member.id,
+          membership.id,
+          debtAction,
+          reason
+        );
+        
+        setSuccess(`Membresía ${membership.activityName} cancelada exitosamente`);
+        
+        // 🔧 RECARGAR DATOS INMEDIATAMENTE
+        await loadMemberMemberships();
+        
+        // Refrescar el componente padre si es necesario
+        if (onRefreshMember) {
+          onRefreshMember();
+        }
+
+        
+        
+      } catch (err: any) {
+        console.error('❌ Error cancelando membresía:', err);
+        setError(err.message || 'Error al cancelar la membresía');
+      } finally {
+        setCancelling(false);
+        setShowCancellationModal(false);
+        setMembershipToCancel(null);
       }
-      
-    } catch (err: any) {
-      console.error('❌ Error cancelando membresía:', err);
-      setError(err.message || 'Error al cancelar la membresía');
-    } finally {
-      setCancelling(false);
-      setShowCancellationModal(false);
-      setMembershipToCancel(null);
-    }
-  };
+    };
 
   // 🔧 FUNCIÓN LEGACY PARA COMPATIBILIDAD CON MODAL ANTIGUO
   const handleDeleteMembership = async (withRefund: boolean) => {
@@ -468,27 +494,38 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
     switch (activeView) {
       case 'account':
         return (
-          <MemberAccountStatement
-            memberId={member.id}
-            memberName={`${member.firstName} ${member.lastName}`}
-            totalDebt={member.totalDebt}
-            onPaymentClick={() => setActiveView('payment')}
-          />
+              <MemberAccountStatement
+                memberId={member.id}
+                memberName={`${member.firstName} ${member.lastName}`}
+                totalDebt={calculatedDebt} // Usar la deuda calculada actualizada
+                onPaymentClick={() => setActiveView('payment')}
+                 onRefresh={loadMemberMemberships} // 🆕 Agregar función de refresh
+              />
         );
-      case 'payment':
-        return (
-          <MemberPayment 
-            member={member}
-            onSuccess={() => {
-              setSuccess('Pago registrado correctamente');
-              setActiveView('account');
-              if (onRefreshMember) {
-                onRefreshMember();
-              }
-            }}
-            onCancel={() => setActiveView('account')}
-          />
-        );
+        case 'payment':
+          return (
+            <MemberPayment 
+              member={member}
+              onSuccess={async () => {
+                setSuccess('Pago registrado correctamente');
+                
+                // 🔧 RECARGAR MEMBRESÍAS DESPUÉS DEL PAGO
+                await loadMemberMemberships();
+                
+                // Cambiar a la vista de cuenta después de un pequeño delay
+                setTimeout(() => {
+                  setActiveView('account');
+                  setSuccess(''); // Limpiar mensaje
+                }, 1500);
+                
+                // Si hay función de refresh del componente padre, llamarla
+                if (onRefreshMember) {
+                  onRefreshMember();
+                }
+              }}
+              onCancel={() => setActiveView('account')}
+            />
+          );
       case 'attendance':
         return <MemberAttendanceHistory member={member} />;
       case 'routines':
@@ -551,12 +588,12 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
                     <Clock className="h-8 w-8 text-yellow-600" />
                   </div>
                   <div className="ml-4">
-                    <p className="text-sm font-medium text-yellow-600">Pendientes</p>
+                    <p className="text-sm font-medium text-yellow-600">Pendientes de Pago</p>
                     <p className="text-2xl font-semibold text-yellow-900">
-                      {memberships.filter(m => m.paymentStatus === 'pending').length}
+                      {memberships.filter(m => m.paymentStatus === 'pending' && m.status !== 'cancelled').length}
                     </p>
                     <p className="text-xs text-yellow-700">
-                      ${memberships.filter(m => m.paymentStatus === 'pending').reduce((sum, m) => sum + (m.cost || 0), 0).toLocaleString('es-AR')}
+                      Deuda: ${calculatedDebt.toLocaleString('es-AR')}
                     </p>
                   </div>
                 </div>
@@ -657,6 +694,41 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
             <div>
               <h3 className="text-lg font-semibold mb-4">Información Personal</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-6">
+                {/* ⭐ AGREGAR NÚMERO Y DNI */}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">Número de Socio</h4>
+                  <p className="text-lg font-bold text-blue-600">
+                    #{member.memberNumber || 'Sin asignar'}
+                  </p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">DNI</h4>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {member.dni || 'Sin especificar'}
+                  </p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">Email</h4>
+                  <p className="text-gray-900">{member.email || 'No disponible'}</p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">Teléfono</h4>
+                  <p className="text-gray-900">{member.phone || 'No disponible'}</p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">Dirección</h4>
+                  <p className="text-gray-900">{member.address || 'No disponible'}</p>
+                </div>
+                
+                <div>
+                  <h4 className="text-sm font-medium text-gray-500">Fecha de Nacimiento</h4>
+                  <p className="text-gray-900">{formatDisplayDateFixed(member.birthDate)}</p>
+                </div>
+                
                 <div>
                   <h4 className="text-sm font-medium text-gray-500">Estado</h4>
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -674,9 +746,14 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-gray-50 p-4 rounded-lg">
                   <h4 className="text-sm font-medium text-gray-500 mb-1">Deuda Total</h4>
-                  <p className={`text-2xl font-bold ${member.totalDebt > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                    {formatCurrency(member.totalDebt)}
+                  <p className={`text-2xl font-bold ${calculatedDebt > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {formatCurrency(calculatedDebt)}
                   </p>
+                  {calculatedDebt > 0 && (
+                    <p className="text-xs text-gray-600 mt-1">
+                      {memberships.filter(m => m.paymentStatus === 'pending' && m.status !== 'cancelled').length} membresía(s) pendiente(s)
+                    </p>
+                  )}
                 </div>
                 
                 <div className="bg-gray-50 p-4 rounded-lg">
@@ -772,9 +849,15 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
           <div className="flex-1">
             <div className="flex flex-col md:flex-row md:items-center justify-between">
               <div>
+                {/* ⭐ MOSTRAR NÚMERO DE SOCIO */}
+                <div className="text-sm text-gray-500 mb-1">
+                  Socio #{member.memberNumber || 'Sin número'}
+                </div>
+                
                 <h1 className="text-2xl font-bold">
                   {member.firstName} {member.lastName}
                 </h1>
+                
                 <div className="flex items-center mt-1">
                   <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                     member.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
@@ -783,9 +866,9 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
                   </span>
                   
                   <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    member.totalDebt > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                    calculatedDebt > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
                   }`}>
-                    {member.totalDebt > 0 ? 'Con deuda' : 'Sin deuda'}
+                    {calculatedDebt > 0 ? `Con deuda: ${formatCurrency(calculatedDebt)}` : 'Sin deuda'}
                   </span>
                 </div>
               </div>
@@ -809,6 +892,13 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
             </div>
             
             <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-6 text-sm">
+              {/* ⭐ MOSTRAR DNI */}
+              <div className="flex items-center">
+                <User size={16} className="text-gray-400 mr-2" />
+                <span className="text-gray-500 mr-2">DNI:</span>
+                <span className="font-medium">{member.dni || 'Sin especificar'}</span>
+              </div>
+              
               <div className="flex items-center">
                 <Mail size={16} className="text-gray-400 mr-2" />
                 <span>{member.email || 'No disponible'}</span>

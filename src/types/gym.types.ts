@@ -355,19 +355,30 @@ export interface Member {
   lastName: string;
   email: string;
   phone?: string;
+    photo?: string;
   status: 'active' | 'inactive' | 'suspended';
-  createdAt: any;
-  updatedAt?: any;
+
+
   dni?: string;
+  memberNumber?: string;
+
   address?: string;
   birthDate?: string;
   emergencyContact?: {
     name: string;
     phone: string;
   };
-  memberNumber?: string;
+// Financiero
+   hasDebt?: boolean;
+  activeMemberships?: number;
   joinDate?: string;
   totalDebt?: number; // Agregar este campo si no existe
+
+  
+  
+    createdAt: any;
+  updatedAt?: any;
+  
 }
 
 // ===================== TIPOS EXISTENTES (MANTENIDOS PARA COMPATIBILIDAD) =====================

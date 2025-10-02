@@ -28,6 +28,7 @@ interface MemberAccountStatementProps {
   memberName: string;
   totalDebt: number;
   onPaymentClick: () => void;
+  onRefresh?: () => void | Promise<void>; // 🆕 AGREGAR ESTA LÍNEA (opcional)
 }
 
 const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({

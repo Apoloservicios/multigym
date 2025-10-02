@@ -187,21 +187,26 @@ const Members: React.FC = () => {
     switch (view) {
       case 'form':
         return (
-          <MemberForm 
-            initialData={selectedMember ? {
-              firstName: selectedMember.firstName,
-              lastName: selectedMember.lastName,
-              email: selectedMember.email,
-              phone: selectedMember.phone,
-              address: selectedMember.address,
-              birthDate: selectedMember.birthDate ? firebaseDateToHtmlDate(selectedMember.birthDate) : '', // ✅ CORREGIDO
-              photo: null,
-              status: selectedMember.status
-            } : undefined}
-            onSubmit={handleSaveMember}
-            onCancel={() => setView(selectedMember ? 'detail' : 'list')}
-            title={selectedMember ? 'Editar Socio' : 'Nuevo Socio'}
-          />
+            <MemberForm 
+              initialData={selectedMember ? {
+                firstName: selectedMember.firstName,
+                lastName: selectedMember.lastName,
+                email: selectedMember.email,
+                phone: selectedMember.phone,
+                address: selectedMember.address,
+                birthDate: selectedMember.birthDate ? firebaseDateToHtmlDate(selectedMember.birthDate) : '',
+                photo: null,
+                status: selectedMember.status,
+                
+                // ⭐ AGREGAR DNI Y MEMBERNUMBER
+                dni: selectedMember.dni || '',
+                memberNumber: selectedMember.memberNumber || 0
+                
+              } : undefined}
+              onSubmit={handleSaveMember}
+              onCancel={() => setView(selectedMember ? 'detail' : 'list')}
+              title={selectedMember ? 'Editar Socio' : 'Nuevo Socio'}
+            />
         );
       case 'detail':
         if (!selectedMember) return null;

@@ -687,7 +687,9 @@ const MemberRoutinesTab: React.FC<MemberRoutinesTabProps> = ({
               email: '',
               phone: '',
               status: 'active',
-              totalDebt: 0
+              totalDebt: 0,
+              hasDebt: false,              // ⭐ AGREGAR
+              activeMemberships: 0         // ⭐ AGREGAR
             }}
             gymData={gymData}
           />

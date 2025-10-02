@@ -8,6 +8,9 @@ import useAuth from '../../hooks/useAuth';
 import useFirestore from '../../hooks/useFirestore';
 import { debounce } from 'lodash';
 
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+
 interface MemberListProps {
   onNewMember: () => void;
   onViewMember: (member: Member) => void;
@@ -55,33 +58,103 @@ const MemberList: React.FC<MemberListProps> = ({
   const endIndex = startIndex + itemsPerPage;
 
   // Función debounced para búsqueda
-    const debouncedSearch = useMemo(
-      () => debounce(async (term: string) => {
-        if (!term.trim()) {
+// Función mejorada para búsqueda - CORREGIDA
+const debouncedSearch = useMemo(
+  () => debounce(async (term: string) => {
+    if (!term.trim() || !gymData?.id) {
+      return;
+    }
+    
+    setSearching(true);
+    setError('');
+    
+    try {
+      const trimmedTerm = term.trim();
+      
+      // 1️⃣ BUSCAR POR NÚMERO DE SOCIO (búsqueda exacta)
+      if (!isNaN(Number(trimmedTerm))) {
+        const memberNumber = parseInt(trimmedTerm);
+        
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const q = query(
+          membersRef,
+          where('memberNumber', '==', memberNumber)
+        );
+        
+        const snapshot = await getDocs(q);
+        
+        if (!snapshot.empty) {
+          const results = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Member));
+          
+          setAllMembers(results);
+          setSearching(false);
           return;
         }
+      }
+      
+      // 2️⃣ BUSCAR POR DNI (búsqueda exacta)
+      if (trimmedTerm.length >= 6 && !isNaN(Number(trimmedTerm))) {
+        const membersRef = collection(db, `gyms/${gymData.id}/members`);
+        const q = query(
+          membersRef,
+          where('dni', '==', trimmedTerm)
+        );
         
-        setSearching(true);
-        setError('');
+        const snapshot = await getDocs(q);
         
-        try {
-          const searchResults = await membersFirestore.search(
-            term.trim(), 
-            ['firstName', 'lastName', 'email', 'phone'],
-            500 // ← CAMBIO: de 100 a 500
-          );
+        if (!snapshot.empty) {
+          const results = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          } as Member));
           
-          setAllMembers(searchResults);
-        } catch (error) {
-          console.error('Error en búsqueda:', error);
-          setError('Error al buscar miembros. Inténtalo de nuevo.');
-          setAllMembers([]);
-        } finally {
+          setAllMembers(results);
           setSearching(false);
+          return;
         }
-      }, 300),
-      [membersFirestore]
-    );
+      }
+      
+      // 3️⃣ BÚSQUEDA POR NOMBRE/APELLIDO/EMAIL/TELÉFONO
+      // Para esto necesitamos buscar en todos los documentos y filtrar localmente
+      const membersRef = collection(db, `gyms/${gymData.id}/members`);
+      const snapshot = await getDocs(membersRef);
+      
+      const searchTermLower = trimmedTerm.toLowerCase();
+      
+      const results = snapshot.docs
+        .map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        } as Member))
+        .filter(member => {
+          const firstName = (member.firstName || '').toLowerCase();
+          const lastName = (member.lastName || '').toLowerCase();
+          const email = (member.email || '').toLowerCase();
+          const phone = (member.phone || '').toLowerCase();
+          
+          return (
+            firstName.includes(searchTermLower) ||
+            lastName.includes(searchTermLower) ||
+            email.includes(searchTermLower) ||
+            phone.includes(searchTermLower)
+          );
+        });
+      
+      setAllMembers(results);
+      
+    } catch (error) {
+      console.error('Error en búsqueda:', error);
+      setError('Error al buscar miembros. Inténtalo de nuevo.');
+      setAllMembers([]);
+    } finally {
+      setSearching(false);
+    }
+  }, 500), // Aumentar el delay a 500ms para evitar muchas búsquedas
+  [gymData?.id]
+);
 
   // Cargar todos los miembros
 const loadMembers = useCallback(async () => {
@@ -94,8 +167,19 @@ const loadMembers = useCallback(async () => {
   setError('');
   
   try {
-    const allMembersData = await membersFirestore.getAll(2000); // ← CAMBIO: de 1000 a 2000
+    const membersRef = collection(db, `gyms/${gymData.id}/members`);
+    
+    // Obtener TODOS los miembros directamente
+    const snapshot = await getDocs(membersRef);
+    
+    const allMembersData = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    } as Member));
+    
+    console.log(`✅ Cargados ${allMembersData.length} socios`);
     setAllMembers(allMembersData);
+    
   } catch (error) {
     console.error('Error cargando miembros:', error);
     setError('Error al cargar los miembros. Inténtalo de nuevo.');
@@ -103,7 +187,7 @@ const loadMembers = useCallback(async () => {
   } finally {
     setLoading(false);
   }
-}, [gymData?.id, membersFirestore]);
+}, [gymData?.id]);
 
   // Aplicar filtros y ordenamiento
   useEffect(() => {
@@ -413,7 +497,7 @@ const loadMembers = useCallback(async () => {
             <div className="relative flex-1">
               <input
                 type="text"
-                placeholder="Buscar socio por nombre, apellido, email o teléfono..."
+                placeholder="Buscar por #número, DNI, nombre, apellido, email o teléfono..."
                 className="w-full pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={searchTerm}
                 onChange={(e: any) => setSearchTerm(e.target.value)}
@@ -566,6 +650,14 @@ const loadMembers = useCallback(async () => {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
+                  {/* ⭐ NUEVA COLUMNA: Número */}
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    #
+                  </th>
+                  {/* ⭐ NUEVA COLUMNA: DNI */}
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    DNI
+                  </th>
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Foto
                   </th>
@@ -699,17 +791,28 @@ const MemberRow = React.memo<{
   };
 
   return (
-     <tr 
-        className={`transition-all duration-150 cursor-pointer select-none ${
-          isHovered 
-            ? 'bg-blue-50 shadow-md transform scale-[1.01]' 
-            : 'hover:bg-gray-50'
-        }`}
-        onDoubleClick={handleDoubleClick}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        title="Doble clic para ver detalles"
-      >
+    <tr 
+      className={`transition-all duration-150 cursor-pointer select-none ${
+        isHovered 
+          ? 'bg-blue-50 shadow-md transform scale-[1.01]' 
+          : 'hover:bg-gray-50'
+      }`}
+      onDoubleClick={handleDoubleClick}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      title="Doble clic para ver detalles"
+    >
+      {/* ⭐ NUEVA COLUMNA: Número de Socio */}
+      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-600">
+        #{member.memberNumber || 'N/A'}
+      </td>
+      
+      {/* ⭐ NUEVA COLUMNA: DNI */}
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+        {member.dni || '-'}
+      </td>
+      
+      {/* Foto */}
       <td className="px-3 py-4 whitespace-nowrap">
         {member.photo && !imageError ? (
           <img 
@@ -724,15 +827,23 @@ const MemberRow = React.memo<{
           </div>
         )}
       </td>
+      
+      {/* Apellido */}
       <td className="px-4 py-4 whitespace-nowrap font-medium text-gray-900">
         {member.lastName}
       </td>
+      
+      {/* Nombre */}
       <td className="px-4 py-4 whitespace-nowrap text-gray-900">
         {member.firstName}
       </td>
+      
+      {/* Teléfono */}
       <td className="px-4 py-4 whitespace-nowrap text-gray-600">
         {member.phone || 'N/A'}
       </td>
+      
+      {/* Estado */}
       <td className="px-4 py-4 whitespace-nowrap">
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
           member.status === 'active' 
@@ -742,9 +853,13 @@ const MemberRow = React.memo<{
           {member.status === 'active' ? 'Activo' : 'Inactivo'}
         </span>
       </td>
+      
+      {/* Última Asistencia */}
       <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
         {formatDate(member.lastAttendance)}
       </td>
+      
+      {/* Deuda Total */}
       <td className="px-4 py-4 whitespace-nowrap">
         <span className={`font-medium transition-colors ${
           (member.totalDebt || 0) > 0 ? 'text-red-600' : 'text-green-600'
@@ -752,13 +867,15 @@ const MemberRow = React.memo<{
           {formatCurrency(member.totalDebt || 0)}
         </span>
       </td>
+      
+      {/* Acciones */}
       <td className="px-4 py-4 whitespace-nowrap">
         <div className="flex items-center space-x-2">
           <button 
             className="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-50 transition-colors" 
             title="Ver detalles"
             onClick={(e) => {
-              e.stopPropagation(); // Evitar que se propague al tr
+              e.stopPropagation();
               onView(member);
             }}
           >

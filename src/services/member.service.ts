@@ -59,7 +59,10 @@ function safelyConvertToDate(dateValue: any): Date | null {
 // Agregar un nuevo socio
 export const addMember = async (gymId: string, memberData: MemberFormData): Promise<Member> => {
   try {
-    // Si hay una foto, subirla a Cloudinary
+    // 1️⃣ Obtener el siguiente número de socio
+    const memberNumber = await getNextMemberNumber(gymId);
+    
+    // 2️⃣ Si hay una foto, subirla a Cloudinary
     let photoUrl = null;
     if (memberData.photo instanceof File) {
       try {
@@ -83,10 +86,24 @@ export const addMember = async (gymId: string, memberData: MemberFormData): Prom
       birthDate: birthDateToSave,
       photo: photoUrl,
       status: memberData.status,
+      
+      // ⭐ AGREGAR CAMPOS NUEVOS
+      dni: memberData.dni || '',
+      memberNumber: memberNumber,
+      
       totalDebt: 0,
+      hasDebt: false,
+      activeMemberships: 0,
+      
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
+
+    console.log('✅ Creando socio con:', {
+      memberNumber,
+      dni: memberData.dni || 'sin DNI',
+      name: `${memberData.firstName} ${memberData.lastName}`
+    });
 
     const membersRef = collection(db, `gyms/${gymId}/members`);
     const docRef = await addDoc(membersRef, memberToAdd);
@@ -101,7 +118,15 @@ export const addMember = async (gymId: string, memberData: MemberFormData): Prom
       birthDate: birthDateToSave,
       photo: photoUrl,
       status: memberData.status,
+      
+      // ⭐ INCLUIR EN EL RETORNO
+      dni: memberData.dni || '',
+      memberNumber: memberNumber,
+      
       totalDebt: 0,
+      hasDebt: false,
+      activeMemberships: 0,
+      
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -113,41 +138,75 @@ export const addMember = async (gymId: string, memberData: MemberFormData): Prom
   }
 };
 
-// Asignar membresía a un socio
+// 🔧 FIX #1: Asignar membresía y actualizar deuda si está pendiente
 export const assignMembership = async (
   gymId: string, 
   memberId: string, 
   membershipData: Omit<MembershipAssignment, 'id'>
 ): Promise<MembershipAssignment> => {
   try {
-    console.log('🔍 ASSIGN MEMBERSHIP - Datos recibidos:', membershipData);
+    console.log('🔎 ASSIGN MEMBERSHIP - Datos recibidos:', {
+      ...membershipData,
+      memberId,
+      gymId
+    });
     
+    // Guardar la membresía en la subcollection
     const membershipsRef = collection(db, `gyms/${gymId}/members/${memberId}/memberships`);
     
     const membershipWithDefaults = {
       ...membershipData,
       autoRenewal: membershipData.autoRenewal !== undefined ? membershipData.autoRenewal : false,
       paymentFrequency: membershipData.paymentFrequency || 'single',
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
     };
     
-    console.log('🔍 ASSIGN MEMBERSHIP - Datos finales a guardar:', membershipWithDefaults);
+    console.log('📝 ASSIGN MEMBERSHIP - Datos a guardar:', {
+      paymentStatus: membershipWithDefaults.paymentStatus,
+      cost: membershipWithDefaults.cost,
+      activityName: membershipWithDefaults.activityName
+    });
     
     const docRef = await addDoc(membershipsRef, membershipWithDefaults);
     
-    console.log('✅ ASSIGN MEMBERSHIP - Guardado exitoso con ID:', docRef.id);
+    console.log('✅ ASSIGN MEMBERSHIP - Membresía guardada con ID:', docRef.id);
     
-    if (membershipData.cost > 0 && membershipData.paymentStatus === 'pending') {
+    // 🔧 ACTUALIZACIÓN CRÍTICA: Actualizar deuda del socio SIEMPRE que esté pendiente
+    if (membershipData.paymentStatus === 'pending' && membershipData.cost && membershipData.cost > 0) {
+      console.log('💰 ACTUALIZANDO DEUDA - Membresía pendiente detectada');
+      
       const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
       const memberSnap = await getDoc(memberRef);
       
       if (memberSnap.exists()) {
-        const currentDebt = memberSnap.data().totalDebt || 0;
+        const memberCurrentData = memberSnap.data();
+        const currentDebt = memberCurrentData.totalDebt || 0;
+        const newDebt = currentDebt + membershipData.cost;
+        
+        // Actualizar el documento del socio
         await updateDoc(memberRef, {
-          totalDebt: currentDebt + membershipData.cost,
+          totalDebt: newDebt,
           updatedAt: serverTimestamp()
         });
+        
+        console.log('✅ DEUDA ACTUALIZADA EXITOSAMENTE:', {
+          memberId,
+          memberName: `${memberCurrentData.firstName} ${memberCurrentData.lastName}`,
+          previousDebt: currentDebt,
+          addedDebt: membershipData.cost,
+          newTotalDebt: newDebt,
+          paymentStatus: membershipData.paymentStatus
+        });
+      } else {
+        console.error('❌ ERROR: No se encontró el socio para actualizar deuda');
       }
+    } else {
+      console.log('ℹ️ No se actualiza deuda:', {
+        paymentStatus: membershipData.paymentStatus,
+        cost: membershipData.cost,
+        reason: membershipData.paymentStatus !== 'pending' ? 'No está pendiente' : 'Sin costo'
+      });
     }
     
     return { 
@@ -155,7 +214,7 @@ export const assignMembership = async (
       ...membershipWithDefaults 
     };
   } catch (error) {
-    console.error('Error assigning membership:', error);
+    console.error('❌ Error asignando membresía:', error);
     throw error;
   }
 };
@@ -253,7 +312,7 @@ export const deleteMembershipEnhanced = async (
   }
 };
 
-// 🆕 FUNCIÓN CORREGIDA: Confirmar cancelación con reintegro adecuado
+// 🔧 FIX #2: FUNCIÓN CORREGIDA - Solo procesar reintegro si debtAction === 'cancel'
 export const confirmMembershipCancellation = async (
   gymId: string,
   memberId: string,
@@ -295,31 +354,40 @@ export const confirmMembershipCancellation = async (
     // Manejar deuda pendiente
     const hasDebt = membershipData.paymentStatus === 'pending' && membershipData.cost > 0;
     
-    if (hasDebt && debtAction === 'cancel') {
-      const currentDebt = memberData.totalDebt || 0;
-      await updateDoc(memberRef, {
-        totalDebt: Math.max(0, currentDebt - membershipData.cost),
-        updatedAt: serverTimestamp()
-      });
-      console.log(`💳 Deuda anulada: $${membershipData.cost}`);
+    if (hasDebt) {
+      if (debtAction === 'cancel') {
+        // Anular la deuda
+        const currentDebt = memberData.totalDebt || 0;
+        await updateDoc(memberRef, {
+          totalDebt: Math.max(0, currentDebt - membershipData.cost),
+          updatedAt: serverTimestamp()
+        });
+        console.log(`💳 Deuda anulada: $${membershipData.cost}`);
+      } else {
+        // Mantener la deuda (no hacer nada)
+        console.log(`📌 Manteniendo deuda pendiente: $${membershipData.cost}`);
+      }
     }
 
-    // 🆕 PROCESAR REINTEGRO PARA MEMBRESÍAS PAGADAS
-    if (membershipData.paymentStatus === 'paid') {
+    // 🔧 FIX #2: SOLO PROCESAR REINTEGRO SI:
+    // 1. La membresía está pagada
+    // 2. El usuario eligió hacer reintegro (debtAction === 'cancel')
+    if (membershipData.paymentStatus === 'paid' && debtAction === 'cancel') {
       console.log('🔄 PROCESANDO REINTEGRO:', {
         memberName: `${memberData.firstName} ${memberData.lastName}`,
         amount: membershipData.cost,
-        activity: membershipData.activityName
+        activity: membershipData.activityName,
+        debtAction: debtAction
       });
 
-      // 🔧 CREAR TRANSACCIÓN DE REINTEGRO CORREGIDA
+      // 🔧 CREAR TRANSACCIÓN DE REINTEGRO
       const today = new Date().toISOString().split('T')[0];
       
       const refundTransactionData = {
         gymId: gymId,
         type: 'refund',
         category: 'refund',
-        amount: -Math.abs(membershipData.cost), // 🆕 MONTO NEGATIVO PARA GASTOS
+        amount: -Math.abs(membershipData.cost), // MONTO NEGATIVO PARA GASTOS
         description: `Reintegro por cancelación de membresía: ${membershipData.activityName} para ${memberData.firstName} ${memberData.lastName}`,
         paymentMethod: 'cash',
         date: serverTimestamp(),
@@ -337,7 +405,7 @@ export const confirmMembershipCancellation = async (
       console.log('💾 GUARDANDO TRANSACCIÓN DE REINTEGRO:', {
         type: refundTransactionData.type,
         category: refundTransactionData.category,
-        amount: refundTransactionData.amount, // Debe ser negativo
+        amount: refundTransactionData.amount,
         gymId: refundTransactionData.gymId
       });
       
@@ -349,7 +417,7 @@ export const confirmMembershipCancellation = async (
         path: `gyms/${gymId}/transactions/${transactionRef.id}`
       });
       
-      // 🔧 ACTUALIZAR CAJA DIARIA CORRECTAMENTE
+      // ACTUALIZAR CAJA DIARIA
       const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, today);
       const dailyCashSnap = await getDoc(dailyCashRef);
       
@@ -368,19 +436,18 @@ export const confirmMembershipCancellation = async (
         console.log('💰 Caja diaria actualizada con reintegro');
       } else {
         // Crear nueva entrada de caja diaria
-      // 🔧 CREAR NUEVA ENTRADA DE CAJA DIARIA CON CAMPOS VÁLIDOS
         const newDailyCash: Partial<DailyCash> = {
           gymId: gymId,
           date: today,
-          openingAmount: 0,    // ✅ Campo válido en DailyCash
+          openingAmount: 0,
           totalIncome: 0,
-          totalExpense: membershipData.cost,    // ✅ Campo válido (singular)
-          totalExpenses: membershipData.cost,   // ✅ Campo válido (plural)
+          totalExpense: membershipData.cost,
+          totalExpenses: membershipData.cost,
           openedBy: 'system',
           openedAt: serverTimestamp(),
-          openingTime: serverTimestamp(),  // ✅ Campo válido en DailyCash
+          openingTime: serverTimestamp(),
           status: 'open',
-          lastUpdated: serverTimestamp()   // ✅ Campo válido en DailyCash
+          lastUpdated: serverTimestamp()
         };
         
         await setDoc(dailyCashRef, newDailyCash);
@@ -395,6 +462,16 @@ export const confirmMembershipCancellation = async (
       });
 
       console.log(`💰 Reintegro procesado: $${membershipData.cost}`);
+      
+    } else if (membershipData.paymentStatus === 'paid' && debtAction === 'keep') {
+      // 🔧 FIX #2: SI ESTÁ PAGADA PERO SE ELIGE NO HACER REINTEGRO
+      console.log('✅ Cancelación SIN reintegro (membresía pagada):', {
+        memberName: `${memberData.firstName} ${memberData.lastName}`,
+        activity: membershipData.activityName,
+        debtAction: debtAction,
+        reason: 'Usuario eligió no procesar reintegro'
+      });
+      // No procesar reintegro, solo continuar con la cancelación
     }
 
     // Marcar membresía como cancelada
@@ -477,6 +554,10 @@ export const updateMember = async (gymId: string, memberId: string, memberData: 
   try {
     const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
     
+    // 1️⃣ Obtener datos actuales para preservar memberNumber
+    const currentMemberDoc = await getDoc(memberRef);
+    const currentData = currentMemberDoc.data();
+    
     let photoUrl = undefined;
     if (memberData.photo instanceof File) {
       try {
@@ -499,12 +580,25 @@ export const updateMember = async (gymId: string, memberId: string, memberData: 
       address: memberData.address || "",
       birthDate: birthDateToSave,
       status: memberData.status,
+      
+      // ⭐ AGREGAR DNI
+      dni: memberData.dni || '',
+      
+      // ⭐ PRESERVAR memberNumber (no debe cambiar)
+      memberNumber: currentData?.memberNumber || 0,
+      
       updatedAt: serverTimestamp()
     };
     
     if (photoUrl !== undefined) {
       updateData.photo = photoUrl;
     }
+    
+    console.log('✅ Actualizando socio con DNI:', {
+      memberId,
+      dni: memberData.dni || 'sin DNI',
+      memberNumber: currentData?.memberNumber
+    });
     
     await updateDoc(memberRef, updateData);
     
@@ -662,12 +756,73 @@ export const getExpiredMemberships = async (
   }
 };
 
+// Función para obtener el siguiente número de socio
+export const getNextMemberNumber = async (gymId: string): Promise<number> => {
+  try {
+    const counterRef = doc(db, `gyms/${gymId}/settings/counters`);
+    const counterDoc = await getDoc(counterRef);
+    
+    let nextNumber = 1;
+    
+    if (counterDoc.exists()) {
+      nextNumber = (counterDoc.data().lastMemberNumber || 0) + 1;
+    }
+    
+    // Actualizar el contador
+    await setDoc(counterRef, {
+      lastMemberNumber: nextNumber,
+      updatedAt: Timestamp.now()
+    }, { merge: true });
+    
+    return nextNumber;
+    
+  } catch (error) {
+    console.error('Error obteniendo número de socio:', error);
+    throw error;
+  }
+};
+
+// Actualizar la función createMember
+export const createMember = async (gymId: string, memberData: Omit<Member, 'id'>): Promise<string> => {
+  try {
+    // ⭐ Obtener el siguiente número de socio
+    const memberNumber = await getNextMemberNumber(gymId);
+    
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    
+    const newMember = {
+      ...memberData,
+      memberNumber: memberNumber,  // ⭐ NUEVO
+      dni: memberData.dni || '',   // ⭐ NUEVO
+      totalDebt: 0,
+      hasDebt: false,
+      activeMemberships: 0,
+      status: memberData.status || 'active',
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
+    };
+    
+    const docRef = await addDoc(membersRef, newMember);
+    
+    return docRef.id;
+    
+  } catch (error) {
+    console.error('Error creating member:', error);
+    throw error;
+  }
+};
+
+// 🆕 FUNCIÓN ALIAS: cancelMembershipWithDebtManagement 
+// Para mantener compatibilidad con otros componentes que llamen a esta función
+export const cancelMembershipWithDebtManagement = confirmMembershipCancellation;
+
 export default {
   addMember,
   assignMembership,
   deleteMembership,
   deleteMembershipEnhanced,
   confirmMembershipCancellation,
+  cancelMembershipWithDebtManagement, // 🆕 Agregar alias para compatibilidad
   generateMemberQR,
   getMemberMemberships,
   updateMember,

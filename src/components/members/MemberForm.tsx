@@ -58,7 +58,9 @@ const convertInitialData = (data: any): Partial<MemberFormData> => {
       address: '',
       birthDate: '',
       photo: null,
-      status: 'active'
+      status: 'active',
+      dni: ''       // ⭐ NUEVO
+
     };
 
     if (initialData) {
@@ -151,65 +153,74 @@ const convertInitialData = (data: any): Partial<MemberFormData> => {
     }
   };
 
-  // Validación
-  const validateForm = (): boolean => {
-    const newErrors: { [key: string]: string } = {};
 
-    // Nombre requerido
-    if (!formData.firstName.trim()) {
-      newErrors.firstName = 'El nombre es requerido';
-    }
-
-    // Apellido requerido
-    if (!formData.lastName.trim()) {
-      newErrors.lastName = 'El apellido es requerido';
-    }
-
-    // Email requerido y formato válido
-    if (!formData.email.trim()) {
-      newErrors.email = 'El email es requerido';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  // Limpiar errores previos
+  setErrors({});
+  
+  // Objeto para acumular errores
+  const newErrors: { [key: string]: string } = {};
+  
+  // ✅ VALIDACIONES OBLIGATORIAS
+  if (!formData.firstName.trim()) {
+    newErrors.firstName = 'El nombre es obligatorio';
+  }
+  
+  if (!formData.lastName.trim()) {
+    newErrors.lastName = 'El apellido es obligatorio';
+  }
+  
+  if (!formData.phone.trim()) {
+    newErrors.phone = 'El teléfono es obligatorio';
+  }
+  
+  // ✅ EMAIL OPCIONAL - Solo validar formato si hay algo
+  if (formData.email && formData.email.trim()) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
       newErrors.email = 'El formato del email no es válido';
     }
-
-    // Teléfono requerido
-    if (!formData.phone.trim()) {
-      newErrors.phone = 'El teléfono es requerido';
+  }
+  
+  // ✅ DNI OPCIONAL - Solo validar si hay algo
+  if (formData.dni && formData.dni.trim()) {
+    if (!/^\d+$/.test(formData.dni)) {
+      newErrors.dni = 'El DNI debe contener solo números';
     }
-
-    // Fecha de nacimiento - validar si se proporciona
-    if (formData.birthDate) {
-      const birthDate = htmlDateToLocalDate(formData.birthDate);
-      const today = new Date();
-      
-      if (birthDate > today) {
-        newErrors.birthDate = 'La fecha de nacimiento no puede ser futura';
-      }
-      
-      const age = calculateAge(birthDate);
-      if (age !== null && age > 120) {
-        newErrors.birthDate = 'La fecha de nacimiento no es válida';
-      }
+  }
+  
+  // Validar fecha de nacimiento si existe
+  if (formData.birthDate) {
+    const birthDate = htmlDateToLocalDate(formData.birthDate);
+    const today = new Date();
+    
+    if (birthDate > today) {
+      newErrors.birthDate = 'La fecha de nacimiento no puede ser futura';
     }
-
+    
+    const age = calculateAge(birthDate);
+    if (age !== null && age > 120) {
+      newErrors.birthDate = 'La fecha de nacimiento no es válida';
+    }
+  }
+  
+  // Si hay errores, mostrarlos y no continuar
+  if (Object.keys(newErrors).length > 0) {
     setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  // Manejar envío
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!validateForm()) {
-      return;
-    }
-
-    try {
-      await onSubmit(formData);
-    } catch (error) {
-      console.error('Error submitting form:', error);
-    }
-  };
+    return;
+  }
+  
+  // ✅ GUARDAR - Usar el prop onSubmit que ya existe
+  try {
+    await onSubmit(formData);
+  } catch (err: any) {
+    setErrors({
+      general: err.message || 'Error al guardar el socio'
+    });
+  }
+};
 
   // Calcular edad si hay fecha de nacimiento
   const displayAge = formData.birthDate ? calculateAge(htmlDateToLocalDate(formData.birthDate)) : null;
@@ -317,32 +328,56 @@ const convertInitialData = (data: any): Partial<MemberFormData> => {
               <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
             )}
           </div>
+        {/* DNI - OPCIONAL */}
+        <div>
+          <label htmlFor="dni" className="block text-sm font-medium text-gray-700 mb-1">
+            DNI <span className="text-gray-400 text-xs">(opcional)</span>
+          </label>
+          <input
+            type="text"
+            id="dni"
+            name="dni"
+            value={formData.dni || ''}
+            onChange={handleChange}
+            className={`w-full px-4 py-2 border ${
+              errors.dni ? 'border-red-500' : 'border-gray-300'
+            } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+            placeholder="12345678"
+            maxLength={8}
+          />
+          {errors.dni && (
+            <p className="mt-1 text-sm text-red-600">{errors.dni}</p>
+          )}
+          <p className="text-xs text-gray-500 mt-1">
+            Solo números, sin puntos ni guiones
+          </p>
+        </div>
 
-          {/* Email */}
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-              Email *
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Mail size={18} className="text-gray-400" />
-              </div>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                value={formData.email}
-                onChange={handleChange}
-                className={`pl-10 w-full px-4 py-2 border ${
-                  errors.email ? 'border-red-500' : 'border-gray-300'
-                } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                placeholder="correo@ejemplo.com"
-              />
+        {/* Email - OPCIONAL */}
+        <div>
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+            Email <span className="text-gray-400 text-xs">(opcional)</span>
+          </label>
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Mail size={18} className="text-gray-400" />
             </div>
-            {errors.email && (
-              <p className="mt-1 text-sm text-red-600">{errors.email}</p>
-            )}
+            <input
+              type="email"
+              id="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+              className={`pl-10 w-full px-4 py-2 border ${
+                errors.email ? 'border-red-500' : 'border-gray-300'
+              } rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              placeholder="correo@ejemplo.com"
+            />
           </div>
+          {errors.email && (
+            <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+          )}
+        </div>
 
           {/* Teléfono */}
           <div>

@@ -180,7 +180,9 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
       }
       
       const membershipData = {
+
         memberId,
+        membershipId: formData.membershipId, // ID de la definición de membresía
         activityId: selectedMembership.activityId,
         activityName: selectedMembership.activityName,
         membershipName: selectedMembership.name, // Agregar nombre de la membresía
@@ -199,7 +201,7 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
         autoRenewal: formData.autoRenewal,
         paymentFrequency: formData.paymentFrequency,
         paymentType: 'monthly',
-        membershipId: formData.membershipId // ID de la definición de membresía
+       
       };
       
       console.log('📊 Datos de membresía a guardar:', membershipData);

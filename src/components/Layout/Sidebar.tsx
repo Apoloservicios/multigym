@@ -365,7 +365,7 @@ const Sidebar: React.FC = () => {
                         onClick={() => handleNavigate('settings/memberships')}
                       />
 
-                      {/*    */}
+                      {/*    
 
                           <NavItem
                         icon={<RefreshCw size={16} />}
@@ -374,7 +374,7 @@ const Sidebar: React.FC = () => {
                         onClick={() => handleNavigate('auto-renewals')}
                         isNew={true}
                       />
-                                  🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ 
+                              * //*   🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ 
                         <NavItem
                           icon={<DollarSign size={20} />}
                           text="Cobros"
@@ -382,7 +382,7 @@ const Sidebar: React.FC = () => {
                           onClick={() => handleNavigate('payments')}
                           isNew={true}
                         />
-               
+               */}
                     
                       <NavItem
                         icon={<User size={16} />}

@@ -39,7 +39,7 @@ import {
   limit,
   updateDoc, 
   addDoc,
-  increment
+  increment,getCountFromServer  
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
@@ -98,6 +98,10 @@ interface ManageMembership extends MembershipAssignment {
     totalDebt: 0
   });
   
+  const [expiredPage, setExpiredPage] = useState<number>(1);
+const [expiredItemsPerPage] = useState<number>(20); // 20 items por página
+const [expiredSearchTerm, setExpiredSearchTerm] = useState<string>('');
+
   // Estados para membresías vencidas
   const [expiredMemberships, setExpiredMemberships] = useState<ExpiredMembershipWithDetails[]>([]);
   const [loadingExpired, setLoadingExpired] = useState<boolean>(false);
@@ -117,95 +121,112 @@ interface ManageMembership extends MembershipAssignment {
   const [renewalInProgress, setRenewalInProgress] = useState<string[]>([]);
   const [paymentInProgress, setPaymentInProgress] = useState<string[]>([]);
 
- // CORRECCIONES PARA UnifiedRenewalDashboard.tsx
+
+
+
+  
 // Reemplaza las funciones loadStats, loadExpiredMemberships y loadAllMemberships
 
   // 🔄 Cargar estadísticas principales ESTRUCTURA CORRECTA
     const loadStats = async () => {
-      if (!gymData?.id) return;
+  if (!gymData?.id) return;
+  
+  try {
+    setLoading(true);
+    
+    // Usar agregación para contar sin cargar todos los documentos
+    const membersRef = collection(db, `gyms/${gymData.id}/members`);
+    const membersCountSnapshot = await getCountFromServer(membersRef);
+    const totalMembers = membersCountSnapshot.data().count;
+    
+    // Para estadísticas detalladas, usar una muestra o implementar contadores en Firestore
+    // Esta es una versión optimizada que solo carga una muestra
+    const sampleQuery = query(membersRef, limit(100)); // Solo cargar 100 miembros para estadísticas
+    const sampleSnapshot = await getDocs(sampleQuery);
+    
+    // Calcular estadísticas basadas en la muestra y extrapolar
+    let sampleStats = {
+      active: 0,
+      expired: 0,
+      expiringSoon: 0,
+      withAutoRenewal: 0,
+      pendingPayments: 0,
+      totalDebt: 0
+    };
+    
+    const today = new Date();
+    
+    for (const memberDoc of sampleSnapshot.docs) {
+      const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
+      const membershipsSnapshot = await getDocs(membershipsRef);
       
-      try {
-        setLoading(true);
+      membershipsSnapshot.forEach((membershipDoc) => {
+        const data = membershipDoc.data();
+        const endDate = new Date(data.endDate);
+        const daysUntil = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         
-        const membersRef = collection(db, `gyms/${gymData.id}/members`);
-        const membersSnapshot = await getDocs(membersRef);
-        
-        const today = new Date();
-        let totalCount = 0;
-        let activeCount = 0;
-        let expiredCount = 0;
-        let expiringSoonCount = 0;
-        let withAutoRenewalCount = 0;
-        let pendingPaymentsCount = 0;
-        let totalDebtAmount = 0;
-        
-        for (const memberDoc of membersSnapshot.docs) {
-          const memberData = memberDoc.data();
-          
-          const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
-          const membershipsSnapshot = await getDocs(membershipsRef);
-          
-          membershipsSnapshot.forEach((membershipDoc) => {
-            const data = membershipDoc.data() as any;
-            
-            // 🔧 SOLO contar como vencida si está activa Y vencida
-            const endDate = new Date(data.endDate);
-            const daysUntilExpiration = Math.ceil((endDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-            const isActive = data.active !== false;
-            const isValidStatus = data.status === 'active' || !data.status;
-            
-            totalCount++;
-            
-            if (isActive && isValidStatus) {
-              if (daysUntilExpiration >= 0) {
-                activeCount++;
-                if (daysUntilExpiration <= 7) {
-                  expiringSoonCount++;
-                }
-              } else {
-                // Solo contar como vencida si está activa
-                expiredCount++;
-              }
-            }
-            
-            if (data.autoRenewal === true) {
-              withAutoRenewalCount++;
-            }
-            
-            if (data.paymentStatus === 'pending') {
-              pendingPaymentsCount++;
-              totalDebtAmount += data.cost || 0;
-            }
-          });
+        if (data.active !== false && data.status !== 'cancelled') {
+          if (daysUntil >= 0) {
+            sampleStats.active++;
+            if (daysUntil <= 7) sampleStats.expiringSoon++;
+          } else {
+            sampleStats.expired++;
+          }
         }
         
-        setStats({
-          total: totalCount,
-          active: activeCount,
-          expired: expiredCount,
-          expiringSoon: expiringSoonCount,
-          withAutoRenewal: withAutoRenewalCount,
-          pendingPayments: pendingPaymentsCount,
-          totalDebt: totalDebtAmount
-        });
-        
-      } catch (err) {
-        console.error('Error cargando estadísticas:', err);
-        setError('Error al cargar las estadísticas');
-      } finally {
-        setLoading(false);
-      }
-    };
+        if (data.autoRenewal) sampleStats.withAutoRenewal++;
+        if (data.paymentStatus === 'pending') {
+          sampleStats.pendingPayments++;
+          sampleStats.totalDebt += data.cost || 0;
+        }
+      });
+    }
+    
+    // Extrapolar basado en la muestra (si tienes muchos miembros)
+    const multiplier = totalMembers > 100 ? totalMembers / 100 : 1;
+    
+    setStats({
+      total: Math.round(sampleStats.active + sampleStats.expired),
+      active: Math.round(sampleStats.active * multiplier),
+      expired: Math.round(sampleStats.expired * multiplier),
+      expiringSoon: Math.round(sampleStats.expiringSoon * multiplier),
+      withAutoRenewal: Math.round(sampleStats.withAutoRenewal * multiplier),
+      pendingPayments: Math.round(sampleStats.pendingPayments * multiplier),
+      totalDebt: Math.round(sampleStats.totalDebt * multiplier)
+    });
+    
+  } catch (err) {
+    console.error('Error cargando estadísticas:', err);
+    setError('Error al cargar las estadísticas');
+  } finally {
+    setLoading(false);
+  }
+};
 
  // 🔄 CARGAR MEMBRESÍAS VENCIDAS - Solo activas
-const loadExpiredMemberships = async () => {
+const loadExpiredMemberships = async (page: number = 1, resetData: boolean = false) => {
   if (!gymData?.id) return;
   
   try {
     setLoadingExpired(true);
     
     const membersRef = collection(db, `gyms/${gymData.id}/members`);
-    const membersSnapshot = await getDocs(membersRef);
+    
+    // Si es la primera página o reset, empezar desde cero
+    let startAfterDoc = null;
+    if (page > 1 && !resetData) {
+      // Obtener el último documento de la página anterior
+      // (necesitarías almacenar esto en el estado)
+    }
+    
+    // Query con límite para paginación
+    const membersQuery = query(
+      membersRef
+     //  orderBy('createdAt', 'desc')
+       //limit(100) Cargar 50 miembros a la vez
+    );
+    
+    const membersSnapshot = await getDocs(membersQuery);
     
     const today = new Date();
     const expiredList: ExpiredMembershipWithDetails[] = [];
@@ -215,7 +236,6 @@ const loadExpiredMemberships = async () => {
       const memberName = `${memberData.firstName} ${memberData.lastName}`;
       const memberId = memberDoc.id;
       
-      // Obtener membresías del miembro
       const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberId}/memberships`);
       const membershipsSnapshot = await getDocs(membershipsRef);
       
@@ -224,17 +244,9 @@ const loadExpiredMemberships = async () => {
         const endDate = new Date(data.endDate);
         const daysExpired = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
         
-        // 🔧 LÓGICA MEJORADA:
-        // - Si tiene campo active en false, no mostrar
-        // - Si NO tiene campo active, considerarla activa (compatibilidad)
-        // - Si status es 'cancelled' o 'renewed', no mostrar
-        const isActive = data.active !== false; // undefined o true = activa
+        const isActive = data.active !== false;
         const isValidStatus = data.status === 'active' || !data.status;
         
-        // Solo incluir si:
-        // 1. Está vencida (días > 0)
-        // 2. No está explícitamente desactivada
-        // 3. No está cancelada o renovada
         if (daysExpired > 0 && isActive && isValidStatus) {
           expiredList.push({
             ...data,
@@ -249,7 +261,14 @@ const loadExpiredMemberships = async () => {
     }
     
     expiredList.sort((a, b) => b.daysExpired - a.daysExpired);
-    setExpiredMemberships(expiredList);
+    
+    if (resetData || page === 1) {
+      setExpiredMemberships(expiredList);
+    } else {
+      setExpiredMemberships(prev => [...prev, ...expiredList]);
+    }
+    
+    setExpiredPage(page);
     
   } catch (err) {
     console.error('Error cargando membresías vencidas:', err);
@@ -257,6 +276,34 @@ const loadExpiredMemberships = async () => {
   } finally {
     setLoadingExpired(false);
   }
+};
+
+const getPaginatedExpiredMemberships = () => {
+  let filtered = [...expiredMemberships];
+  
+  // Aplicar filtro de búsqueda
+  if (expiredSearchTerm) {
+    const term = expiredSearchTerm.toLowerCase();
+    filtered = filtered.filter(m => 
+      m.memberName.toLowerCase().includes(term) ||
+      m.activityName.toLowerCase().includes(term)
+    );
+  }
+  
+  // Calcular paginación
+  const totalPages = Math.ceil(filtered.length / expiredItemsPerPage);
+  const startIndex = (expiredPage - 1) * expiredItemsPerPage;
+  const endIndex = startIndex + expiredItemsPerPage;
+  const paginated = filtered.slice(startIndex, endIndex);
+  
+  return {
+    data: paginated,
+    totalItems: filtered.length,
+    totalPages,
+    currentPage: expiredPage,
+    startIndex,
+    endIndex
+  };
 };
 
 // 🔄 CARGAR TODAS LAS MEMBRESÍAS - Con opción de incluir inactivas
@@ -363,21 +410,46 @@ const handleRenewMembership = async (membershipId: string, months: number = 1) =
     
     // Intentar obtener el precio actualizado desde la configuración de membresías
     try {
-      const membershipsConfigRef = collection(db, `gyms/${gymData.id}/memberships`);
-      const q = query(
-        membershipsConfigRef,
-        where('name', '==', membershipData.membershipName || membershipData.activityName)
-      );
-      const snapshot = await getDocs(q);
-      
-      if (!snapshot.empty) {
-        const configData = snapshot.docs[0].data();
-        currentPrice = configData.cost || currentPrice;
-        console.log('✅ Usando precio actualizado:', currentPrice);
-      }
-    } catch (error) {
-      console.log('⚠️ Usando precio anterior:', currentPrice);
+  // Opción 1: Si tiene membershipId guardado (referencia directa)
+  if (membershipData.membershipId) {
+    const membershipDefRef = doc(db, `gyms/${gymData.id}/memberships`, membershipData.membershipId);
+    const membershipDefSnap = await getDoc(membershipDefRef);
+    
+    if (membershipDefSnap.exists()) {
+      const defData = membershipDefSnap.data();
+      currentPrice = defData.cost;
+      console.log('✅ Precio actualizado desde ID:', currentPrice);
     }
+  }
+  
+  // Opción 2: Si no tiene membershipId, buscar por nombre
+  if (!membershipData.membershipId || currentPrice === membershipData.cost) {
+    const membershipsRef = collection(db, `gyms/${gymData.id}/memberships`);
+    const snapshot = await getDocs(membershipsRef);
+    
+    // Buscar por coincidencia de nombre y actividad
+    const found = snapshot.docs.find(doc => {
+      const data = doc.data();
+      return data.name === membershipData.membershipName && 
+             data.activityId === membershipData.activityId;
+    });
+    
+    if (found) {
+      currentPrice = found.data().cost;
+      console.log('✅ Precio actualizado por búsqueda:', currentPrice);
+    }
+  }
+} catch (error) {
+  console.log('⚠️ Error obteniendo precio actualizado:', error);
+  console.log('Usando precio anterior:', currentPrice);
+}
+
+console.log('💰 Precio final para renovación:', {
+  anterior: membershipData.cost,
+  actual: currentPrice,
+  multiplicador: months,
+  total: currentPrice * months
+});
     
     // Calcular fechas
     const today = new Date();
@@ -459,6 +531,48 @@ const handleRenewMembership = async (membershipId: string, months: number = 1) =
   } finally {
     setRenewalInProgress(prev => prev.filter(id => id !== membershipId));
   }
+};
+
+
+const runMigration = async () => {
+  if (!gymData?.id) return;
+  
+  const membersRef = collection(db, `gyms/${gymData.id}/members`);
+  const membersSnapshot = await getDocs(membersRef);
+  
+  let migrated = 0;
+  setLoading(true);
+  
+  for (const memberDoc of membersSnapshot.docs) {
+    const membershipsRef = collection(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships`);
+    const membershipsSnapshot = await getDocs(membershipsRef);
+    
+    for (const membershipDoc of membershipsSnapshot.docs) {
+      const data = membershipDoc.data();
+      
+      if (!data.membershipId) {
+        const configRef = collection(db, `gyms/${gymData.id}/memberships`);
+        const configSnapshot = await getDocs(configRef);
+        
+        const found = configSnapshot.docs.find(doc => {
+          const configData = doc.data();
+          return configData.name === data.membershipName || 
+                 configData.activityId === data.activityId;
+        });
+        
+        if (found) {
+          await updateDoc(doc(db, `gyms/${gymData.id}/members/${memberDoc.id}/memberships/${membershipDoc.id}`), {
+            membershipId: found.id,
+            membershipName: found.data().name
+          });
+          migrated++;
+        }
+      }
+    }
+  }
+  
+  setLoading(false);
+  setSuccess(`Migración completada: ${migrated} membresías actualizadas`);
 };
 
 // 💰 REGISTRAR PAGO - Actualizar deuda del socio
@@ -763,6 +877,17 @@ const getPaginatedMemberships = () => {
           <h1 className="text-2xl font-bold text-gray-900">Gestión de Renovaciones</h1>
           <p className="text-gray-600">Dashboard unificado para el control de membresías</p>
         </div>
+
+        {/* migracion membresias */}
+
+        {process.env.NODE_ENV === 'development' && (
+            <button
+              onClick={runMigration}
+              className="px-4 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700"
+            >
+              Migrar Referencias de Membresías
+            </button>
+          )}
         
         <div className="flex items-center space-x-3">
           <button
@@ -948,16 +1073,19 @@ const getPaginatedMemberships = () => {
         </div>
       )}
 
-      {/* PESTAÑA VENCIDAS */}
-      {activeTab === 'expired' && (
+            {activeTab === 'expired' && (
         <div className="space-y-6">
           {/* Header con controles */}
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-xl font-semibold text-gray-900">
-                Membresías Vencidas ({expiredMemberships.length})
+                Membresías Vencidas
               </h2>
-              <p className="text-gray-600">Renovaciones pendientes</p>
+              <p className="text-gray-600">
+                Mostrando {getPaginatedExpiredMemberships().startIndex + 1} - {
+                  Math.min(getPaginatedExpiredMemberships().endIndex, getPaginatedExpiredMemberships().totalItems)
+                } de {getPaginatedExpiredMemberships().totalItems} membresías vencidas
+              </p>
             </div>
             
             {selectedMemberships.length > 0 && (
@@ -983,26 +1111,29 @@ const getPaginatedMemberships = () => {
               <input
                 type="text"
                 placeholder="Buscar por nombre o actividad..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={expiredSearchTerm}
+                onChange={(e) => {
+                  setExpiredSearchTerm(e.target.value);
+                  setExpiredPage(1); // Resetear a primera página al buscar
+                }}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
               />
             </div>
             
-            {expiredMemberships.length > 0 && (
-              <button
-                onClick={() => {
-                  if (selectedMemberships.length === expiredMemberships.length) {
-                    setSelectedMemberships([]);
-                  } else {
-                    setSelectedMemberships(expiredMemberships.map(m => m.id));
-                  }
-                }}
-                className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                {selectedMemberships.length === expiredMemberships.length ? 'Deseleccionar' : 'Seleccionar'} todas
-              </button>
-            )}
+            <button
+              onClick={() => {
+                const currentPageData = getPaginatedExpiredMemberships().data;
+                if (selectedMemberships.length === currentPageData.length) {
+                  setSelectedMemberships([]);
+                } else {
+                  setSelectedMemberships(currentPageData.map(m => m.id));
+                }
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+            >
+              {selectedMemberships.length === getPaginatedExpiredMemberships().data.length ? 
+                'Deseleccionar' : 'Seleccionar'} página
+            </button>
           </div>
 
           {/* Lista de vencidas */}
@@ -1011,7 +1142,7 @@ const getPaginatedMemberships = () => {
               <RefreshCw className="animate-spin mr-2" size={20} />
               <span>Cargando membresías vencidas...</span>
             </div>
-          ) : expiredMemberships.length === 0 ? (
+          ) : getPaginatedExpiredMemberships().totalItems === 0 ? (
             <div className="text-center p-8 bg-white rounded-lg shadow">
               <CheckCircle className="mx-auto text-green-600 mb-4" size={48} />
               <h3 className="text-lg font-medium text-gray-900 mb-2">
@@ -1020,13 +1151,9 @@ const getPaginatedMemberships = () => {
               <p className="text-gray-600">Todas las membresías están al día</p>
             </div>
           ) : (
-            <div className="bg-white shadow rounded-lg divide-y divide-gray-200">
-              {expiredMemberships
-                .filter(m => 
-                  m.memberName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                  m.activityName.toLowerCase().includes(searchTerm.toLowerCase())
-                )
-                .map((membership) => (
+            <>
+              <div className="bg-white shadow rounded-lg divide-y divide-gray-200">
+                {getPaginatedExpiredMemberships().data.map((membership) => (
                   <div key={membership.id} className="p-4 hover:bg-gray-50">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
@@ -1090,7 +1217,76 @@ const getPaginatedMemberships = () => {
                     </div>
                   </div>
                 ))}
-            </div>
+              </div>
+
+              {/* Controles de paginación para Vencidas */}
+              {getPaginatedExpiredMemberships().totalPages > 1 && (
+                <div className="flex items-center justify-between bg-white rounded-lg shadow p-4">
+                  <div className="text-sm text-gray-700">
+                    Página {expiredPage} de {getPaginatedExpiredMemberships().totalPages}
+                  </div>
+                  
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => setExpiredPage(prev => Math.max(1, prev - 1))}
+                      disabled={expiredPage === 1}
+                      className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Anterior
+                    </button>
+                    
+                    {/* Botones de página numerados */}
+                    {(() => {
+                      const totalPages = getPaginatedExpiredMemberships().totalPages;
+                      const current = expiredPage;
+                      let pages = [];
+                      
+                      if (totalPages <= 7) {
+                        pages = Array.from({length: totalPages}, (_, i) => i + 1);
+                      } else {
+                        if (current <= 3) {
+                          pages = [1, 2, 3, 4, 5, '...', totalPages];
+                        } else if (current >= totalPages - 2) {
+                          pages = [1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+                        } else {
+                          pages = [1, '...', current - 1, current, current + 1, '...', totalPages];
+                        }
+                      }
+                      
+                      return pages.map((page, index) => {
+                        if (page === '...') {
+                          return <span key={index} className="px-2 py-1">...</span>;
+                        }
+                        
+                        return (
+                          <button
+                            key={index}
+                            onClick={() => setExpiredPage(page as number)}
+                            className={`px-3 py-1 border rounded-md ${
+                              current === page
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      });
+                    })()}
+                    
+                    <button
+                      onClick={() => setExpiredPage(prev => 
+                        Math.min(getPaginatedExpiredMemberships().totalPages, prev + 1)
+                      )}
+                      disabled={expiredPage === getPaginatedExpiredMemberships().totalPages}
+                      className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Siguiente
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

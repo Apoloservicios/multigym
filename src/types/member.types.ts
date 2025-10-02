@@ -23,6 +23,11 @@ export interface Member {
   updatedAt?: FirebaseDate;
   // Campo adicional usado en algunas funciones
   daysUntilBirthday?: number;
+  dni?: string;
+  memberNumber?: number;  // ⭐ CAMBIAR de string a number
+    hasDebt: boolean;              // ⭐ AGREGAR ESTA LÍNEA
+  activeMemberships: number; 
+  
 }
 
 export interface MemberFormData {
@@ -34,6 +39,11 @@ export interface MemberFormData {
   birthDate: string;
   photo: File | null;
   status: 'active' | 'inactive';
+   dni?: string;
+   memberNumber?: number;
+      
+ 
+    
 }
 
 // 🔧 INTERFAZ CORREGIDA CON TODOS LOS CAMPOS NECESARIOS
@@ -98,7 +108,9 @@ const memberTypes = {
     email: '',
     phone: '',
     status: 'active',
-    totalDebt: 0
+    totalDebt: 0,
+    hasDebt: false,              // ⭐ AGREGAR
+    activeMemberships: 0         // ⭐ AGREGAR
   }),
   
   createEmptyMemberFormData: (): MemberFormData => ({
@@ -109,7 +121,9 @@ const memberTypes = {
     address: '',
     birthDate: '',
     photo: null,
-    status: 'active'
+    status: 'active',
+    dni: '',                     // ⭐ AGREGAR
+    memberNumber: 0              // ⭐ AGREGAR (opcional, solo si quieres)
   }),
   
   createEmptyMembershipAssignment: (): MembershipAssignment => ({

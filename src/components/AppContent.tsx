@@ -47,8 +47,10 @@ const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   requiredRole?: 'superadmin' | 'admin' | 'user';
   allowedRoles?: Array<'superadmin' | 'admin' | 'user'>;
+  
 }> = ({ children, requiredRole, allowedRoles }) => {
   const { currentUser, userRole, loading } = useAuth();
+  
 
   if (loading) {
     return (
@@ -90,6 +92,7 @@ const ProtectedRoute: React.FC<{
 const AppContent: React.FC = () => {
   const { currentUser, userRole, loading } = useAuth();
   const location = useLocation();
+  const { gymData, userData } = useAuth();
 
   // Redireccionamiento automático basado en rol
   useEffect(() => {
@@ -191,7 +194,7 @@ const AppContent: React.FC = () => {
                 </ProtectedRoute>
               } />
 
-              <Route path="membership-management" element={
+             <Route path="membership-management" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <MembershipManagement />
                 </ProtectedRoute>
