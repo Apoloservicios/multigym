@@ -1,745 +1,508 @@
 // src/services/monthlyPayments.service.ts
-// 🔧 SERVICIO UNIFICADO - PAGOS MENSUALES + INTEGRACIÓN CAJA DIARIA
-// PASO 1: Unificar sistema de pagos con registro automático en caja diaria
+// VERSIÓN CORREGIDA CON ACTUALIZACIÓN DE DEUDA
 
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  addDoc, 
-  updateDoc, 
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
   setDoc,
-  runTransaction,
+  updateDoc,
   query,
   where,
-  orderBy,
   Timestamp,
-  serverTimestamp,
-  writeBatch
+  runTransaction,
+  orderBy
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
-import { 
-  Transaction, 
-  DailyCash,
-  TransactionIncomeCategory , Member
-} from '../types/gym.types';
-import { 
-  MonthlyPaymentRecord, 
-  MonthlyActivityPayment, 
-  MonthlySummary, 
+import {
+  MonthlyPayment,
+  MembershipStatus,
+  MonthlySummary,
   MonthlyPaymentListItem,
-  PaymentMethod 
+  AutoGenerationResult,
+  PaymentMethod
 } from '../types/monthlyPayments.types';
-import { 
-  getCurrentDateInArgentina,
-  formatDateForDisplay 
-} from '../utils/timezone.utils';
-import { formatCurrency } from '../utils/formatting.utils';
 
-// ===================== FUNCIONES AUXILIARES =====================
+const getCurrentMonth = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
 
-/**
- * 🔧 NUEVA FUNCIÓN: Registrar pago en caja diaria de forma atómica
- * Esta función se asegura de que TODOS los pagos se registren en caja diaria
- */
-const updateDailyCashForPayment = async (
-  transaction: any, // Firestore transaction
+const getDueDate = (monthStr: string): string => {
+  return `${monthStr}-15`;
+};
+
+const paymentExists = async (
   gymId: string,
-  amount: number,
-  description: string,
-  paymentMethod: PaymentMethod,
-  userId: string,
-  userName: string,
-  memberId?: string,
-  memberName?: string
-): Promise<string> => {
-  const today = getCurrentDateInArgentina();
-  const dailyCashRef = doc(db, `gyms/${gymId}/dailyCash`, today);
-  const dailyCashSnap = await transaction.get(dailyCashRef);
+  memberId: string,
+  membershipId: string,
+  month: string
+): Promise<boolean> => {
+  const paymentId = `${month}-${memberId}-${membershipId}`;
+  const paymentRef = doc(db, `gyms/${gymId}/monthlyPayments`, paymentId);
+  const paymentSnap = await getDoc(paymentRef);
+  return paymentSnap.exists();
+};
 
-  // Crear o actualizar caja diaria
-  if (dailyCashSnap.exists()) {
-    const cashData = dailyCashSnap.data() as DailyCash;
-    
-    // Verificar que la caja no esté cerrada
-    if (cashData.status === 'closed') {
-      throw new Error('La caja diaria está cerrada. No se pueden registrar pagos.');
+const isOverdue = (dueDate: string): boolean => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(dueDate);
+  return today > due;
+};
+
+export const generateMonthlyPayments = async (
+  gymId: string
+): Promise<AutoGenerationResult> => {
+  const result: AutoGenerationResult = {
+    success: false,
+    paymentsGenerated: 0,
+    errors: [],
+    summary: {
+      totalMembers: 0,
+      totalMemberships: 0,
+      totalAmount: 0,
+      skipped: {
+        suspended: 0,
+        alreadyExists: 0
+      }
     }
-    
-    // Actualizar totales
-    transaction.update(dailyCashRef, {
-      totalIncome: (cashData.totalIncome || 0) + amount,
-      membershipIncome: (cashData.membershipIncome || 0) + amount,
-      updatedAt: serverTimestamp()
-    });
-  } else {
-    // Crear nueva caja diaria automáticamente
-    const newCashData: Partial<DailyCash> = {
-      gymId,
-      date: today,
-      openingTime: Timestamp.now(),
-      openingAmount: 0,
-      totalIncome: amount,
-      totalExpense: 0,
-      membershipIncome: amount,
-      otherIncome: 0,
-      status: 'open',
-      openedBy: userId,
-      notes: 'Creada automáticamente al registrar pago',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    };
-    transaction.set(dailyCashRef, newCashData);
-  }
-
-  // Crear registro de transacción
-  const transactionData: Partial<Transaction> = {
-    type: 'income',
-    category: 'membership' as TransactionIncomeCategory,
-    amount,
-    description,
-    date: Timestamp.now(),
-    userId,
-    userName,
-    paymentMethod,
-    status: 'completed',
-    memberId,
-    memberName,
-    createdAt: serverTimestamp()
   };
 
-  const transactionsRef = collection(db, `gyms/${gymId}/transactions`);
-  const transactionDocRef = doc(transactionsRef);
-  transaction.set(transactionDocRef, transactionData);
-  
-  return transactionDocRef.id;
-};
+  try {
+    const currentMonth = getCurrentMonth();
+    const today = new Date();
 
+    console.log(`Generando pagos para ${currentMonth}...`);
 
+    const membersRef = collection(db, `gyms/${gymId}/members`);
+    const membersSnap = await getDocs(membersRef);
 
-/**
- * 🔧 FUNCIÓN AUXILIAR: Generar descripción detallada del pago
- */
-const generatePaymentDescription = (
-  memberName: string,
-  activityName: string,
-  amount: number,
-  year: number,
-  month: number
-): string => {
-  const monthNames = [
-    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-  ];
-  
-  return `Pago ${activityName} - ${monthNames[month - 1]} ${year} - ${formatCurrency(amount)} de ${memberName}`;
-};
+    result.summary.totalMembers = membersSnap.size;
 
-// ===================== SERVICIO PRINCIPAL =====================
+    for (const memberDoc of membersSnap.docs) {
+      const memberId = memberDoc.id;
+      const memberData = memberDoc.data();
+      const memberName = `${memberData.firstName} ${memberData.lastName}`;
 
-export class MonthlyPaymentsService {
+      if (memberData.status !== 'active') continue;
 
-  // ============ MÉTODOS DE CONSULTA ============
-
-  /**
-   * 📋 Obtener lista de pagos pendientes para un mes
-   */
-  static async getPendingPaymentsList(
-    gymId: string, 
-    year: number, 
-    month: number
-  ): Promise<MonthlyPaymentListItem[]> {
-    try {
-      const recordsRef = collection(db, `gyms/${gymId}/monthlyPayments`);
-      const q = query(
-        recordsRef,
-        where('year', '==', year),
-        where('month', '==', month)
+      const membershipsRef = collection(
+        db,
+        `gyms/${gymId}/members/${memberId}/memberships`
       );
-      
-      const querySnapshot = await getDocs(q);
-      const paymentsList: MonthlyPaymentListItem[] = [];
-      
-      querySnapshot.forEach(doc => {
-        const record = doc.data() as MonthlyPaymentRecord;
-        
-        // Procesar actividades
-        const activities = Object.values(record.activities || {});
-        const activitiesPending = activities.filter(a => a.status === 'pending');
-        const activitiesPaid = activities.filter(a => a.status === 'paid');
-        
-        // Solo incluir si tiene pagos pendientes
-        if (activitiesPending.length > 0) {
-          const today = new Date();
-          const dueDate = new Date(year, month - 1, 10); // Vence el 10 de cada mes
-          const isOverdue = today > dueDate;
-          const daysOverdue = isOverdue ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
-          
-          paymentsList.push({
-            memberId: record.memberId,
-            memberName: record.memberName,
-            totalCost: record.totalCost || 0,
-            totalPaid: record.totalPaid || 0,
-            totalPending: record.totalPending || 0,
-            activitiesCount: activities.length,
-            activitiesPaid: activitiesPaid.length,
-            activitiesPending: activitiesPending.length,
-            isOverdue,
-            daysOverdue,
-            activities: activitiesPending.map(a => ({
-              name: a.activityName,
-              cost: a.cost,
-              status: a.status,
-              dueDate: a.dueDate
-            }))
-          });
+      const membershipsSnap = await getDocs(membershipsRef);
+
+      for (const membershipDoc of membershipsSnap.docs) {
+        const membership = membershipDoc.data() as MembershipStatus;
+        const membershipId = membershipDoc.id;
+
+        result.summary.totalMemberships++;
+
+        if (membership.status === 'suspended') {
+          result.summary.skipped.suspended++;
+          continue;
         }
-      });
-      
-      return paymentsList.sort((a, b) => {
-        // Primero los vencidos, luego por nombre
-        if (a.isOverdue && !b.isOverdue) return -1;
-        if (!a.isOverdue && b.isOverdue) return 1;
-        return a.memberName.localeCompare(b.memberName);
-      });
-      
-    } catch (error) {
-      console.error('Error obteniendo lista de pagos pendientes:', error);
-      throw error;
-    }
-  }
 
-  /**
-   * 📊 Obtener resumen mensual
-   */
-  static async getMonthlySummary(
-    gymId: string, 
-    year: number, 
-    month: number
-  ): Promise<MonthlySummary> {
-    try {
-      const recordsRef = collection(db, `gyms/${gymId}/monthlyPayments`);
-      const q = query(
-        recordsRef,
-        where('year', '==', year),
-        where('month', '==', month)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      
-      let totalMembers = 0;
-      let totalToCollect = 0;
-      let totalCollected = 0;
-      let membersWithDebt = 0;
-      let membersUpToDate = 0;
-      const activitiesBreakdown: { [key: string]: any } = {};
-      
-      querySnapshot.forEach(doc => {
-        const record = doc.data() as MonthlyPaymentRecord;
-        totalMembers++;
+        if (!membership.autoGeneratePayments) {
+          continue;
+        }
+
+        let targetMonth = currentMonth;
+
+        const startDate = new Date(membership.startDate);
+        const startDay = startDate.getDate();
+
+        if (startDay > 15) {
+          const nextMonth = new Date(startDate);
+          nextMonth.setMonth(nextMonth.getMonth() + 1);
+          const year = nextMonth.getFullYear();
+          const month = String(nextMonth.getMonth() + 1).padStart(2, '0');
+          targetMonth = `${year}-${month}`;
+        }
+
+        const exists = await paymentExists(
+          gymId,
+          memberId,
+          membershipId,
+          targetMonth
+        );
+
+        if (exists) {
+          result.summary.skipped.alreadyExists++;
+          continue;
+        }
+
+        // OBTENER PRECIO DE LA MEMBERSHIP (no de la actividad)
+        const membershipDefRef = collection(db, `gyms/${gymId}/memberships`);
+        const membershipDefQuery = query(
+          membershipDefRef,
+          where('activityId', '==', membership.activityId)
+        );
+        const membershipDefSnap = await getDocs(membershipDefQuery);
+
+        let currentPrice = 0;
         
-        const totalCost = record.totalCost || 0;
-        const totalPaid = record.totalPaid || 0;
-        const totalPending = record.totalPending || 0;
-        
-        totalToCollect += totalCost;
-        totalCollected += totalPaid;
-        
-        if (totalPending > 0) {
-          membersWithDebt++;
+        if (!membershipDefSnap.empty) {
+          const membershipDefData = membershipDefSnap.docs[0].data();
+          currentPrice = membershipDefData.cost || 0;
+          console.log(`Precio obtenido: ${membership.activityName} = $${currentPrice}`);
         } else {
-          membersUpToDate++;
+          console.warn(`No se encontró definición de membership para ${membership.activityName}`);
+          continue;
         }
-        
-        // Procesar breakdown por actividad
-        Object.values(record.activities || {}).forEach(activity => {
-          const activityName = activity.activityName;
-          if (!activitiesBreakdown[activityName]) {
-            activitiesBreakdown[activityName] = {
-              members: 0,
-              totalCost: 0,
-              collected: 0,
-              pending: 0
-            };
-          }
-          
-          activitiesBreakdown[activityName].members++;
-          activitiesBreakdown[activityName].totalCost += activity.cost;
-          
-          if (activity.status === 'paid') {
-            activitiesBreakdown[activityName].collected += activity.cost;
-          } else {
-            activitiesBreakdown[activityName].pending += activity.cost;
-          }
-        });
-      });
-      
-      return {
-        year,
-        month,
-        totalMembers,
-        totalToCollect,
-        totalCollected,
-        totalPending: totalToCollect - totalCollected,
-        membersWithDebt,
-        membersUpToDate,
-        activitiesBreakdown
-      };
-      
-    } catch (error) {
-      console.error('Error obteniendo resumen mensual:', error);
-      throw error;
-    }
-  }
 
-  // ============ MÉTODOS DE REGISTRO DE PAGOS ============
-
-  /**
-   * 💰 MÉTODO PRINCIPAL: Registrar pago de actividad específica
-   * 🔧 MEJORADO: Ahora registra automáticamente en caja diaria
-   */
-  static async registerActivityPayment(
-    gymId: string,
-    year: number,
-    month: number,
-    memberId: string,
-    activityId: string,
-    amount: number,
-    paymentMethod: PaymentMethod
-  ): Promise<{ success: boolean; transactionId?: string; error?: string }> {
-    try {
-      const result = await runTransaction(db, async (transaction) => {
-        // 1. Obtener registro de pago mensual
-        const recordId = `${year}-${month}-${memberId}`;
-        const recordRef = doc(db, `gyms/${gymId}/monthlyPayments`, recordId);
-        const recordSnap = await transaction.get(recordRef);
-        
-        if (!recordSnap.exists()) {
-          throw new Error('Registro de pago mensual no encontrado');
-        }
-        
-        const record = recordSnap.data() as MonthlyPaymentRecord;
-        
-        // 2. Verificar que la actividad existe y está pendiente
-        if (!record.activities?.[activityId]) {
-          throw new Error('Actividad no encontrada en el registro');
-        }
-        
-        const activity = record.activities[activityId];
-        if (activity.status === 'paid') {
-          throw new Error('Esta actividad ya está pagada');
-        }
-        
-        if (activity.cost !== amount) {
-          throw new Error(`El monto no coincide. Se esperaba ${formatCurrency(activity.cost)}`);
-        }
-        
-        // 3. 🆕 REGISTRAR EN CAJA DIARIA (NUEVA FUNCIONALIDAD)
-        const transactionId = await updateDailyCashForPayment(
-          transaction,
-          gymId,
-          amount,
-          generatePaymentDescription(record.memberName, activity.activityName, amount, year, month),
-          paymentMethod,
-          'system', // TODO: Obtener del usuario actual
-          'Sistema',
+        const payment: MonthlyPayment = {
           memberId,
-          record.memberName
-        );
-        
-        // 4. Actualizar la actividad como pagada
-        const updatedActivities = { ...record.activities };
-        updatedActivities[activityId] = {
-          ...activity,
-          status: 'paid' as const,
-          paidDate: getCurrentDateInArgentina(),
-          transactionId
+          memberName,
+          membershipId,
+          activityId: membership.activityId,
+          activityName: membership.activityName,
+          month: targetMonth,
+          dueDate: getDueDate(targetMonth),
+          amount: currentPrice,
+          status: 'pending',
+          autoGenerated: true,
+          generatedAt: Timestamp.now()
         };
-        
-        // 5. Recalcular totales
-        const totalPaid = Object.values(updatedActivities)
-          .filter(a => a.status === 'paid')
-          .reduce((sum, a) => sum + a.cost, 0);
-        
-        const totalPending = record.totalCost - totalPaid;
-        
-        // 6. Actualizar registro
-        transaction.update(recordRef, {
-          activities: updatedActivities,
-          totalPaid,
-          totalPending,
-          updatedAt: serverTimestamp()
-        });
-        
-        return { transactionId };
-      });
-      
-      console.log(`✅ Pago de actividad registrado exitosamente. ID: ${result.transactionId}`);
-      
-      return {
-        success: true,
-        transactionId: result.transactionId
-      };
-      
-    } catch (error: any) {
-      console.error('❌ Error registrando pago de actividad:', error);
-      return {
-        success: false,
-        error: error.message || 'Error al registrar el pago'
-      };
-    }
-  }
 
-  /**
-   * 💰 Registrar pago completo del socio (todas las actividades pendientes)
-   * 🔧 MEJORADO: Ahora registra automáticamente en caja diaria
-   */
-  static async registerMemberFullPayment(
-    gymId: string,
-    year: number,
-    month: number,
-    memberId: string,
-    paymentMethod: PaymentMethod
-  ): Promise<{ success: boolean; transactionIds?: string[]; error?: string }> {
-    try {
-      const result = await runTransaction(db, async (transaction) => {
-        // 1. Obtener registro de pago mensual
-        const recordId = `${year}-${month}-${memberId}`;
-        const recordRef = doc(db, `gyms/${gymId}/monthlyPayments`, recordId);
-        const recordSnap = await transaction.get(recordRef);
-        
-        if (!recordSnap.exists()) {
-          throw new Error('Registro de pago mensual no encontrado');
-        }
-        
-        const record = recordSnap.data() as MonthlyPaymentRecord;
-        
-        // 2. Obtener actividades pendientes
-        const pendingActivities = Object.entries(record.activities || {})
-          .filter(([_, activity]) => activity.status === 'pending');
-        
-        if (pendingActivities.length === 0) {
-          throw new Error('No hay actividades pendientes para este socio');
-        }
-        
-        // 3. Calcular total a pagar
-        const totalAmount = pendingActivities.reduce((sum, [_, activity]) => sum + activity.cost, 0);
-        
-        // 4. 🆕 REGISTRAR EN CAJA DIARIA (NUEVA FUNCIONALIDAD)
-        const transactionId = await updateDailyCashForPayment(
-          transaction,
-          gymId,
-          totalAmount,
-          `Pago completo ${pendingActivities.map(([_, a]) => a.activityName).join(', ')} - ${record.memberName}`,
-          paymentMethod,
-          'system', // TODO: Obtener del usuario actual
-          'Sistema',
-          memberId,
-          record.memberName
-        );
-        
-        // 5. Actualizar todas las actividades como pagadas
-        const updatedActivities = { ...record.activities };
-        const currentDate = getCurrentDateInArgentina();
-        
-        pendingActivities.forEach(([activityId, _]) => {
-          updatedActivities[activityId] = {
-            ...updatedActivities[activityId],
-            status: 'paid' as const,
-            paidDate: currentDate,
-            transactionId
-          };
-        });
-        
-        // 6. Recalcular totales
-        const totalPaid = Object.values(updatedActivities)
-          .filter(a => a.status === 'paid')
-          .reduce((sum, a) => sum + a.cost, 0);
-        
-        const totalPending = record.totalCost - totalPaid;
-        
-        // 7. Actualizar registro
-        transaction.update(recordRef, {
-          activities: updatedActivities,
-          totalPaid,
-          totalPending,
-          updatedAt: serverTimestamp()
-        });
-        
-        return { transactionIds: [transactionId] };
-      });
-      
-      console.log(`✅ Pago completo registrado exitosamente. IDs: ${result.transactionIds}`);
-      
-      return {
-        success: true,
-        transactionIds: result.transactionIds
-      };
-      
-    } catch (error: any) {
-      console.error('❌ Error registrando pago completo:', error);
-      return {
-        success: false,
-        error: error.message || 'Error al registrar el pago completo'
-      };
-    }
-  }
+        const paymentId = `${targetMonth}-${memberId}-${membershipId}`;
+        const paymentRef = doc(db, `gyms/${gymId}/monthlyPayments`, paymentId);
 
-  // ============ MÉTODOS DE AUTOMATIZACIÓN ============
+        await setDoc(paymentRef, payment);
 
-  /**
-   * 🤖 Verificar si debe ejecutarse la generación automática
-   */
-  static async checkIfShouldProcess(gymId: string): Promise<boolean> {
-    try {
-      const today = new Date();
-      const isFirstOfMonth = today.getDate() === 1;
-      
-      if (!isFirstOfMonth) {
-        return false;
-      }
-      
-      // Verificar si ya se procesó este mes
-      const configRef = doc(db, `gyms/${gymId}/config`, 'monthlyPayments');
-      const configSnap = await getDoc(configRef);
-      
-      if (configSnap.exists()) {
-        const config = configSnap.data();
-        const lastProcessed = config.lastProcessedMonth;
-        const currentMonth = `${today.getFullYear()}-${(today.getMonth() + 1).toString().padStart(2, '0')}`;
-        
-        return lastProcessed !== currentMonth;
-      }
-      
-      return true;
-      
-    } catch (error) {
-      console.error('Error verificando si debe procesar:', error);
-      return false;
-    }
-  }
+        // ACTUALIZAR DEUDA DEL SOCIO
+        const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+        const memberSnap = await getDoc(memberRef);
 
-  /**
-   * 🤖 Generar pagos mensuales automáticamente
-   */
-  static async generateMonthlyPayments(gymId: string): Promise<{
-    success: boolean;
-    processedMembers: number;
-    totalAmount: number;
-    errors: string[];
-  }> {
-    try {
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = today.getMonth() + 1;
-      
-      console.log(`🚀 Iniciando generación automática de pagos para ${year}-${month}`);
-      
-      // Obtener todos los socios activos con membresías vigentes
-      const membersRef = collection(db, `gyms/${gymId}/members`);
-      const membersQuery = query(membersRef, where('status', '==', 'active'));
-      const membersSnap = await getDocs(membersQuery);
-      
-      let processedMembers = 0;
-      let totalAmount = 0;
-      const errors: string[] = [];
-      
-      // Procesar por lotes para evitar problemas de performance
-      const batch = writeBatch(db);
-      
-      for (const memberDoc of membersSnap.docs) {
-        const member = memberDoc.data();
-        try {
+        if (memberSnap.exists()) {
+          const currentMemberData = memberSnap.data();
+          const currentDebt = currentMemberData.totalDebt || 0;
           
-          
-          // Obtener membresías activas del socio
-          const membershipsRef = collection(db, `gyms/${gymId}/membershipAssignments`);
-          const membershipsQuery = query(
-            membershipsRef,
-            where('memberId', '==', memberDoc.id),
-            where('status', '==', 'active'),
-            where('autoRenewal', '==', true)
-          );
-          const membershipsSnap = await getDocs(membershipsQuery);
-          
-          if (membershipsSnap.empty) {
-            continue; // Saltar si no tiene membresías con auto-renovación
-          }
-          
-          // Crear registro de pago mensual
-          const recordId = `${year}-${month}-${memberDoc.id}`;
-          const activities: { [key: string]: MonthlyActivityPayment } = {};
-          let memberTotal = 0;
-          
-          
-          membershipsSnap.forEach(membershipDoc => {
-            const membership = membershipDoc.data();
-            
-            activities[membershipDoc.id] = {
-              activityId: membershipDoc.id,
-              activityName: membership.activityName || 'Actividad',
-              cost: membership.cost || 0,
-              status: 'pending',
-              dueDate: `${year}-${month.toString().padStart(2, '0')}-10`,
-              membershipId: membershipDoc.id,
-              autoGenerated: true
-            };
-            
-            memberTotal += membership.cost || 0;
+          await updateDoc(memberRef, {
+            totalDebt: currentDebt + currentPrice,
+            updatedAt: Timestamp.now()
           });
           
-          if (memberTotal > 0) {
-            const member = memberDoc.data();
-            const paymentRecord: MonthlyPaymentRecord = {
-              memberId: memberDoc.id,
-              memberName: `${member.firstName || ''} ${member.lastName || ''}`.trim(),
-              year,
-              month,
-              activities,
-              totalCost: memberTotal,
-              totalPaid: 0,
-              totalPending: memberTotal,
-              createdAt: serverTimestamp()
-            };
-            
-            const recordRef = doc(db, `gyms/${gymId}/monthlyPayments`, recordId);
-            batch.set(recordRef, paymentRecord);
-            
-            processedMembers++;
-            totalAmount += memberTotal;
-          }
-          
-        } catch (error: any) {
-          errors.push(`Error procesando ${member?.firstName || 'Socio'} ${member?.lastName || 'desconocido'}: ${error.message}`);
-
+          console.log(`Deuda actualizada: ${memberName} +$${currentPrice} (Total: $${currentDebt + currentPrice})`);
         }
+
+        result.paymentsGenerated++;
+        result.summary.totalAmount += currentPrice;
+
+        console.log(`Pago generado: ${memberName} - ${membership.activityName} - $${currentPrice}`);
       }
-      
-      // Ejecutar el lote
-      await batch.commit();
-      
-      // Actualizar configuración
-      const configRef = doc(db, `gyms/${gymId}/config`, 'monthlyPayments');
-      await setDoc(configRef, {
-        lastProcessedMonth: `${year}-${month.toString().padStart(2, '0')}`,
-        lastProcessedDate: serverTimestamp(),
-        lastProcessedStats: {
-          processedMembers,
-          totalAmount,
-          errors: errors.length
-        }
-      }, { merge: true });
-      
-      console.log(`✅ Generación automática completada:`, {
-        processedMembers,
-        totalAmount,
-        errors: errors.length
-      });
-      
-      return {
-        success: true,
-        processedMembers,
-        totalAmount,
-        errors
-      };
-      
-    } catch (error: any) {
-      console.error('❌ Error en generación automática:', error);
-      return {
-        success: false,
-        processedMembers: 0,
-        totalAmount: 0,
-        errors: [error.message || 'Error desconocido']
-      };
     }
-  }
 
-      /**
-     * 🆕 Generar pago mensual para un socio específico
-     */
-    static async generateMonthlyPaymentForMember(
-      gymId: string,
-      memberId: string,
-      year: number,
-      month: number
-    ): Promise<{ success: boolean; error?: string }> {
-      try {
-        console.log(`🔄 Generando pago mensual para socio: ${memberId}`);
-        
-        return await runTransaction(db, async (transaction) => {
-          // Obtener información del socio
-          const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-          const memberSnap = await transaction.get(memberRef);
-          
-          if (!memberSnap.exists()) {
-            throw new Error('Socio no encontrado');
-          }
-          
-          const member = memberSnap.data();
-          
-          // Obtener membresías activas del socio
-          const membershipsRef = collection(db, `gyms/${gymId}/membershipAssignments`);
-          const membershipsQuery = query(
-            membershipsRef,
-            where('memberId', '==', memberId),
-            where('status', '==', 'active')
-          );
-          const membershipsSnap = await getDocs(membershipsQuery);
-          
-          if (membershipsSnap.empty) {
-            throw new Error('El socio no tiene membresías activas');
-          }
-          
-          // Crear registro de pago mensual
-          const recordId = `${year}-${month}-${memberId}`;
-          const activities: { [key: string]: MonthlyActivityPayment } = {};
-          let memberTotal = 0;
-          
-          membershipsSnap.forEach(membershipDoc => {
-            const membership = membershipDoc.data();
-            
-            activities[membershipDoc.id] = {
-              activityId: membershipDoc.id,
-              activityName: membership.activityName || 'Actividad',
-              cost: membership.cost || 0,
-              status: 'pending',
-              dueDate: `${year}-${month.toString().padStart(2, '0')}-10`,
-              membershipId: membershipDoc.id,
-              autoGenerated: false // Generado manualmente
-            };
-            
-            memberTotal += membership.cost || 0;
-          });
-          
-          if (memberTotal > 0) {
-            const paymentRecord: MonthlyPaymentRecord = {
-              memberId,
-              memberName: `${member.firstName || ''} ${member.lastName || ''}`.trim(),
-              year,
-              month,
-              activities,
-              totalCost: memberTotal,
-              totalPaid: 0,
-              totalPending: memberTotal,
-              createdAt: serverTimestamp()
-            };
-            
-            const recordRef = doc(db, `gyms/${gymId}/monthlyPayments`, recordId);
-            transaction.set(recordRef, paymentRecord);
-          }
-          
-          return { success: true };
+    result.success = true;
+    console.log('Generación completa:', result);
+    return result;
+
+  } catch (error: any) {
+    console.error('Error generando pagos:', error);
+    result.errors.push(error.message);
+    return result;
+  }
+};
+
+export const getPendingPaymentsList = async (
+  gymId: string,
+  month?: string
+): Promise<MonthlyPaymentListItem[]> => {
+  try {
+    const targetMonth = month || getCurrentMonth();
+
+    const paymentsRef = collection(db, `gyms/${gymId}/monthlyPayments`);
+    const q = query(
+      paymentsRef,
+      where('month', '==', targetMonth),
+      orderBy('memberName')
+    );
+
+    const paymentsSnap = await getDocs(q);
+
+    const memberPayments: Map<string, MonthlyPaymentListItem> = new Map();
+
+    paymentsSnap.forEach((doc) => {
+      const payment = doc.data() as MonthlyPayment;
+
+      if (payment.status === 'paid') return;
+
+      const overdue = isOverdue(payment.dueDate);
+      const status = overdue ? 'overdue' : 'pending';
+
+      if (!memberPayments.has(payment.memberId)) {
+        memberPayments.set(payment.memberId, {
+          memberId: payment.memberId,
+          memberName: payment.memberName,
+          totalPending: 0,
+          activitiesPendingCount: 0,
+          isOverdue: overdue,
+          daysOverdue: 0,
+          pendingActivities: []
         });
-        
-      } catch (error: any) {
-        console.error('❌ Error generando pago para socio:', error);
-        return {
-          success: false,
-          error: error.message || 'Error al generar el pago mensual'
+      }
+
+      const item = memberPayments.get(payment.memberId)!;
+      item.totalPending += payment.amount;
+      item.activitiesPendingCount++;
+
+      if (overdue) {
+        const today = new Date();
+        const due = new Date(payment.dueDate);
+        const days = Math.floor(
+          (today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        item.daysOverdue = Math.max(item.daysOverdue, days);
+      }
+
+      item.pendingActivities.push({
+        paymentId: doc.id,
+        membershipId: payment.membershipId,
+        activityName: payment.activityName,
+        amount: payment.amount,
+        dueDate: payment.dueDate,
+        status
+      });
+    });
+
+    return Array.from(memberPayments.values()).sort((a, b) => {
+      if (a.isOverdue && !b.isOverdue) return -1;
+      if (!a.isOverdue && b.isOverdue) return 1;
+      return a.memberName.localeCompare(b.memberName);
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo lista de pagos:', error);
+    throw error;
+  }
+};
+
+export const getMonthlySummary = async (
+  gymId: string,
+  month?: string
+): Promise<MonthlySummary> => {
+  try {
+    const targetMonth = month || getCurrentMonth();
+    const [year, monthNum] = targetMonth.split('-').map(Number);
+
+    const paymentsRef = collection(db, `gyms/${gymId}/monthlyPayments`);
+    const q = query(paymentsRef, where('month', '==', targetMonth));
+    const paymentsSnap = await getDocs(q);
+
+    const summary: MonthlySummary = {
+      year,
+      month: monthNum,
+      totalMembers: 0,
+      totalToCollect: 0,
+      totalCollected: 0,
+      totalPending: 0,
+      membersWithDebt: 0,
+      membersUpToDate: 0,
+      activitiesBreakdown: {}
+    };
+
+    const membersSet = new Set<string>();
+    const membersWithDebtSet = new Set<string>();
+
+    paymentsSnap.forEach((doc) => {
+      const payment = doc.data() as MonthlyPayment;
+
+      membersSet.add(payment.memberId);
+      summary.totalToCollect += payment.amount;
+
+      if (payment.status === 'paid') {
+        summary.totalCollected += payment.amount;
+      } else {
+        summary.totalPending += payment.amount;
+        membersWithDebtSet.add(payment.memberId);
+      }
+
+      if (!summary.activitiesBreakdown[payment.activityName]) {
+        summary.activitiesBreakdown[payment.activityName] = {
+          members: 0,
+          totalCost: 0,
+          collected: 0,
+          pending: 0
         };
       }
-    }
-}
 
-export default MonthlyPaymentsService;
+      const breakdown = summary.activitiesBreakdown[payment.activityName];
+      breakdown.members++;
+      breakdown.totalCost += payment.amount;
+
+      if (payment.status === 'paid') {
+        breakdown.collected += payment.amount;
+      } else {
+        breakdown.pending += payment.amount;
+      }
+    });
+
+    summary.totalMembers = membersSet.size;
+    summary.membersWithDebt = membersWithDebtSet.size;
+    summary.membersUpToDate = summary.totalMembers - summary.membersWithDebt;
+
+    return summary;
+
+  } catch (error) {
+    console.error('Error obteniendo resumen mensual:', error);
+    throw error;
+  }
+};
+
+export const registerPayment = async (
+  gymId: string,
+  paymentId: string,
+  paymentMethod: PaymentMethod,
+  transactionId?: string
+): Promise<{ success: boolean; error?: string }> => {
+  try {
+    await runTransaction(db, async (transaction) => {
+      // 1️⃣ TODAS LAS LECTURAS PRIMERO
+      const paymentRef = doc(db, `gyms/${gymId}/monthlyPayments`, paymentId);
+      const paymentSnap = await transaction.get(paymentRef);
+
+      if (!paymentSnap.exists()) {
+        throw new Error('Pago no encontrado');
+      }
+
+      const payment = paymentSnap.data() as MonthlyPayment;
+
+      if (payment.status === 'paid') {
+        throw new Error('Este pago ya fue registrado');
+      }
+
+      // Leer datos del socio ANTES de escribir
+      const memberRef = doc(db, `gyms/${gymId}/members`, payment.memberId);
+      const memberSnap = await transaction.get(memberRef);
+
+      if (!memberSnap.exists()) {
+        throw new Error('Socio no encontrado');
+      }
+
+      const memberData = memberSnap.data();
+      const currentDebt = memberData.totalDebt || 0;
+      const newDebt = Math.max(0, currentDebt - payment.amount);
+
+      // 2️⃣ TODAS LAS ESCRITURAS DESPUÉS
+      transaction.update(paymentRef, {
+        status: 'paid',
+        paidAt: Timestamp.now(),
+        paidDate: new Date().toISOString().split('T')[0],
+        transactionId: transactionId || null
+      });
+
+      transaction.update(memberRef, {
+        totalDebt: newDebt,
+        updatedAt: Timestamp.now()
+      });
+
+      console.log(`✅ Pago actualizado: ${payment.memberName} -$${payment.amount} (Nueva deuda: $${newDebt})`);
+    });
+
+    return { success: true };
+
+  } catch (error: any) {
+    console.error('❌ Error registrando pago:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const createMembership = async (
+  gymId: string,
+  memberId: string,
+  memberName: string,
+  activityId: string,
+  activityName: string,
+  startDate: string
+): Promise<{ success: boolean; membershipId?: string; error?: string }> => {
+  try {
+    const membershipData: MembershipStatus = {
+      memberId,
+      memberName,
+      activityId,
+      activityName,
+      startDate,
+      status: 'active',
+      autoGeneratePayments: true,
+      createdAt: Timestamp.now()
+    };
+
+    const membershipsRef = collection(
+      db,
+      `gyms/${gymId}/members/${memberId}/memberships`
+    );
+    const membershipRef = doc(membershipsRef);
+    await setDoc(membershipRef, membershipData);
+
+    await generateMonthlyPayments(gymId);
+
+    return { success: true, membershipId: membershipRef.id };
+
+  } catch (error: any) {
+    console.error('Error creando membresía:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const suspendMembership = async (
+  gymId: string,
+  memberId: string,
+  membershipId: string,
+  reason?: string
+): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const membershipRef = doc(
+      db,
+      `gyms/${gymId}/members/${memberId}/memberships`,
+      membershipId
+    );
+
+    await updateDoc(membershipRef, {
+      status: 'suspended',
+      autoGeneratePayments: false,
+      suspendedAt: Timestamp.now(),
+      suspendedReason: reason || 'Sin motivo especificado',
+      updatedAt: Timestamp.now()
+    });
+
+    return { success: true };
+
+  } catch (error: any) {
+    console.error('Error suspendiendo membresía:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+export const reactivateMembership = async (
+  gymId: string,
+  memberId: string,
+  membershipId: string
+): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const membershipRef = doc(
+      db,
+      `gyms/${gymId}/members/${memberId}/memberships`,
+      membershipId
+    );
+
+    await updateDoc(membershipRef, {
+      status: 'active',
+      autoGeneratePayments: true,
+      suspendedAt: null,
+      suspendedReason: null,
+      updatedAt: Timestamp.now()
+    });
+
+    await generateMonthlyPayments(gymId);
+
+    return { success: true };
+
+  } catch (error: any) {
+    console.error('Error reactivando membresía:', error);
+    return { success: false, error: error.message };
+  }
+};

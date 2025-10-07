@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
-  Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap
+  Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap,Database
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -365,24 +365,20 @@ const Sidebar: React.FC = () => {
                         onClick={() => handleNavigate('settings/memberships')}
                       />
 
-                      {/*    
-
-                          <NavItem
-                        icon={<RefreshCw size={16} />}
-                        text="Renovaciones Automáticas"
-                        active={isActive('auto-renewals')}
-                        onClick={() => handleNavigate('auto-renewals')}
+                     <NavItem
+                        icon={<DollarSign size={20} />}
+                        text="Pagos Mensuales"
+                        active={isActive('payments/monthly')}
+                        onClick={() => handleNavigate('payments/monthly')}
                         isNew={true}
                       />
-                              * //*   🆕 AGREGAR ESTA NUEVA SECCIÓN AQUÍ 
-                        <NavItem
-                          icon={<DollarSign size={20} />}
-                          text="Cobros"
-                          active={isActive('payments')}
-                          onClick={() => handleNavigate('payments')}
-                          isNew={true}
-                        />
-               */}
+
+                      <NavItem
+                        icon={<Database size={20} />}
+                        text="Migración"
+                        active={isActive('admin/migration')}
+                        onClick={() => handleNavigate('admin/migration')}
+                      />
                     
                       <NavItem
                         icon={<User size={16} />}

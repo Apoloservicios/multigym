@@ -10,7 +10,10 @@ import MembershipManagement from './pages/MembershipManagement';
 import AppContent from './components/AppContent';
 
 // Hook para automatización mensual
-import useMonthlyPaymentScheduler from './hooks/useMonthlyPaymentScheduler';
+
+
+import MonthlyPaymentsDashboard from './components/payments/MonthlyPaymentsDashboard';
+import MigrationAdminPanel from './components/admin/MigrationAdminPanel';
 
 import './index.css';
 

@@ -6,6 +6,7 @@ import { AlertCircle, Check, Calendar, DollarSign, Users } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import { getMemberships, assignMembership } from '../../services/membershipService';
 import { getCurrentDateString, htmlDateToLocalDate, calculateEndDate } from '../../utils/date.utils';
+import { assignMembershipToMember } from '../../services/membershipAssignment.service';
 
 interface FormData {
   membershipId: string;
@@ -164,67 +165,56 @@ const MembershipForm: React.FC<MembershipFormProps> = ({ memberId, memberName, o
     return endDate.toLocaleDateString('es-AR');
   };
   
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!validateForm() || !gymData?.id) {
-      return;
-    }
-    
-    setLoading(true);
-    setErrors({});
-    
-    try {
-      if (!selectedMembership) {
-        throw new Error('No se ha seleccionado una membresía válida');
+    const handleSubmit = async (e: React.FormEvent) => {
+      e.preventDefault();
+      
+      if (!validateForm() || !gymData?.id) {
+        return;
       }
       
-      const membershipData = {
-
-        memberId,
-        membershipId: formData.membershipId, // ID de la definición de membresía
-        activityId: selectedMembership.activityId,
-        activityName: selectedMembership.activityName,
-        membershipName: selectedMembership.name, // Agregar nombre de la membresía
-        startDate: formData.startDate,
-        endDate: calculateEndDate(
-          htmlDateToLocalDate(formData.startDate), 
-          selectedMembership.duration
-        ).toISOString().split('T')[0],
-        cost: Number(formData.cost),
-        paymentStatus: formData.paymentStatus,
-        status: 'active' as const,
-        active: true, // 🔧 AGREGAR ESTE CAMPO
-        maxAttendances: selectedMembership.maxAttendances,
-        currentAttendances: 0,
-        description: formData.notes || selectedMembership.description,
-        autoRenewal: formData.autoRenewal,
-        paymentFrequency: formData.paymentFrequency,
-        paymentType: 'monthly',
-       
-      };
+      setLoading(true);
+      setErrors({});
       
-      console.log('📊 Datos de membresía a guardar:', membershipData);
-      
-      const result = await assignMembership(gymData.id, memberId, membershipData);
-      
-      if (result) {
-        setSuccess(true);
-        setTimeout(() => {
-          if (onSave) {
-            onSave(membershipData);
-          }
-        }, 1500);
+      try {
+        if (!selectedMembership) {
+          throw new Error('No se ha seleccionado una membresía válida');
+        }
+        
+        console.log('📝 Asignando membresía con nuevo sistema...');
+        
+        // ✅ USAR SERVICIO NUEVO que genera pagos automáticamente
+        const result = await assignMembershipToMember({
+          gymId: gymData.id,
+          memberId: memberId,
+          memberName: memberName,
+          activityId: selectedMembership.activityId,
+          activityName: selectedMembership.activityName,
+          activityCost: Number(formData.cost),
+          startDate: formData.startDate
+        });
+        
+        if (result.success) {
+          setSuccess(true);
+          console.log('✅ Membresía asignada:', result.membershipId);
+          console.log('💰 Pago generado:', result.paymentGenerated);
+          
+          setTimeout(() => {
+            if (onSave) {
+              onSave({});
+            }
+          }, 1500);
+        } else {
+          throw new Error(result.error || 'Error al asignar membresía');
+        }
+      } catch (error: any) {
+        console.error('❌ Error assigning membership:', error);
+        setErrors({
+          form: error.message || 'Error al asignar membresía. Intente nuevamente.'
+        });
+      } finally {
+        setLoading(false);
       }
-    } catch (error: any) {
-      console.error('Error assigning membership:', error);
-      setErrors({
-        form: error.message || 'Error al asignar membresía. Intente nuevamente.'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
   
   return (
     <div className="bg-white rounded-lg shadow-md p-6">

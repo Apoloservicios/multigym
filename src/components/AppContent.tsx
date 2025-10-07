@@ -38,6 +38,7 @@ import MemberRoutines from '../pages/member-routines/MemberRoutines';
 import UnifiedRenewalDashboard from '../components/memberships/UnifiedRenewalDashboard';
 
 import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
+import MigrationAdminPanel from '../components/admin/MigrationAdminPanel';
 
 import MembershipManagement from '../pages/MembershipManagement';
 
@@ -200,6 +201,9 @@ const AppContent: React.FC = () => {
                 </ProtectedRoute>
               } />
 
+
+              <Route path="/payments/monthly" element={<MonthlyPaymentsDashboard />} />
+              <Route path="/admin/migration" element={<MigrationAdminPanel />} />
 
 
               <Route path="exercises" element={<Exercises />} />

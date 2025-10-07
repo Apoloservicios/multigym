@@ -11,6 +11,22 @@ import useAuth from '../../hooks/useAuth';
 import { getPendingMemberships } from '../../services/payment.service';
 import { getCurrentDateString } from '../../utils/date.utils';
 
+
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  query,
+  where,
+  Timestamp,
+  runTransaction,
+  orderBy
+} from 'firebase/firestore';
+import { db } from '../../config/firebase';
+
 interface MemberPaymentProps {
   member: Member;
   onSuccess: () => void;
@@ -143,6 +159,31 @@ const MemberPayment: React.FC<MemberPaymentProps> = ({ member, onSuccess, onCanc
       const result = await registerMembershipPayment(paymentData);
       
       if (result.success) {
+
+        // Actualizar los pagos mensuales correspondientes
+          const paymentsRef = collection(db, `gyms/${gymData.id}/monthlyPayments`);
+          const q = query(
+            paymentsRef,
+            where('memberId', '==', member.id),
+            where('status', '==', 'pending')
+          );
+          
+          const paymentsSnap = await getDocs(q);
+          
+          for (const paymentDoc of paymentsSnap.docs) {
+            const payment = paymentDoc.data();
+            
+            // Si pagaste una membresía que tiene un pago mensual pendiente
+            if (formData.membershipIds.includes(payment.membershipId)) {
+              await updateDoc(doc(db, `gyms/${gymData.id}/monthlyPayments`, paymentDoc.id), {
+                status: 'paid',
+                paidAt: Timestamp.now(),
+                paidDate: formData.paymentDate,
+                transactionId: result.transactionId
+              });
+            }
+          }
+        
         setSuccess(true);
         
         // 🔧 CORRECCIÓN CLAVE: Esperar un momento y luego recargar

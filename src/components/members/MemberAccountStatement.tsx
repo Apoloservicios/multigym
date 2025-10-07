@@ -1,4 +1,5 @@
-// src/components/members/MemberAccountStatement.tsx - VERSIÓN CORREGIDA Y OPTIMIZADA
+// src/components/members/MemberAccountStatement.tsx
+// ACTUALIZADO PARA SISTEMA DE PAGOS MENSUALES
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -12,310 +13,174 @@ import {
   CreditCard,
   Receipt,
   Plus,
-  Eye,
-  ExternalLink
+  Eye
 } from 'lucide-react';
-import { Transaction } from '../../types/gym.types';
-import { MembershipAssignment } from '../../types/member.types';
 import { formatCurrency } from '../../utils/formatting.utils';
-import { getMemberPaymentHistory, getPendingMemberships } from '../../services/payment.service';
-import { exportTransactionsToExcel } from '../../utils/excel.utils';
-import { generateReceiptPDF, generateWhatsAppLink } from '../../utils/receipt.utils';
 import useAuth from '../../hooks/useAuth';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+import { registerPayment } from '../../services/monthlyPayments.service';
+
+interface MonthlyPayment {
+  id: string;
+  membershipId: string;
+  activityName: string;
+  month: string;
+  dueDate: string;
+  amount: number;
+  status: 'pending' | 'paid' | 'overdue';
+  paidAt?: any;
+  paidDate?: string;
+}
 
 interface MemberAccountStatementProps {
   memberId: string;
   memberName: string;
   totalDebt: number;
   onPaymentClick: () => void;
-  onRefresh?: () => void | Promise<void>; // 🆕 AGREGAR ESTA LÍNEA (opcional)
+  onRefresh?: () => void;
 }
 
 const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   memberId,
   memberName,
   totalDebt,
-  onPaymentClick
+  onPaymentClick,
+  onRefresh
 }) => {
   const { gymData } = useAuth();
   
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [pendingMemberships, setPendingMemberships] = useState<MembershipAssignment[]>([]);
+  const [pendingPayments, setPendingPayments] = useState<MonthlyPayment[]>([]);
+  const [paidPayments, setPaidPayments] = useState<MonthlyPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState('');
-  const [period, setPeriod] = useState('all');
-  const [activeTab, setActiveTab] = useState<'summary' | 'transactions' | 'pending'>('summary');
-  
-  // Estados para comprobante
-  const [showReceipt, setShowReceipt] = useState(false);
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
-  const [selectedMemberships, setSelectedMemberships] = useState<MembershipAssignment[]>([]);
+  const [activeTab, setActiveTab] = useState<'summary' | 'pending' | 'history'>('summary');
 
-  // Cargar datos
-  const loadData = async () => {
+  // Cargar pagos mensuales
+  const loadPayments = async () => {
     if (!gymData?.id || !memberId) {
       setLoading(false);
       return;
     }
 
     try {
-      const [transactionHistory, pendingMembershipsList] = await Promise.all([
-        getMemberPaymentHistory(gymData.id, memberId),
-        getPendingMemberships(gymData.id, memberId)
-      ]);
-
-      setTransactions(transactionHistory);
-      setPendingMemberships(pendingMembershipsList);
+      const paymentsRef = collection(db, `gyms/${gymData.id}/monthlyPayments`);
+      const q = query(
+        paymentsRef,
+        where('memberId', '==', memberId),
+        orderBy('dueDate', 'desc')
+      );
       
-      console.log('📊 DATOS CARGADOS EN ESTADO DE CUENTA:', {
-        transacciones: transactionHistory.length,
-        membresiaspendientes: pendingMembershipsList.length,
-        totalDeuda: totalDebt
+      const snapshot = await getDocs(q);
+      
+      const pending: MonthlyPayment[] = [];
+      const paid: MonthlyPayment[] = [];
+      
+      snapshot.forEach(doc => {
+        const payment = { id: doc.id, ...doc.data() } as MonthlyPayment;
+        
+        // Verificar si está vencido
+        if (payment.status === 'pending') {
+          const today = new Date();
+          const dueDate = new Date(payment.dueDate);
+          if (today > dueDate) {
+            payment.status = 'overdue';
+          }
+        }
+        
+        if (payment.status === 'paid') {
+          paid.push(payment);
+        } else {
+          pending.push(payment);
+        }
+      });
+      
+      setPendingPayments(pending);
+      setPaidPayments(paid);
+      
+      console.log('📊 Pagos cargados:', {
+        pendientes: pending.length,
+        pagados: paid.length
       });
       
     } catch (err) {
-      console.error('Error loading account data:', err);
-      setError('Error al cargar los datos del estado de cuenta');
+      console.error('Error cargando pagos:', err);
+      setError('Error al cargar los pagos');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
+    loadPayments();
   }, [gymData?.id, memberId]);
 
-  // Filtrar transacciones por período
-  const filteredTransactions = () => {
-    if (period === 'all') return transactions;
-
-    const now = new Date();
-    const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const firstDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const lastDayOfPreviousMonth = new Date(now.getFullYear(), now.getMonth(), 0);
-    const firstDayOfYear = new Date(now.getFullYear(), 0, 1);
-
-    return transactions.filter((tx: any) => {
-      const txDate = tx.date && typeof tx.date.toDate === 'function' 
-        ? tx.date.toDate() 
-        : new Date(tx.date);
-      
-      switch (period) {
-        case 'current':
-          return txDate >= firstDayOfMonth;
-        case 'previous':
-          return txDate >= firstDayOfPreviousMonth && txDate <= lastDayOfPreviousMonth;
-        case 'year':
-          return txDate >= firstDayOfYear;
-        default:
-          return true;
-      }
-    });
-  };
-
-  // Formatear fecha correctamente
-  const formatDate = (date: any) => {
-    if (!date) return 'Sin fecha';
-    
-    let actualDate: Date;
-    
-    if (date && typeof date === 'object' && 'toDate' in date) {
-      actualDate = date.toDate();
-    } else if (date instanceof Date) {
-      actualDate = date;
-    } else {
-      actualDate = new Date(date);
-    }
-    
-    return actualDate.toLocaleDateString('es-AR');
-  };
-
-  // Obtener el nombre del método de pago
-  const getPaymentMethodName = (method: string) => {
-    switch (method) {
-      case 'cash': return 'Efectivo';
-      case 'transfer': return 'Transferencia';
-      case 'card': return 'Tarjeta';
-      default: return method || 'No especificado';
-    }
-  };
-
-  // Obtener el estilo según el estado
-  const getStatusStyle = (status: string) => {
-    switch (status) {
-      case 'completed':
-      case 'paid':
-        return 'bg-green-100 text-green-800';
-      case 'pending':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'cancelled':
-        return 'bg-red-100 text-red-800';
-      case 'overdue':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  // Función para refrescar los datos
+  // Refrescar datos
   const refreshData = async () => {
     setRefreshing(true);
     try {
-      await loadData();
+      await loadPayments();
+      if (onRefresh) {
+        await onRefresh();
+      }
     } finally {
       setRefreshing(false);
     }
   };
 
-  // Exportar a Excel
-  const exportToExcel = async () => {
-    setIsExporting(true);
-    
+  // Pagar un pago específico
+  const handlePaySingle = async (paymentId: string, amount: number) => {
+    if (!gymData?.id) return;
+
+    const confirmed = window.confirm(
+      `¿Confirmar pago de ${formatCurrency(amount)}?`
+    );
+
+    if (!confirmed) return;
+
     try {
-      const dataToExport = filteredTransactions();
-      await exportTransactionsToExcel(dataToExport, memberName);
-    } catch (err) {
-      console.error('Error exporting to Excel:', err);
-      setError('Error al exportar a Excel');
-    } finally {
-      setIsExporting(false);
+      const result = await registerPayment(gymData.id, paymentId, 'cash');
+      
+      if (result.success) {
+        alert('Pago registrado correctamente');
+        await refreshData();
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error al pagar:', error);
+      alert('Error al registrar el pago');
     }
   };
 
-  // Determinar si una membresía está vencida
-  const isMembershipOverdue = (membership: MembershipAssignment): boolean => {
-    if (!membership.endDate) return false;
-    const today = new Date().toISOString().split('T')[0];
-    return membership.endDate < today;
+  // Formatear fecha
+  const formatDate = (dateStr: string) => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('es-AR');
+    } catch {
+      return dateStr;
+    }
   };
 
   // Calcular días de atraso
-  const getDaysOverdue = (membership: MembershipAssignment): number => {
-    if (!isMembershipOverdue(membership)) return 0;
+  const getDaysOverdue = (dueDate: string): number => {
     const today = new Date();
-    const endDate = new Date(membership.endDate);
-    return Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
+    const due = new Date(dueDate);
+    const diff = today.getTime() - due.getTime();
+    return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
   };
 
-  // Mostrar comprobante de pago
-  const showPaymentReceipt = async (transaction: Transaction) => {
-    try {
-      let relatedMemberships: MembershipAssignment[] = [];
-      
-      if (transaction.membershipId) {
-        const membershipIds = transaction.membershipId.split(', ');
-        
-        for (const membershipId of membershipIds) {
-          let foundMembership = pendingMemberships.find((m: any) => m.id === membershipId);
-          
-          if (!foundMembership && transaction.description) {
-            const createdMembership = createMembershipFromDescription(transaction.description, membershipId);
-            if (createdMembership) {
-              foundMembership = createdMembership;
-            }
-          }
-          
-          if (foundMembership) {
-            relatedMemberships.push(foundMembership);
-          }
-        }
-      }
-      
-      setSelectedTransaction(transaction);
-      setSelectedMemberships(relatedMemberships);
-      setShowReceipt(true);
-    } catch (err) {
-      console.error('Error preparing receipt:', err);
-    }
-  };
-
-  // Crear objeto de membresía a partir de la descripción
-  const createMembershipFromDescription = (description: string, membershipId: string): MembershipAssignment | null => {
-    if (description.includes('Pago membresías:')) {
-      const detailMatch = description.match(/Pago membresías: (.+?) \| Total:/);
-      if (detailMatch) {
-        const details = detailMatch[1];
-        const membershipMatches = details.split(', ');
-        const firstMembership = membershipMatches[0];
-        const match = firstMembership.match(/(.+?) - \$\s*([\d,.]+)/);
-        
-        if (match) {
-          const name = match[1].trim();
-          const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
-          const amount = parseFloat(cleanAmount);
-          
-          return {
-            id: membershipId,
-            activityName: name,
-            cost: amount,
-            paymentStatus: 'paid',
-            status: 'active'
-          } as MembershipAssignment;
-        }
-      }
-    } else if (description.includes('Pago membresía')) {
-      const match = description.match(/Pago membresía (.+?) - \$\s*([\d,.]+)/);
-      if (match) {
-        const name = match[1].trim();
-        const cleanAmount = match[2].replace(/\./g, '').replace(/,/g, '.');
-        const amount = parseFloat(cleanAmount);
-        
-        return {
-          id: membershipId,
-          activityName: name,
-          cost: amount,
-          paymentStatus: 'paid',
-          status: 'active'
-        } as MembershipAssignment;
-      }
-    }
-    
-    return null;
-  };
-
-  // Generar PDF del comprobante
-  const handleDownloadPDF = async () => {
-    if (!selectedTransaction) return;
-    
-    try {
-      await generateReceiptPDF(
-        selectedTransaction,
-        memberName,
-        selectedMemberships,
-        gymData?.name || 'MultiGym'
-      );
-    } catch (err) {
-      console.error('Error generating PDF:', err);
-      setError('Error al generar PDF del comprobante');
-    }
-  };
-
-  // Compartir por WhatsApp
-  const handleShareWhatsApp = () => {
-    if (!selectedTransaction) return;
-    
-    try {
-      const whatsappLink = generateWhatsAppLink(
-        selectedTransaction,
-        memberName,
-        selectedMemberships,
-        gymData?.name || 'MultiGym'
-      );
-      
-      window.open(whatsappLink, '_blank');
-    } catch (err) {
-      console.error('Error generating WhatsApp link:', err);
-      setError('Error al generar enlace de WhatsApp');
-    }
-  };
+  // Calcular total pendiente
+  const totalPending = pendingPayments.reduce((sum, p) => sum + p.amount, 0);
+  const totalPaid = paidPayments.reduce((sum, p) => sum + p.amount, 0);
 
   if (loading) {
     return (
       <div className="bg-white rounded-lg shadow-md p-6">
         <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
           <span className="ml-3 text-gray-600">Cargando estado de cuenta...</span>
         </div>
       </div>
@@ -324,31 +189,21 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
+      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h2 className="text-xl font-semibold mb-2">Estado de Cuenta</h2>
           <p className="text-gray-600">Socio: {memberName}</p>
         </div>
         
-        <div className="flex space-x-3">
-          <button
-            onClick={refreshData}
-            disabled={refreshing}
-            className="flex items-center px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50"
-          >
-            <RefreshCw size={16} className={refreshing ? 'animate-spin mr-2' : 'mr-2'} />
-            {refreshing ? 'Actualizando...' : 'Actualizar'}
-          </button>
-          
-          <button
-            onClick={exportToExcel}
-            disabled={isExporting}
-            className="flex items-center px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 disabled:opacity-50"
-          >
-            <Download size={16} className={isExporting ? 'animate-pulse mr-2' : 'mr-2'} />
-            {isExporting ? 'Exportando...' : 'Excel'}
-          </button>
-        </div>
+        <button
+          onClick={refreshData}
+          disabled={refreshing}
+          className="flex items-center px-3 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 disabled:opacity-50"
+        >
+          <RefreshCw size={16} className={refreshing ? 'animate-spin mr-2' : 'mr-2'} />
+          {refreshing ? 'Actualizando...' : 'Actualizar'}
+        </button>
       </div>
       
       {error && (
@@ -362,16 +217,19 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
       <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6">
         <div className="flex justify-between items-center">
           <div>
-            <h3 className="text-gray-600 text-sm font-medium">Saldo Actual</h3>
-            <p className={`text-3xl font-bold ${totalDebt <= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {totalDebt <= 0 ? '$ 0' : `$ ${totalDebt.toLocaleString('es-AR')}`}
+            <h3 className="text-gray-600 text-sm font-medium">Saldo Pendiente</h3>
+            <p className={`text-3xl font-bold ${totalPending <= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {formatCurrency(totalPending)}
             </p>
             <p className="text-sm text-gray-500">
-              {totalDebt <= 0 ? 'Sin deuda pendiente' : `${pendingMemberships.length} membresía(s) pendiente(s)`}
+              {totalPending <= 0 
+                ? 'Sin pagos pendientes' 
+                : `${pendingPayments.length} pago(s) pendiente(s)`
+              }
             </p>
           </div>
           
-          {totalDebt > 0 && (
+          {totalPending > 0 && (
             <button
               onClick={onPaymentClick}
               className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -383,7 +241,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
         </div>
       </div>
 
-      {/* Tabs de navegación */}
+      {/* Tabs */}
       <div className="border-b border-gray-200 mb-6">
         <nav className="flex space-x-8">
           <button
@@ -404,57 +262,57 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            Deudas Pendientes ({pendingMemberships.length})
+            Pendientes ({pendingPayments.length})
           </button>
           <button
-            onClick={() => setActiveTab('transactions')}
+            onClick={() => setActiveTab('history')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'transactions'
+              activeTab === 'history'
                 ? 'border-green-500 text-green-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
-            Historial de Pagos ({transactions.length})
+            Historial ({paidPayments.length})
           </button>
         </nav>
       </div>
 
-      {/* Contenido de las tabs */}
+      {/* Tab: Resumen */}
       {activeTab === 'summary' && (
         <div className="space-y-6">
-          {/* Resumen rápido */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Pendientes */}
             <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
               <div className="flex items-center">
                 <Clock className="h-8 w-8 text-yellow-600 mr-3" />
                 <div>
                   <p className="text-sm font-medium text-yellow-600">Pendientes</p>
-                  <p className="text-xl font-bold text-yellow-900">{pendingMemberships.length}</p>
-                  <p className="text-xs text-yellow-700">
-                    {formatCurrency(pendingMemberships.reduce((sum, m) => sum + m.cost, 0))}
-                  </p>
+                  <p className="text-xl font-bold text-yellow-900">{pendingPayments.length}</p>
+                  <p className="text-xs text-yellow-700">{formatCurrency(totalPending)}</p>
                 </div>
               </div>
             </div>
             
+            {/* Pagados */}
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
               <div className="flex items-center">
                 <CheckCircle className="h-8 w-8 text-green-600 mr-3" />
                 <div>
-                  <p className="text-sm font-medium text-green-600">Pagos</p>
-                  <p className="text-xl font-bold text-green-900">{transactions.length}</p>
-                  <p className="text-xs text-green-700">Este año</p>
+                  <p className="text-sm font-medium text-green-600">Pagados</p>
+                  <p className="text-xl font-bold text-green-900">{paidPayments.length}</p>
+                  <p className="text-xs text-green-700">{formatCurrency(totalPaid)}</p>
                 </div>
               </div>
             </div>
             
+            {/* Vencidos */}
             <div className="bg-red-50 p-4 rounded-lg border border-red-200">
               <div className="flex items-center">
                 <AlertCircle className="h-8 w-8 text-red-600 mr-3" />
                 <div>
-                  <p className="text-sm font-medium text-red-600">Vencidas</p>
+                  <p className="text-sm font-medium text-red-600">Vencidos</p>
                   <p className="text-xl font-bold text-red-900">
-                    {pendingMemberships.filter(m => isMembershipOverdue(m)).length}
+                    {pendingPayments.filter(p => p.status === 'overdue').length}
                   </p>
                   <p className="text-xs text-red-700">Requieren atención</p>
                 </div>
@@ -462,30 +320,27 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
             </div>
           </div>
 
-          {/* Últimas transacciones */}
-          {transactions.length > 0 && (
+          {/* Últimos pagos */}
+          {paidPayments.length > 0 && (
             <div>
               <h4 className="text-lg font-medium text-gray-900 mb-3">Últimos Pagos</h4>
               <div className="space-y-3">
-                {transactions.slice(0, 3).map((transaction, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                {paidPayments.slice(0, 3).map((payment) => (
+                  <div key={payment.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                     <div className="flex items-center">
                       <CheckCircle className="h-5 w-5 text-green-500 mr-3" />
                       <div>
                         <p className="text-sm font-medium text-gray-900">
-                          {transaction.description || 'Pago de membresía'}
+                          {payment.activityName} - {payment.month}
                         </p>
-                        <p className="text-xs text-gray-500">{formatDate(transaction.date)}</p>
+                        <p className="text-xs text-gray-500">
+                          Pagado: {payment.paidDate ? formatDate(payment.paidDate) : 'N/A'}
+                        </p>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-bold text-green-600">
-                        +{formatCurrency(transaction.amount)}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {getPaymentMethodName(transaction.paymentMethod || '')}
-                      </p>
-                    </div>
+                    <p className="text-sm font-bold text-green-600">
+                      {formatCurrency(payment.amount)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -494,38 +349,23 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
         </div>
       )}
 
+      {/* Tab: Pendientes */}
       {activeTab === 'pending' && (
         <div>
-          {pendingMemberships.length === 0 ? (
+          {pendingPayments.length === 0 ? (
             <div className="text-center py-8">
               <CheckCircle size={48} className="mx-auto text-green-300 mb-3" />
-              <p className="text-gray-500">No hay membresías pendientes de pago</p>
-              <p className="text-sm text-gray-400">Todas las membresías están al día</p>
+              <p className="text-gray-500">No hay pagos pendientes</p>
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h4 className="text-lg font-medium text-gray-900">
-                  Membresías Pendientes ({pendingMemberships.length})
-                </h4>
-                {pendingMemberships.length > 0 && (
-                  <button
-                    onClick={onPaymentClick}
-                    className="flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
-                  >
-                    <CreditCard size={16} className="mr-2" />
-                    Pagar Seleccionadas
-                  </button>
-                )}
-              </div>
-              
-              {pendingMemberships.map((membership, index) => {
-                const isOverdue = isMembershipOverdue(membership);
-                const daysOverdue = getDaysOverdue(membership);
+              {pendingPayments.map((payment) => {
+                const isOverdue = payment.status === 'overdue';
+                const daysOverdue = isOverdue ? getDaysOverdue(payment.dueDate) : 0;
                 
                 return (
                   <div 
-                    key={index} 
+                    key={payment.id}
                     className={`p-4 rounded-lg border-2 ${
                       isOverdue 
                         ? 'border-red-200 bg-red-50' 
@@ -539,37 +379,27 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
                             isOverdue ? 'bg-red-500' : 'bg-yellow-500'
                           }`}></div>
                           <h5 className="font-medium text-gray-900">
-                            {membership.activityName}
+                            {payment.activityName}
                           </h5>
                           {isOverdue && (
                             <span className="ml-2 px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">
-                              Vencida hace {daysOverdue} días
+                              Vencido hace {daysOverdue} días
                             </span>
                           )}
                         </div>
                         
-                        <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
-                          <div>
-                            <span className="font-medium">Período:</span><br />
-                            {formatDate(membership.startDate)} - {formatDate(membership.endDate)}
-                          </div>
-                          <div>
-                            <span className="font-medium">Estado:</span><br />
-                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                              getStatusStyle(isOverdue ? 'overdue' : 'pending')
-                            }`}>
-                              {isOverdue ? 'Vencida' : 'Pendiente'}
-                            </span>
-                          </div>
+                        <div className="text-sm text-gray-600">
+                          <p>Mes: <strong>{payment.month}</strong></p>
+                          <p>Vence: <strong>{formatDate(payment.dueDate)}</strong></p>
                         </div>
                       </div>
                       
                       <div className="text-right ml-4">
                         <p className="text-2xl font-bold text-gray-900">
-                          {formatCurrency(membership.cost)}
+                          {formatCurrency(payment.amount)}
                         </p>
                         <button
-                          onClick={onPaymentClick}
+                          onClick={() => handlePaySingle(payment.id, payment.amount)}
                           className={`mt-2 px-3 py-1 text-sm rounded ${
                             isOverdue 
                               ? 'bg-red-600 text-white hover:bg-red-700' 
@@ -588,76 +418,39 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
         </div>
       )}
 
-      {activeTab === 'transactions' && (
+      {/* Tab: Historial */}
+      {activeTab === 'history' && (
         <div>
-          {/* Filtros de período */}
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex space-x-2">
-              <select
-                value={period}
-                onChange={(e) => setPeriod(e.target.value)}
-                className="border border-gray-300 rounded px-3 py-1 text-sm"
-              >
-                <option value="all">Todos los períodos</option>
-                <option value="current">Mes actual</option>
-                <option value="previous">Mes anterior</option>
-                <option value="year">Este año</option>
-              </select>
-            </div>
-            
-            <p className="text-sm text-gray-500">
-              {filteredTransactions().length} transacción(es)
-            </p>
-          </div>
-
-          {filteredTransactions().length === 0 ? (
+          {paidPayments.length === 0 ? (
             <div className="text-center py-8">
               <Receipt size={48} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500">No hay transacciones en este período</p>
+              <p className="text-gray-500">No hay pagos registrados</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Fecha</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Descripción</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actividad</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Mes</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pagado</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Método</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {filteredTransactions().map((transaction, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatDate(transaction.date)}
-                      </td>
+                  {paidPayments.map((payment) => (
+                    <tr key={payment.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 text-sm text-gray-900">
-                        {transaction.description || 'Pago de membresía'}
+                        {payment.activityName}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-right text-green-600">
-                        +{formatCurrency(transaction.amount)}
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {payment.month}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {getPaymentMethodName(transaction.paymentMethod || '')}
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {payment.paidDate ? formatDate(payment.paidDate) : 'N/A'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                          getStatusStyle(transaction.status || 'completed')
-                        }`}>
-                          {transaction.status === 'completed' ? 'Completado' : transaction.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <button
-                          onClick={() => showPaymentReceipt(transaction)}
-                          className="text-blue-600 hover:text-blue-900 mr-3"
-                          title="Ver comprobante"
-                        >
-                          <Eye size={16} />
-                        </button>
+                      <td className="px-6 py-4 text-sm font-medium text-right text-green-600">
+                        {formatCurrency(payment.amount)}
                       </td>
                     </tr>
                   ))}
@@ -665,48 +458,6 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
               </table>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Modal del comprobante */}
-      {showReceipt && selectedTransaction && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-medium">Comprobante de Pago</h3>
-              <button
-                onClick={() => setShowReceipt(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ×
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              <div className="border-b pb-4">
-                <p className="text-sm text-gray-600">Fecha: {formatDate(selectedTransaction.date)}</p>
-                <p className="text-sm text-gray-600">Socio: {memberName}</p>
-                <p className="text-lg font-bold">Monto: {formatCurrency(selectedTransaction.amount)}</p>
-              </div>
-              
-              <div className="flex space-x-3">
-                <button
-                  onClick={handleDownloadPDF}
-                  className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-                >
-                  <Download size={16} className="inline mr-2" />
-                  PDF
-                </button>
-                <button
-                  onClick={handleShareWhatsApp}
-                  className="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-                >
-                  <ExternalLink size={16} className="inline mr-2" />
-                  WhatsApp
-                </button>
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </div>
