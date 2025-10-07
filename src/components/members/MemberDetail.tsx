@@ -19,6 +19,8 @@ import {
   RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2
 } from 'lucide-react';
 
+import { formatDisplayDate, toJsDate } from '../../utils/date.utils';
+
 interface MemberDetailProps {
   member: Member;
   onEdit: (member: Member) => void;
@@ -268,13 +270,36 @@ useEffect(() => {
       }
     };
     
-    const formatDate = (dateString: string) => {
-      try {
-        return new Date(dateString).toLocaleDateString('es-AR');
-      } catch {
-        return 'Fecha inválida';
-      }
-    };
+const formatDate = (dateString: string) => {
+  console.log('🔍 formatDate recibió:', dateString);
+  try {
+    if (!dateString) {
+      console.log('❌ Fecha vacía');
+      return 'Fecha no disponible';
+    }
+    
+    if (dateString.includes('/')) {
+      console.log('✅ Ya está en formato DD/MM/YYYY');
+      return dateString;
+    }
+    
+    const date = new Date(dateString + 'T12:00:00');
+    console.log('📅 Fecha creada:', date);
+    
+    if (isNaN(date.getTime())) {
+      console.log('❌ Fecha inválida');
+      return 'Fecha inválida';
+    }
+    
+    const formatted = date.toLocaleDateString('es-AR');
+    console.log('✅ Fecha formateada:', formatted);
+    return formatted;
+  } catch (error) {
+    console.error('💥 Error formateando fecha:', error);
+    return 'Fecha inválida';
+  }
+};
+
     
     const isExpired = () => {
       const today = new Date();
@@ -328,20 +353,39 @@ useEffect(() => {
             </div>
           </td>
           
-          <td className="px-6 py-4 whitespace-nowrap">
-            <div className="text-sm text-gray-900">
-              {formatDate(membership.startDate)} - {formatDate(membership.endDate)}
-            </div>
-            <div className="text-sm text-gray-500">
-              {(() => {
-                const start = new Date(membership.startDate);
-                const end = new Date(membership.endDate);
-                const diffTime = end.getTime() - start.getTime();
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                return `${diffDays} días`;
-              })()}
-            </div>
-          </td>
+        <td className="px-6 py-4 whitespace-nowrap">
+          <div className="text-sm text-gray-900">
+            {formatDate(membership.startDate)} - {formatDate(membership.endDate)}
+          </div>
+          <div className="text-sm text-gray-500">
+            {(() => {
+              // Verificar que las fechas existan
+              if (!membership.startDate || !membership.endDate) {
+                return 'Fechas no disponibles';
+              }
+              
+              // Agregar tiempo para evitar problemas de timezone
+              const start = new Date(membership.startDate + 'T12:00:00');
+              const end = new Date(membership.endDate + 'T12:00:00');
+              
+              // Verificar que sean fechas válidas
+              if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return 'Fechas inválidas';
+              }
+              
+              // Calcular diferencia en días
+              const diffTime = end.getTime() - start.getTime();
+              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+              
+              // Validar resultado
+              if (isNaN(diffDays) || diffDays < 0) {
+                return 'Cálculo inválido';
+              }
+              
+              return `${diffDays} días`;
+            })()}
+          </div>
+        </td>
           
           <td className="px-6 py-4 whitespace-nowrap">
             <div className="space-y-1">

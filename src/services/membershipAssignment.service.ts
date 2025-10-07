@@ -93,19 +93,28 @@ export const assignMembershipToMember = async (
     const startDateFinal = startDate || today.toISOString().split('T')[0];
 
     // 3️⃣ Crear la membresía permanente en la subcollection del socio
+    // Calcular endDate correctamente (30 días después del inicio)
+    const startDateObj = new Date(startDateFinal + 'T12:00:00');
+    const endDateObj = new Date(startDateObj);
+    endDateObj.setDate(endDateObj.getDate() + 30); // 30 días de duración
+
+    // Formatear endDate a string YYYY-MM-DD
+    const endDateFinal = endDateObj.toISOString().split('T')[0];
+
     const membershipData: any = {
       memberId,
       memberName,
       activityId,
       activityName,
       startDate: startDateFinal,
-      endDate: 'Invalid Date', // Se calcula después
+      endDate: endDateFinal, // ✅ AHORA SÍ TIENE UNA FECHA VÁLIDA
       cost: cost,
       maxAttendances: maxAttendances,
       currentAttendances: 0,
       status: 'active',
       paymentStatus: 'pending',
       autoGeneratePayments: true,
+      description: '', // Agregar campo description vacío
       createdAt: Timestamp.now()
     };
 
