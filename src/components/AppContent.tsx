@@ -1,5 +1,5 @@
-// src/components/AppContent.tsx - NUEVO ARCHIVO
-import React, { useState, useEffect } from 'react';
+// src/components/AppContent.tsx - VERSIÓN LIMPIA
+import React, { useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 
 // Hook de autenticación
@@ -35,12 +35,12 @@ import Users from '../pages/settings/Users';
 import Exercises from '../pages/exercises/Exercises';
 import Routines from '../pages/routines/Routines';
 import MemberRoutines from '../pages/member-routines/MemberRoutines';
-import UnifiedRenewalDashboard from '../components/memberships/UnifiedRenewalDashboard';
-
 import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
-import MigrationAdminPanel from '../components/admin/MigrationAdminPanel';
 
-import MembershipManagement from '../pages/MembershipManagement';
+// ✅ NUEVOS IMPORTS - Auto-registro unificado
+import UnifiedRegistration from '../pages/public/UnifiedRegistration';
+import PendingRegistrations from '../pages/admin/PendingRegistrations';
+import QRCodeGenerator from '../pages/admin/QRCodeGenerator';
 
 
 // Componente de protección de rutas
@@ -48,10 +48,8 @@ const ProtectedRoute: React.FC<{
   children: React.ReactNode;
   requiredRole?: 'superadmin' | 'admin' | 'user';
   allowedRoles?: Array<'superadmin' | 'admin' | 'user'>;
-  
 }> = ({ children, requiredRole, allowedRoles }) => {
   const { currentUser, userRole, loading } = useAuth();
-  
 
   if (loading) {
     return (
@@ -93,7 +91,6 @@ const ProtectedRoute: React.FC<{
 const AppContent: React.FC = () => {
   const { currentUser, userRole, loading } = useAuth();
   const location = useLocation();
-  const { gymData, userData } = useAuth();
 
   // Redireccionamiento automático basado en rol
   useEffect(() => {
@@ -155,6 +152,12 @@ const AppContent: React.FC = () => {
         } 
       />
 
+      {/* ✅ RUTA PÚBLICA UNIFICADA - Registro y Actualización */}
+      <Route 
+        path="/register/:gymId" 
+        element={<UnifiedRegistration />} 
+      />
+
       {/* Rutas del superadmin */}
       <Route path="/superadmin/*" element={
         <ProtectedRoute requiredRole="superadmin">
@@ -177,35 +180,30 @@ const AppContent: React.FC = () => {
         <ProtectedRoute allowedRoles={['admin', 'user']}>
           <GymLayout>
             <Routes>
+              {/* Dashboards */}
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="dashboard-financial" element={<DashboardImproved />} />
+              
+              {/* Gestión */}
               <Route path="members" element={<Members />} />
               <Route path="attendance" element={<Attendance />} />
+              
+              {/* Finanzas - Solo admins */}
               <Route path="cashier" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <Cashier />
                 </ProtectedRoute>
               } />
               <Route path="reports" element={<Reports />} />
-
-          
+              
+              {/* ✅ Pagos Mensuales (Sistema Nuevo) */}
               <Route path="payments" element={
                 <ProtectedRoute allowedRoles={['admin', 'user']}>
                   <MonthlyPaymentsDashboard />
                 </ProtectedRoute>
               } />
 
-             <Route path="membership-management" element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <MembershipManagement />
-                </ProtectedRoute>
-              } />
-
-
-              <Route path="/payments/monthly" element={<MonthlyPaymentsDashboard />} />
-              <Route path="/admin/migration" element={<MigrationAdminPanel />} />
-
-
+              {/* Entrenamiento */}
               <Route path="exercises" element={<Exercises />} />
               <Route path="routines" element={<Routines />} />
               <Route path="member-routines" element={<MemberRoutines />} />
@@ -231,13 +229,22 @@ const AppContent: React.FC = () => {
                   <Users />
                 </ProtectedRoute>
               } />
-              <Route path="auto-renewals" element={
+
+              {/* ✅ NUEVAS RUTAS - Auto-registro */}
+              
+              {/* Panel de registros pendientes - Solo admins */}
+              <Route path="pending-registrations" element={
                 <ProtectedRoute allowedRoles={['admin']}>
-                  <UnifiedRenewalDashboard  />
+                  <PendingRegistrations />
                 </ProtectedRoute>
               } />
 
-              
+              {/* Generador de código QR - Solo admins */}
+              <Route path="qr-generator" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <QRCodeGenerator />
+                </ProtectedRoute>
+              } />
               
               {/* Ruta por defecto */}
               <Route path="/" element={<Navigate to="dashboard" replace />} />

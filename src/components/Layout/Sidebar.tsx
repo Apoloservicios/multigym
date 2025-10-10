@@ -5,7 +5,8 @@ import {
   LayoutDashboard, Users, ClipboardList, Settings, ChevronDown, ShoppingBag, 
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
-  Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap,Database
+  Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap, Database,
+  UserCheck, QrCode  // ← AGREGAR ESTOS DOS
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -117,9 +118,9 @@ const Sidebar: React.FC = () => {
   };
 
   // Funciones auxiliares para determinar estados activos de grupos
- const isMembershipManagementActive = (): boolean => {
-    return isActive('settings/memberships') || isActive('auto-renewals') || isActive('membership-management');
-  };
+const isMembershipManagementActive = (): boolean => {
+  return isActive('settings/memberships') || isActive('payments');
+};
 
   const isFinancialActive = (): boolean => {
     return isActive('dashboard-financial') || isActive('cashier');
@@ -266,14 +267,15 @@ const Sidebar: React.FC = () => {
                   active={isActive('attendance')}
                   onClick={() => handleNavigate('attendance')}
                 />
-
                 <NavItem
-                  icon={<Zap size={20} />}
-                  text="Gestión de Membresías"
-                  active={isActive('membership-management')}
-                  onClick={() => handleNavigate('membership-management')}
-                  isNew={true}
-                />
+                    icon={<DollarSign size={20} />}
+                    text="Pagos Mensuales"
+                    active={isActive('payments')}
+                    onClick={() => handleNavigate('payments')}
+                    isNew={true}
+                  />  
+
+           
                 
                 <NavItem
                   icon={<Receipt size={20} />}
@@ -365,20 +367,8 @@ const Sidebar: React.FC = () => {
                         onClick={() => handleNavigate('settings/memberships')}
                       />
 
-                     <NavItem
-                        icon={<DollarSign size={20} />}
-                        text="Pagos Mensuales"
-                        active={isActive('payments/monthly')}
-                        onClick={() => handleNavigate('payments/monthly')}
-                        isNew={true}
-                      />
 
-                      <NavItem
-                        icon={<Database size={20} />}
-                        text="Migración"
-                        active={isActive('admin/migration')}
-                        onClick={() => handleNavigate('admin/migration')}
-                      />
+                
                     
                       <NavItem
                         icon={<User size={16} />}
@@ -388,6 +378,34 @@ const Sidebar: React.FC = () => {
                       />
                     </div>
                   </DropdownNav>
+                )}
+                {/* ✅ NUEVAS OPCIONES - Auto-registro */}
+                {userRole === 'admin' && (
+                  <>
+                    <div className="border-t border-gray-200 my-2"></div>
+                    
+                    <div className="py-2">
+                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                        Auto-Registro
+                      </h3>
+                      
+                      <NavItem
+                        icon={<UserCheck size={20} />}
+                        text="Registros Pendientes"
+                        active={isActive('pending-registrations')}
+                        onClick={() => handleNavigate('pending-registrations')}
+                        isNew={true}
+                      />
+                      
+                      <NavItem
+                        icon={<QrCode size={20} />}
+                        text="Código QR"
+                        active={isActive('qr-generator')}
+                        onClick={() => handleNavigate('qr-generator')}
+                        isNew={true}
+                      />
+                    </div>
+                  </>
                 )}
               </>
             )}

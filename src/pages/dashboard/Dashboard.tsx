@@ -32,8 +32,6 @@ import QuickAttendanceRegister from '../../components/attendance/QuickAttendance
 import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
 import { formatArgentinianDateTime, timestampToArgentinianDate } from '../../utils/timezone.utils';
 
-// 🆕 NUEVO: Importar el card de renovaciones automáticas
-import RenewalManagementCard from '../../components/dashboard/RenewalManagementCard';
 
 // 🆕 NUEVO: Props para navegación
 interface DashboardProps {
@@ -1007,14 +1005,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         </div>
       </div>
 
-      {/* 🚀 MOVIDO AL FINAL: Card de Renovaciones Automáticas */}
-      <div className="mt-8">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Gestión de Renovaciones</h2>
-        <div className="max-w-2xl">
-          <RenewalManagementCard />
-        </div>
-      </div>
-
+   
       {/* Footer del dashboard */}
       <div className="mt-8 text-center text-sm text-gray-500">
         <p>
