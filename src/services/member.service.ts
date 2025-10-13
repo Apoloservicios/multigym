@@ -3,6 +3,7 @@
 import { 
   collection, 
   doc, 
+  
   getDoc, 
   getDocs, 
   setDoc, 
@@ -16,12 +17,23 @@ import {
   serverTimestamp,
   limit as limitQuery
 } from 'firebase/firestore';
+
+
 import { db } from '../config/firebase';
+
 import { Member, MemberFormData, MembershipAssignment } from '../types/member.types';
 import { uploadToCloudinary } from '../utils/cloudinary.utils';
 import { Transaction, DailyCash } from '../types/gym.types';
 import { registerExtraIncome, registerExpense } from './dailyCash.service';
-import { formatDate } from '../utils/date.utils';
+
+import { 
+  formatDate,
+  htmlDateToLocalDate,
+  htmlDateToUTCDate,
+  calculateAge,
+
+} from '../utils/date.utils';
+
 
 /**
  * Función auxiliar para convertir cualquier tipo de fecha a un objeto Date
@@ -55,26 +67,50 @@ function safelyConvertToDate(dateValue: any): Date | null {
     return null;
   }
 }
-
-// Agregar un nuevo socio
-export const addMember = async (gymId: string, memberData: MemberFormData): Promise<Member> => {
+/**
+ * ✅ FUNCIÓN ACTUALIZADA: Agregar nuevo socio
+ */
+export const addMember = async (
+  gymId: string, 
+  memberData: MemberFormData
+): Promise<Member | null> => {
+  console.log('🔵 [addMember] INICIO');
+  
   try {
-    // 1️⃣ Obtener el siguiente número de socio
-    const memberNumber = await getNextMemberNumber(gymId);
+    const membersRef = collection(db, `gyms/${gymId}/members`);
     
-    // 2️⃣ Si hay una foto, subirla a Cloudinary
+    // Obtener el siguiente número de socio
+    let memberNumber = 0;
+    try {
+      memberNumber = await getNextMemberNumber(gymId);
+      console.log('✅ Número de socio:', memberNumber);
+    } catch (error) {
+      console.error('⚠️ Error obteniendo número:', error);
+      memberNumber = Date.now();
+    }
+    
+    // ✅ Subir foto a CLOUDINARY (no Firebase Storage)
     let photoUrl = null;
     if (memberData.photo instanceof File) {
+      console.log('📸 Subiendo foto a Cloudinary...');
       try {
         photoUrl = await uploadToCloudinary(memberData.photo, "gym_member_photos");
+        console.log('✅ Foto subida:', photoUrl);
       } catch (uploadError) {
-        console.error("Error subiendo foto:", uploadError);
+        console.error('❌ Error subiendo foto:', uploadError);
       }
     }
 
+    // Convertir fecha
     let birthDateToSave = '';
     if (memberData.birthDate) {
       birthDateToSave = memberData.birthDate;
+    }
+
+    // Preparar fitnessGoal
+    let fitnessGoalToSave = null;
+    if (Array.isArray(memberData.fitnessGoal) && memberData.fitnessGoal.length > 0) {
+      fitnessGoalToSave = memberData.fitnessGoal;
     }
 
     const memberToAdd = {
@@ -86,54 +122,119 @@ export const addMember = async (gymId: string, memberData: MemberFormData): Prom
       birthDate: birthDateToSave,
       photo: photoUrl,
       status: memberData.status,
-      
-      // ⭐ AGREGAR CAMPOS NUEVOS
       dni: memberData.dni || '',
       memberNumber: memberNumber,
-      
       totalDebt: 0,
       hasDebt: false,
       activeMemberships: 0,
+      
+      // ✅ NUEVOS CAMPOS
+      emergencyContactName: memberData.emergencyContactName || null,
+      emergencyContactPhone: memberData.emergencyContactPhone || null,
+      hasExercisedBefore: memberData.hasExercisedBefore || null,
+      fitnessGoal: fitnessGoalToSave,
+      fitnessGoalOther: memberData.fitnessGoalOther || null,
+      medicalConditions: memberData.medicalConditions || null,
+      injuries: memberData.injuries || null,
+      allergies: memberData.allergies || null,
+      hasMedicalCertificate: memberData.hasMedicalCertificate || null,
       
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
 
-    console.log('✅ Creando socio con:', {
-      memberNumber,
-      dni: memberData.dni || 'sin DNI',
-      name: `${memberData.firstName} ${memberData.lastName}`
-    });
-
-    const membersRef = collection(db, `gyms/${gymId}/members`);
+    console.log('💾 Guardando en Firestore...');
     const docRef = await addDoc(membersRef, memberToAdd);
+    console.log('✅ Socio creado con ID:', docRef.id);
 
-    const newMember: Member = {
+    return {
       id: docRef.id,
+      ...memberToAdd,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    } as Member;
+
+  } catch (error: any) {
+    console.error('❌ [addMember] ERROR:', error);
+    throw error;
+  }
+};
+
+// ✅ FUNCIÓN CORREGIDA: updateMember con Cloudinary
+export const updateMember = async (
+  gymId: string, 
+  memberId: string, 
+  memberData: MemberFormData
+): Promise<Member | null> => {
+  console.log('🔵 [updateMember] INICIO');
+  
+  try {
+    const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+    const memberSnap = await getDoc(memberRef);
+    
+    if (!memberSnap.exists()) {
+      throw new Error('Socio no encontrado');
+    }
+    
+    const currentData = memberSnap.data();
+    let photoUrl = currentData.photo || null;
+
+    // ✅ Subir nueva foto a CLOUDINARY
+    if (memberData.photo instanceof File) {
+      console.log('📸 Subiendo nueva foto a Cloudinary...');
+      try {
+        photoUrl = await uploadToCloudinary(memberData.photo, "gym_member_photos");
+        console.log('✅ Foto subida:', photoUrl);
+      } catch (error) {
+        console.error('❌ Error subiendo foto:', error);
+      }
+    }
+
+    // Preparar fitnessGoal
+    let fitnessGoalToSave = null;
+    if (Array.isArray(memberData.fitnessGoal) && memberData.fitnessGoal.length > 0) {
+      fitnessGoalToSave = memberData.fitnessGoal;
+    }
+
+    const updatedData = {
       firstName: memberData.firstName,
       lastName: memberData.lastName,
       email: memberData.email,
       phone: memberData.phone,
       address: memberData.address || "",
-      birthDate: birthDateToSave,
+      birthDate: memberData.birthDate,
       photo: photoUrl,
       status: memberData.status,
-      
-      // ⭐ INCLUIR EN EL RETORNO
       dni: memberData.dni || '',
-      memberNumber: memberNumber,
       
-      totalDebt: 0,
-      hasDebt: false,
-      activeMemberships: 0,
+      emergencyContactName: memberData.emergencyContactName || null,
+      emergencyContactPhone: memberData.emergencyContactPhone || null,
+      hasExercisedBefore: memberData.hasExercisedBefore || null,
+      fitnessGoal: fitnessGoalToSave,
+      fitnessGoalOther: memberData.fitnessGoalOther || null,
+      medicalConditions: memberData.medicalConditions || null,
+      injuries: memberData.injuries || null,
+      allergies: memberData.allergies || null,
+      hasMedicalCertificate: memberData.hasMedicalCertificate || null,
       
-      createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: serverTimestamp()
     };
 
-    return newMember;
-  } catch (error) {
-    console.error('Error adding member:', error);
+    console.log('💾 Actualizando en Firestore...');
+    await updateDoc(memberRef, updatedData);
+    console.log('✅ Socio actualizado');
+
+    return {
+      id: memberId,
+      totalDebt: currentData.totalDebt || 0,
+      hasDebt: currentData.hasDebt || false,
+      activeMemberships: currentData.activeMemberships || 0,
+      ...currentData,
+      ...updatedData
+    } as Member;
+
+  } catch (error: any) {
+    console.error('❌ [updateMember] ERROR:', error);
     throw error;
   }
 };
@@ -550,64 +651,7 @@ export const getMemberMemberships = async (gymId: string, memberId: string): Pro
   }
 };
 
-export const updateMember = async (gymId: string, memberId: string, memberData: MemberFormData): Promise<boolean> => {
-  try {
-    const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-    
-    // 1️⃣ Obtener datos actuales para preservar memberNumber
-    const currentMemberDoc = await getDoc(memberRef);
-    const currentData = currentMemberDoc.data();
-    
-    let photoUrl = undefined;
-    if (memberData.photo instanceof File) {
-      try {
-        photoUrl = await uploadToCloudinary(memberData.photo, "gym_member_photos");
-      } catch (uploadError) {
-        console.error("Error subiendo nueva foto:", uploadError);
-      }
-    }
-    
-    let birthDateToSave = '';
-    if (memberData.birthDate) {
-      birthDateToSave = memberData.birthDate;
-    }
-    
-    const updateData: any = {
-      firstName: memberData.firstName,
-      lastName: memberData.lastName,
-      email: memberData.email,
-      phone: memberData.phone,
-      address: memberData.address || "",
-      birthDate: birthDateToSave,
-      status: memberData.status,
-      
-      // ⭐ AGREGAR DNI
-      dni: memberData.dni || '',
-      
-      // ⭐ PRESERVAR memberNumber (no debe cambiar)
-      memberNumber: currentData?.memberNumber || 0,
-      
-      updatedAt: serverTimestamp()
-    };
-    
-    if (photoUrl !== undefined) {
-      updateData.photo = photoUrl;
-    }
-    
-    console.log('✅ Actualizando socio con DNI:', {
-      memberId,
-      dni: memberData.dni || 'sin DNI',
-      memberNumber: currentData?.memberNumber
-    });
-    
-    await updateDoc(memberRef, updateData);
-    
-    return true;
-  } catch (error) {
-    console.error('Error updating member:', error);
-    throw error;
-  }
-};
+
 
 export const getRecentMembers = async (gymId: string, limit: number = 5): Promise<Member[]> => {
   try {

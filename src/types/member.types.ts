@@ -1,9 +1,8 @@
-// src/types/member.types.ts - VERSIÓN CORREGIDA PARA ERRORES DE TIPOS
-// ✅ AGREGANDO TODOS LOS CAMPOS REQUERIDOS
+// src/types/member.types.ts - VERSIÓN ACTUALIZADA CON NUEVOS CAMPOS
+// ✅ AGREGANDO CAMPOS DE EMERGENCIA Y CUESTIONARIO
 
 import { FirebaseDate as CentralFirebaseDate } from './firebase.types';
 
-// Define un alias para mantener la compatibilidad
 export type FirebaseDate = CentralFirebaseDate;
 
 export interface Member {
@@ -13,7 +12,6 @@ export interface Member {
   email: string;
   phone: string;
   address?: string;
-  // Usar el tipo específico para fechas de Firebase
   birthDate?: FirebaseDate;
   photo?: string | null;
   status: 'active' | 'inactive';
@@ -21,13 +19,24 @@ export interface Member {
   lastAttendance?: FirebaseDate;
   createdAt?: FirebaseDate;
   updatedAt?: FirebaseDate;
-  // Campo adicional usado en algunas funciones
   daysUntilBirthday?: number;
   dni?: string;
-  memberNumber?: number;  // ⭐ CAMBIAR de string a number
-    hasDebt: boolean;              // ⭐ AGREGAR ESTA LÍNEA
-  activeMemberships: number; 
+  memberNumber?: number;
+  hasDebt: boolean;
+  activeMemberships: number;
   
+  // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  
+  // ✅ NUEVOS CAMPOS - CUESTIONARIO DE SALUD Y FITNESS
+  hasExercisedBefore?: 'yes' | 'no';
+  fitnessGoal?: string[];
+  fitnessGoalOther?: string; // Campo adicional si eligió "otra"
+  medicalConditions?: string; // Texto libre
+  injuries?: string; // Texto libre
+  allergies?: string; // Texto libre
+  hasMedicalCertificate?: 'yes' | 'no';
 }
 
 export interface MemberFormData {
@@ -39,18 +48,27 @@ export interface MemberFormData {
   birthDate: string;
   photo: File | null;
   status: 'active' | 'inactive';
-   dni?: string;
-   memberNumber?: number;
-      
- 
-    
+  dni?: string;
+  memberNumber?: number;
+  
+  // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  
+  // ✅ NUEVOS CAMPOS - CUESTIONARIO
+  hasExercisedBefore?: 'yes' | 'no';
+  fitnessGoal?: string[]; // ✅ CAMBIAR A ARRAY
+  fitnessGoalOther?: string;
+  medicalConditions?: string;
+  injuries?: string;
+  allergies?: string;
+  hasMedicalCertificate?: 'yes' | 'no';
 }
 
-// 🔧 INTERFAZ CORREGIDA CON TODOS LOS CAMPOS NECESARIOS
 export interface MembershipAssignment {
   id?: string;
   memberId: string;
-  memberName?: string; // Hacer opcional
+  memberName?: string;
   activityId: string;
   activityName: string;
   startDate: string;
@@ -58,48 +76,33 @@ export interface MembershipAssignment {
   cost: number;
   paymentStatus: 'paid' | 'pending' | 'partial';
   status: 'active' | 'expired' | 'cancelled';
-  
-  // 🔧 CAMPOS REQUERIDOS QUE ESTABAN FALTANDO
   maxAttendances: number;
   currentAttendances: number;
   description: string;
-  
-  // Campos adicionales para mejor gestión financiera
   autoRenewal?: boolean;
   paymentFrequency?: 'single' | 'monthly';
   lastRenewalDate?: string;
-  
-  // 🆕 PROPIEDADES AGREGADAS PARA RENOVACIONES AUTOMÁTICAS
-  renewedAutomatically?: boolean;  // Si fue renovada automáticamente
-  renewedManually?: boolean;       // Si fue renovada manualmente
-  previousMembershipId?: string;   // ID de la membresía anterior (para renovaciones)
-  renewedAt?: any;                 // Firebase Timestamp - fecha de renovación
-  
-  // 🆕 PROPIEDADES AGREGADAS PARA CANCELACIONES MEJORADAS
-  cancelReason?: string;           // Motivo de cancelación
-  cancelDate?: any;                // Firebase Timestamp - fecha de cancelación (alias para cancelledAt)
-  cancelledBy?: string;            // Quién canceló la membresía
-  debtAction?: 'keep' | 'cancel';  // Qué se hizo con la deuda al cancelar
-  
-  // Nuevos campos para el sistema financiero mejorado
-  paidAmount?: number; // Cuánto se ha pagado
-  paidAt?: any; // Timestamp cuando se pagó completamente
+  renewedAutomatically?: boolean;
+  renewedManually?: boolean;
+  previousMembershipId?: string;
+  renewedAt?: any;
+  cancelReason?: string;
+  cancelDate?: any;
+  cancelledBy?: string;
+  debtAction?: 'keep' | 'cancel';
+  paidAmount?: number;
+  paidAt?: any;
   partialPayments?: {
     amount: number;
     date: any;
     transactionId: string;
-  }[]; // Para pagos parciales
-  
-  // Para cancelaciones (mantener nombres originales por compatibilidad)
-  cancelledAt?: any;               // Firebase Timestamp - mantener por compatibilidad
-  cancellationReason?: string;     // Mantener por compatibilidad (alias de cancelReason)
-  
-  // Timestamps
+  }[];
+  cancelledAt?: any;
+  cancellationReason?: string;
   createdAt?: any;
   updatedAt?: any;
 }
 
-// Objeto con funciones útiles relacionadas con estos tipos
 const memberTypes = {
   createEmptyMember: (): Member => ({
     id: '',
@@ -109,8 +112,17 @@ const memberTypes = {
     phone: '',
     status: 'active',
     totalDebt: 0,
-    hasDebt: false,              // ⭐ AGREGAR
-    activeMemberships: 0         // ⭐ AGREGAR
+    hasDebt: false,
+    activeMemberships: 0,
+    // Nuevos valores por defecto
+    emergencyContactName: '',
+    emergencyContactPhone: '',
+    hasExercisedBefore: undefined,
+    fitnessGoal: [], // ✅ ARRAY vacío por defecto
+    medicalConditions: '',
+    injuries: '',
+    allergies: '',
+    hasMedicalCertificate: undefined
   }),
   
   createEmptyMemberFormData: (): MemberFormData => ({
@@ -122,8 +134,18 @@ const memberTypes = {
     birthDate: '',
     photo: null,
     status: 'active',
-    dni: '',                     // ⭐ AGREGAR
-    memberNumber: 0              // ⭐ AGREGAR (opcional, solo si quieres)
+    dni: '',
+    memberNumber: 0,
+    // Nuevos valores por defecto
+    emergencyContactName: '',
+    emergencyContactPhone: '',
+    hasExercisedBefore: undefined,
+    fitnessGoal: [], // ✅ ARRAY vacío por defecto
+    fitnessGoalOther: '',
+    medicalConditions: '',
+    injuries: '',
+    allergies: '',
+    hasMedicalCertificate: undefined
   }),
   
   createEmptyMembershipAssignment: (): MembershipAssignment => ({
@@ -138,10 +160,8 @@ const memberTypes = {
     maxAttendances: 0,
     currentAttendances: 0,
     description: '',
-    // Agregamos valores por defecto para los nuevos campos
     autoRenewal: false,
     paymentFrequency: 'single',
-    // 🆕 Valores por defecto para las nuevas propiedades
     renewedAutomatically: false,
     renewedManually: false
   })

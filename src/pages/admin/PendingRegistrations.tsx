@@ -36,6 +36,22 @@ interface PendingRegistration {
   birthDate?: string;
   address?: string;
   
+  // ✅ NUEVOS CAMPOS - FOTO
+  photoURL?: string;
+  
+  // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  
+  // ✅ NUEVOS CAMPOS - CUESTIONARIO DE SALUD Y FITNESS
+  hasExercisedBefore?: 'yes' | 'no';
+  fitnessGoal?: string[]; // ✅ Array para múltiples objetivos
+  fitnessGoalOther?: string;
+  medicalConditions?: string;
+  injuries?: string;
+  allergies?: string;
+  hasMedicalCertificate?: 'yes' | 'no';
+  
   // Para actualizaciones
   isUpdate?: boolean;
   memberId?: string;
@@ -139,75 +155,133 @@ const PendingRegistrations: React.FC = () => {
   const totalPages = Math.ceil(filteredRegistrations.length / itemsPerPage);
 
   // Aprobar
-  const handleApprove = async (registration: PendingRegistration) => {
-    if (!gymData?.id || !userData?.name) return;
+// ✅ FUNCIÓN ACTUALIZADA: handleApprove con soporte para TODOS los campos nuevos
+// ✅ FUNCIÓN ACTUALIZADA: handleApprove con soporte para TODOS los campos nuevos
+const handleApprove = async (registration: PendingRegistration) => {
+  if (!gymData?.id || !userData?.name) return;
 
-    const isUpdate = registration.isUpdate;
-    const memberName = isUpdate 
-      ? `${registration.newData?.firstName} ${registration.newData?.lastName}`
-      : `${registration.firstName} ${registration.lastName}`;
-    
-    const confirmMessage = isUpdate
-      ? `¿Aprobar la actualización de ${memberName}?`
-      : `¿Aprobar el registro de ${memberName}?`;
+  const isUpdate = registration.isUpdate;
+  const memberName = isUpdate 
+    ? `${registration.newData?.firstName} ${registration.newData?.lastName}`
+    : `${registration.firstName} ${registration.lastName}`;
+  
+  const confirmMessage = isUpdate
+    ? `¿Aprobar la actualización de ${memberName}?`
+    : `¿Aprobar el registro de ${memberName}?`;
 
-    if (!window.confirm(confirmMessage)) return;
+  if (!window.confirm(confirmMessage)) return;
 
-    setProcessing(registration.id);
+  setProcessing(registration.id);
 
-    try {
-      if (isUpdate && registration.memberId) {
-        // Actualizar datos del socio
-        await updateDoc(doc(db, `gyms/${gymData.id}/members`, registration.memberId), {
-          firstName: registration.newData.firstName,
-          lastName: registration.newData.lastName,
-          email: registration.newData.email,
-          phone: registration.newData.phone,
-          birthDate: registration.newData.birthDate,
-          address: registration.newData.address,
-          updatedAt: serverTimestamp()
-        });
-        alert(`✅ Datos actualizados para ${memberName}.`);
-      } else {
-        // Crear nuevo socio
-        const newMember: any = {
-          gymId: gymData.id,
-          firstName: registration.firstName!,
-          lastName: registration.lastName!,
-          dni: registration.dni || '',
-          email: registration.email!,
-          phone: registration.phone!,
-          address: registration.address!,
-          birthDate: registration.birthDate!,
-          photo: null,
-          status: 'active',
-          totalDebt: 0,
-          hasDebt: false,
-          activeMemberships: 0,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        };
+  try {
+    if (isUpdate && registration.memberId) {
+      // ✅ ACTUALIZAR SOCIO EXISTENTE CON TODOS LOS CAMPOS NUEVOS
+      const updateData: any = {
+        firstName: registration.newData.firstName,
+        lastName: registration.newData.lastName,
+        email: registration.newData.email,
+        phone: registration.newData.phone,
+        birthDate: registration.newData.birthDate,
+        address: registration.newData.address,
+        updatedAt: serverTimestamp()
+      };
 
-        await addDoc(collection(db, `gyms/${gymData.id}/members`), newMember);
-        alert(`✅ ${registration.firstName} ha sido registrado como socio.`);
+      // ✅ Agregar foto si existe
+      if (registration.newData.photoURL) {
+        updateData.photo = registration.newData.photoURL;
       }
 
-      // Marcar como aprobado
-      await updateDoc(doc(db, 'pendingRegistrations', registration.id), {
-        status: 'approved',
-        reviewedAt: serverTimestamp(),
-        reviewedBy: userData.name
-      });
+      // ✅ Agregar contacto de emergencia si existe
+      if (registration.newData.emergencyContactName) {
+        updateData.emergencyContactName = registration.newData.emergencyContactName;
+      }
+      if (registration.newData.emergencyContactPhone) {
+        updateData.emergencyContactPhone = registration.newData.emergencyContactPhone;
+      }
 
-      await loadRegistrations();
-    } catch (error) {
-      console.error('Error approving:', error);
-      alert('Error al aprobar. Intenta nuevamente.');
-    } finally {
-      setProcessing(null);
-      setSelectedRegistration(null);
+      // ✅ Agregar cuestionario de salud si existe
+      if (registration.newData.hasExercisedBefore) {
+        updateData.hasExercisedBefore = registration.newData.hasExercisedBefore;
+      }
+      if (registration.newData.fitnessGoal && registration.newData.fitnessGoal.length > 0) {
+        updateData.fitnessGoal = registration.newData.fitnessGoal;
+        if (registration.newData.fitnessGoalOther) {
+          updateData.fitnessGoalOther = registration.newData.fitnessGoalOther;
+        }
+      }
+      if (registration.newData.medicalConditions) {
+        updateData.medicalConditions = registration.newData.medicalConditions;
+      }
+      if (registration.newData.injuries) {
+        updateData.injuries = registration.newData.injuries;
+      }
+      if (registration.newData.allergies) {
+        updateData.allergies = registration.newData.allergies;
+      }
+      if (registration.newData.hasMedicalCertificate) {
+        updateData.hasMedicalCertificate = registration.newData.hasMedicalCertificate;
+      }
+
+      await updateDoc(doc(db, `gyms/${gymData.id}/members`, registration.memberId), updateData);
+      alert(`✅ Datos actualizados para ${memberName}.`);
+
+    } else {
+      // ✅ CREAR NUEVO SOCIO CON TODOS LOS CAMPOS NUEVOS
+      const newMember: any = {
+        gymId: gymData.id,
+        firstName: registration.firstName!,
+        lastName: registration.lastName!,
+        dni: registration.dni || '',
+        email: registration.email!,
+        phone: registration.phone!,
+        address: registration.address!,
+        birthDate: registration.birthDate!,
+        photo: registration.photoURL || null,
+        status: 'active',
+        totalDebt: 0,
+        hasDebt: false,
+        activeMemberships: 0,
+        
+        // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
+        emergencyContactName: registration.emergencyContactName || null,
+        emergencyContactPhone: registration.emergencyContactPhone || null,
+        
+        // ✅ NUEVOS CAMPOS - CUESTIONARIO DE SALUD Y FITNESS
+        hasExercisedBefore: registration.hasExercisedBefore || null,
+        fitnessGoal: (registration.fitnessGoal && registration.fitnessGoal.length > 0) 
+          ? registration.fitnessGoal 
+          : null,
+        fitnessGoalOther: registration.fitnessGoalOther || null,
+        medicalConditions: registration.medicalConditions || null,
+        injuries: registration.injuries || null,
+        allergies: registration.allergies || null,
+        hasMedicalCertificate: registration.hasMedicalCertificate || null,
+        
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+
+      await addDoc(collection(db, `gyms/${gymData.id}/members`), newMember);
+      alert(`✅ ${registration.firstName} ha sido registrado como socio.`);
     }
-  };
+
+    // Marcar como aprobado
+    await updateDoc(doc(db, 'pendingRegistrations', registration.id), {
+      status: 'approved',
+      reviewedAt: serverTimestamp(),
+      reviewedBy: userData.name
+    });
+
+    await loadRegistrations();
+
+  } catch (error) {
+    console.error('Error approving:', error);
+    alert('Error al aprobar. Intenta nuevamente.');
+  } finally {
+    setProcessing(null);
+    setSelectedRegistration(null);
+  }
+};
 
   // Rechazar
   const handleReject = async (registration: PendingRegistration) => {
