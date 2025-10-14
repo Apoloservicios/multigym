@@ -6,7 +6,7 @@ import {
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
   Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap, Database,
-  UserCheck, QrCode  // ← AGREGAR ESTOS DOS
+  UserCheck, QrCode,HelpCircle  // ← AGREGAR ESTOS DOS
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -272,8 +272,37 @@ const isMembershipManagementActive = (): boolean => {
                     text="Pagos Mensuales"
                     active={isActive('payments')}
                     onClick={() => handleNavigate('payments')}
-                    isNew={true}
+                    
                   />  
+
+                  {/* ✅ NUEVAS OPCIONES - Auto-registro */}
+                {userRole === 'admin' && (
+                  <>
+                    <div className="border-t border-gray-200 my-2"></div>
+                    
+                    <div className="py-2">
+                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                        Auto-Registro
+                      </h3>
+                      
+                      <NavItem
+                        icon={<UserCheck size={20} />}
+                        text="Registros Pendientes"
+                        active={isActive('pending-registrations')}
+                        onClick={() => handleNavigate('pending-registrations')}
+                        isNew={true}
+                      />
+                      
+                      <NavItem
+                        icon={<QrCode size={20} />}
+                        text="Código QR"
+                        active={isActive('qr-generator')}
+                        onClick={() => handleNavigate('qr-generator')}
+                        isNew={true}
+                      />
+                    </div>
+                  </>
+                )}
 
            
                 
@@ -377,36 +406,19 @@ const isMembershipManagementActive = (): boolean => {
                         onClick={() => handleNavigate('settings/users')}
                       />
                     </div>
+
+                    {/* ✅ NUEVO - Centro de Ayuda */}
+                    <NavItem
+                      icon={<HelpCircle size={20} />}
+                      text="Centro de Ayuda"
+                      active={isActive('help')}
+                      onClick={() => handleNavigate('help')}
+                    />
                   </DropdownNav>
+
+                  
                 )}
-                {/* ✅ NUEVAS OPCIONES - Auto-registro */}
-                {userRole === 'admin' && (
-                  <>
-                    <div className="border-t border-gray-200 my-2"></div>
-                    
-                    <div className="py-2">
-                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                        Auto-Registro
-                      </h3>
-                      
-                      <NavItem
-                        icon={<UserCheck size={20} />}
-                        text="Registros Pendientes"
-                        active={isActive('pending-registrations')}
-                        onClick={() => handleNavigate('pending-registrations')}
-                        isNew={true}
-                      />
-                      
-                      <NavItem
-                        icon={<QrCode size={20} />}
-                        text="Código QR"
-                        active={isActive('qr-generator')}
-                        onClick={() => handleNavigate('qr-generator')}
-                        isNew={true}
-                      />
-                    </div>
-                  </>
-                )}
+                
               </>
             )}
           </nav>

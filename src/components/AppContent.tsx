@@ -42,6 +42,8 @@ import UnifiedRegistration from '../pages/public/UnifiedRegistration';
 import PendingRegistrations from '../pages/admin/PendingRegistrations';
 import QRCodeGenerator from '../pages/admin/QRCodeGenerator';
 
+import HelpCenter from '../pages/help/HelpCenter';
+
 
 // Componente de protección de rutas
 const ProtectedRoute: React.FC<{ 
@@ -229,6 +231,8 @@ const AppContent: React.FC = () => {
                   <Users />
                 </ProtectedRoute>
               } />
+
+              <Route path="help" element={<HelpCenter />} />
 
               {/* ✅ NUEVAS RUTAS - Auto-registro */}
               
