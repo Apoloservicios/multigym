@@ -67,8 +67,11 @@ function safelyConvertToDate(dateValue: any): Date | null {
     return null;
   }
 }
+// 🔧 SOLUCIÓN: Corregir el retorno de addMember y updateMember
+// Reemplaza las funciones addMember y updateMember con estas versiones corregidas:
+
 /**
- * ✅ FUNCIÓN ACTUALIZADA: Agregar nuevo socio
+ * ✅ FUNCIÓN CORREGIDA: Agregar nuevo socio
  */
 export const addMember = async (
   gymId: string, 
@@ -89,7 +92,7 @@ export const addMember = async (
       memberNumber = Date.now();
     }
     
-    // ✅ Subir foto a CLOUDINARY (no Firebase Storage)
+    // ✅ Subir foto a CLOUDINARY
     let photoUrl = null;
     if (memberData.photo instanceof File) {
       console.log('📸 Subiendo foto a Cloudinary...');
@@ -113,6 +116,7 @@ export const addMember = async (
       fitnessGoalToSave = memberData.fitnessGoal;
     }
 
+    // 🔧 FIX: Objeto para guardar en Firestore (con serverTimestamp())
     const memberToAdd = {
       firstName: memberData.firstName,
       lastName: memberData.lastName,
@@ -128,7 +132,6 @@ export const addMember = async (
       hasDebt: false,
       activeMemberships: 0,
       
-      // ✅ NUEVOS CAMPOS
       emergencyContactName: memberData.emergencyContactName || null,
       emergencyContactPhone: memberData.emergencyContactPhone || null,
       hasExercisedBefore: memberData.hasExercisedBefore || null,
@@ -147,11 +150,37 @@ export const addMember = async (
     const docRef = await addDoc(membersRef, memberToAdd);
     console.log('✅ Socio creado con ID:', docRef.id);
 
+    // 🔧 FIX: Objeto para retornar (sin serverTimestamp, con Date)
+    const currentDate = new Date();
+    
     return {
       id: docRef.id,
-      ...memberToAdd,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      firstName: memberData.firstName,
+      lastName: memberData.lastName,
+      email: memberData.email,
+      phone: memberData.phone,
+      address: memberData.address || "",
+      birthDate: birthDateToSave,
+      photo: photoUrl,
+      status: memberData.status,
+      dni: memberData.dni || '',
+      memberNumber: memberNumber,
+      totalDebt: 0,
+      hasDebt: false,
+      activeMemberships: 0,
+      
+      emergencyContactName: memberData.emergencyContactName || null,
+      emergencyContactPhone: memberData.emergencyContactPhone || null,
+      hasExercisedBefore: memberData.hasExercisedBefore || null,
+      fitnessGoal: fitnessGoalToSave,
+      fitnessGoalOther: memberData.fitnessGoalOther || null,
+      medicalConditions: memberData.medicalConditions || null,
+      injuries: memberData.injuries || null,
+      allergies: memberData.allergies || null,
+      hasMedicalCertificate: memberData.hasMedicalCertificate || null,
+      
+      createdAt: currentDate,
+      updatedAt: currentDate
     } as Member;
 
   } catch (error: any) {
@@ -160,7 +189,7 @@ export const addMember = async (
   }
 };
 
-// ✅ FUNCIÓN CORREGIDA: updateMember con Cloudinary
+// 🔧 FUNCIÓN CORREGIDA: updateMember
 export const updateMember = async (
   gymId: string, 
   memberId: string, 
@@ -196,6 +225,7 @@ export const updateMember = async (
       fitnessGoalToSave = memberData.fitnessGoal;
     }
 
+    // 🔧 FIX: Objeto para actualizar en Firestore (con serverTimestamp())
     const updatedData = {
       firstName: memberData.firstName,
       lastName: memberData.lastName,
@@ -224,13 +254,35 @@ export const updateMember = async (
     await updateDoc(memberRef, updatedData);
     console.log('✅ Socio actualizado');
 
+    // 🔧 FIX: Objeto para retornar (con Date, no serverTimestamp)
     return {
       id: memberId,
+      firstName: memberData.firstName,
+      lastName: memberData.lastName,
+      email: memberData.email,
+      phone: memberData.phone,
+      address: memberData.address || "",
+      birthDate: memberData.birthDate,
+      photo: photoUrl,
+      status: memberData.status,
+      dni: memberData.dni || '',
+      memberNumber: currentData.memberNumber || 0,
       totalDebt: currentData.totalDebt || 0,
       hasDebt: currentData.hasDebt || false,
       activeMemberships: currentData.activeMemberships || 0,
-      ...currentData,
-      ...updatedData
+      
+      emergencyContactName: memberData.emergencyContactName || null,
+      emergencyContactPhone: memberData.emergencyContactPhone || null,
+      hasExercisedBefore: memberData.hasExercisedBefore || null,
+      fitnessGoal: fitnessGoalToSave,
+      fitnessGoalOther: memberData.fitnessGoalOther || null,
+      medicalConditions: memberData.medicalConditions || null,
+      injuries: memberData.injuries || null,
+      allergies: memberData.allergies || null,
+      hasMedicalCertificate: memberData.hasMedicalCertificate || null,
+      
+      createdAt: safelyConvertToDate(currentData.createdAt) || new Date(),
+      updatedAt: new Date()
     } as Member;
 
   } catch (error: any) {

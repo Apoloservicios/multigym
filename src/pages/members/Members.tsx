@@ -189,18 +189,30 @@ const Members: React.FC = () => {
         return (
             <MemberForm 
               initialData={selectedMember ? {
+                // ✅ DATOS BÁSICOS
                 firstName: selectedMember.firstName,
                 lastName: selectedMember.lastName,
                 email: selectedMember.email,
                 phone: selectedMember.phone,
                 address: selectedMember.address,
-                birthDate: selectedMember.birthDate ? firebaseDateToHtmlDate(selectedMember.birthDate) : '',
-                photo: null,
+                birthDate: selectedMember.birthDate ? 
+                  firebaseDateToHtmlDate(selectedMember.birthDate) : '',
+                photo: selectedMember.photo || null,
                 status: selectedMember.status,
-                
-                // ⭐ AGREGAR DNI Y MEMBERNUMBER
                 dni: selectedMember.dni || '',
-                memberNumber: selectedMember.memberNumber || 0
+                memberNumber: selectedMember.memberNumber || 0,
+                
+                // ✅ NUEVOS CAMPOS - AGREGAR ESTO!
+                emergencyContactName: selectedMember.emergencyContactName || '',
+                emergencyContactPhone: selectedMember.emergencyContactPhone || '',
+                hasExercisedBefore: selectedMember.hasExercisedBefore || undefined,
+                fitnessGoal: Array.isArray(selectedMember.fitnessGoal) ? 
+                  selectedMember.fitnessGoal : [],
+                fitnessGoalOther: selectedMember.fitnessGoalOther || '',
+                medicalConditions: selectedMember.medicalConditions || '',
+                injuries: selectedMember.injuries || '',
+                allergies: selectedMember.allergies || '',
+                hasMedicalCertificate: selectedMember.hasMedicalCertificate || undefined
                 
               } : undefined}
               onSubmit={handleSaveMember}
@@ -229,19 +241,38 @@ const Members: React.FC = () => {
             member={selectedMember}
           />
         );
-      case 'payment':
-        if (!selectedMember) return null;
-        return (
-          <MemberPayment 
-            member={selectedMember}
-            onSuccess={() => {
-              setSuccess('Pago registrado correctamente');
-              reloadSelectedMember();
-              setView('detail');
-            }}
-            onCancel={() => setView('detail')}
-          />
-        );
+        case 'payment':
+          if (!selectedMember) return null;
+          return (
+            <MemberPayment 
+              member={selectedMember}
+              onSuccess={async () => {
+                setSuccess('Pago registrado correctamente');
+                
+                // ✅ FIX: Recargar los datos del socio COMPLETOS
+                try {
+                  const updatedMember = await membersFirestore.getById(selectedMember.id);
+                  if (updatedMember) {
+                    console.log('✅ Socio actualizado después de pago:', {
+                      id: updatedMember.id,
+                      nombre: `${updatedMember.firstName} ${updatedMember.lastName}`,
+                      deudaAnterior: selectedMember.totalDebt,
+                      deudaNueva: updatedMember.totalDebt
+                    });
+                    
+                    // Actualizar el estado con los nuevos datos
+                    setSelectedMember(updatedMember);
+                  }
+                } catch (error) {
+                  console.error('Error recargando socio:', error);
+                }
+                
+                // Volver a la vista de detalle
+                setView('detail');
+              }}
+              onCancel={() => setView('detail')}
+            />
+          );
       case 'membership':
         if (!selectedMember) return null;
         return (

@@ -16,7 +16,7 @@ import DeleteMembershipModal from '../memberships/DeleteMembershipModal'; // �
 import { 
   Mail, Phone, Calendar, MapPin, Edit, Trash, QrCode, CreditCard, Plus, Clock, DollarSign, 
   ChevronDown, ChevronUp, FileText, History, User, Dumbbell, CheckCircle, AlertCircle, 
-  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2
+  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2,Heart
 } from 'lucide-react';
 
 import { formatDisplayDate, toJsDate } from '../../utils/date.utils';
@@ -45,6 +45,19 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
   const [calculatedDebt, setCalculatedDebt] = useState<number>(0);
+
+
+  const [expandedSections, setExpandedSections] = useState({
+  emergency: false,
+  health: false
+});
+
+const toggleSection = (section: 'emergency' | 'health') => {
+  setExpandedSections(prev => ({
+    ...prev,
+    [section]: !prev[section]
+  }));
+};
   
   // 🆕 ESTADOS PARA EL MODAL DE CANCELACIÓN MEJORADO
   const [showCancellationModal, setShowCancellationModal] = useState(false);
@@ -538,13 +551,15 @@ const formatDate = (dateString: string) => {
     switch (activeView) {
       case 'account':
         return (
-              <MemberAccountStatement
-                memberId={member.id}
-                memberName={`${member.firstName} ${member.lastName}`}
-                totalDebt={calculatedDebt} // Usar la deuda calculada actualizada
-                onPaymentClick={() => setActiveView('payment')}
-                 onRefresh={loadMemberMemberships} // 🆕 Agregar función de refresh
-              />
+               <MemberAccountStatement 
+                  memberId={member.id}
+                  memberName={`${member.firstName} ${member.lastName}`}
+                  totalDebt={calculatedDebt} // Usar la deuda calculada actualizada
+                  onPaymentClick={() => setActiveView('payment')}
+                  onRefresh={loadMemberMemberships} // Agregar función de refresh
+                  member={member}  
+                />
+              
         );
         case 'payment':
           return (
@@ -783,6 +798,155 @@ const formatDate = (dateString: string) => {
                 </div>
               </div>
             </div>
+
+             {/* ✅ SECCIÓN: Contacto de Emergencia - EXPANDIBLE */}
+              {(member.emergencyContactName || member.emergencyContactPhone) && (
+                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                  <button
+                    onClick={() => toggleSection('emergency')}
+                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-orange-100 rounded-lg">
+                        <AlertCircle className="h-5 w-5 text-orange-600" />
+                      </div>
+                      <div className="text-left">
+                        <h3 className="text-sm font-semibold text-gray-900">Contacto de Emergencia</h3>
+                        <p className="text-xs text-gray-500">
+                          {expandedSections.emergency ? 'Clic para ocultar' : 'Clic para ver detalles'}
+                        </p>
+                      </div>
+                    </div>
+                    {expandedSections.emergency ? (
+                      <ChevronUp className="h-5 w-5 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="h-5 w-5 text-gray-400" />
+                    )}
+                  </button>
+                  
+                  {expandedSections.emergency && (
+                    <div className="px-6 py-4 border-t border-gray-100 bg-orange-50/30 space-y-3">
+                      {member.emergencyContactName && (
+                        <div className="flex items-start space-x-3">
+                          <User className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500">Nombre</p>
+                            <p className="text-sm text-gray-900">{member.emergencyContactName}</p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {member.emergencyContactPhone && (
+                        <div className="flex items-start space-x-3">
+                          <Phone className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-xs font-medium text-gray-500">Teléfono</p>
+                            <p className="text-sm text-gray-900">{member.emergencyContactPhone}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ✅ SECCIÓN: Información de Salud - EXPANDIBLE */}
+              {(member.hasExercisedBefore || member.fitnessGoal || member.medicalConditions || 
+                member.injuries || member.allergies || member.hasMedicalCertificate) && (
+                <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                  <button
+                    onClick={() => toggleSection('health')}
+                    className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="p-2 bg-green-100 rounded-lg">
+                        <Heart className="h-5 w-5 text-green-600" />
+                      </div>
+                      <div className="text-left">
+                        <h3 className="text-sm font-semibold text-gray-900">Información de Salud y Fitness</h3>
+                        <p className="text-xs text-gray-500">
+                          {expandedSections.health ? 'Clic para ocultar' : 'Clic para ver detalles'}
+                        </p>
+                      </div>
+                    </div>
+                    {expandedSections.health ? (
+                      <ChevronUp className="h-5 w-5 text-gray-400" />
+                    ) : (
+                      <ChevronDown className="h-5 w-5 text-gray-400" />
+                    )}
+                  </button>
+                  
+                  {expandedSections.health && (
+                    <div className="px-6 py-4 border-t border-gray-100 bg-green-50/30 space-y-4">
+                      {/* Experiencia previa */}
+                      {member.hasExercisedBefore && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1">¿Ha realizado ejercicio antes?</p>
+                          <p className="text-sm text-gray-900">
+                            {member.hasExercisedBefore === 'yes' ? '✓ Sí' : '✗ No'}
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Objetivos de fitness */}
+                      {member.fitnessGoal && member.fitnessGoal.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-2">Objetivos de fitness</p>
+                          <div className="flex flex-wrap gap-2">
+                            {member.fitnessGoal.map((goal, index) => (
+                              <span 
+                                key={index}
+                                className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                              >
+                                {goal === 'weight_loss' && 'Pérdida de peso'}
+                                {goal === 'muscle_gain' && 'Aumento de masa muscular'}
+                                {goal === 'resistance' && 'Mejorar resistencia'}
+                                {goal === 'flexibility' && 'Flexibilidad'}
+                                {goal === 'health' && 'Salud general'}
+                                {goal === 'other' && (member.fitnessGoalOther || 'Otro')}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Condiciones médicas */}
+                      {member.medicalConditions && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1">Condiciones médicas</p>
+                          <p className="text-sm text-gray-900 whitespace-pre-line">{member.medicalConditions}</p>
+                        </div>
+                      )}
+                      
+                      {/* Lesiones */}
+                      {member.injuries && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1">Lesiones o limitaciones</p>
+                          <p className="text-sm text-gray-900 whitespace-pre-line">{member.injuries}</p>
+                        </div>
+                      )}
+                      
+                      {/* Alergias */}
+                      {member.allergies && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1">Alergias</p>
+                          <p className="text-sm text-gray-900 whitespace-pre-line">{member.allergies}</p>
+                        </div>
+                      )}
+                      
+                      {/* Certificado médico */}
+                      {member.hasMedicalCertificate && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1">Certificado médico</p>
+                          <p className="text-sm text-gray-900">
+                            {member.hasMedicalCertificate === 'yes' ? '✓ Tiene certificado' : '✗ No tiene certificado'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
             {/* Información Financiera */}
             <div>

@@ -21,6 +21,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import useAuth from '../../hooks/useAuth';
+import { getNextMemberNumber } from '../../services/member.service';
 
 interface PendingRegistration {
   id: string;
@@ -36,21 +37,17 @@ interface PendingRegistration {
   birthDate?: string;
   address?: string;
   
-  // ✅ NUEVOS CAMPOS - FOTO
-  photoURL?: string;
-  
-  // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
-  
-  // ✅ NUEVOS CAMPOS - CUESTIONARIO DE SALUD Y FITNESS
-  hasExercisedBefore?: 'yes' | 'no';
-  fitnessGoal?: string[]; // ✅ Array para múltiples objetivos
-  fitnessGoalOther?: string;
-  medicalConditions?: string;
-  injuries?: string;
-  allergies?: string;
-  hasMedicalCertificate?: 'yes' | 'no';
+  // ✅ CAMBIOS: todos aceptan null
+  photoURL?: string | null;
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  hasExercisedBefore?: 'yes' | 'no' | null;
+  fitnessGoal?: string[] | null;
+  fitnessGoalOther?: string | null;
+  medicalConditions?: string | null;
+  injuries?: string | null;
+  allergies?: string | null;
+  hasMedicalCertificate?: 'yes' | 'no' | null;
   
   // Para actualizaciones
   isUpdate?: boolean;
@@ -175,7 +172,7 @@ const handleApprove = async (registration: PendingRegistration) => {
 
   try {
     if (isUpdate && registration.memberId) {
-      // ✅ ACTUALIZAR SOCIO EXISTENTE CON TODOS LOS CAMPOS NUEVOS
+      // ACTUALIZAR SOCIO EXISTENTE
       const updateData: any = {
         firstName: registration.newData.firstName,
         lastName: registration.newData.lastName,
@@ -186,20 +183,15 @@ const handleApprove = async (registration: PendingRegistration) => {
         updatedAt: serverTimestamp()
       };
 
-      // ✅ Agregar foto si existe
       if (registration.newData.photoURL) {
         updateData.photo = registration.newData.photoURL;
       }
-
-      // ✅ Agregar contacto de emergencia si existe
       if (registration.newData.emergencyContactName) {
         updateData.emergencyContactName = registration.newData.emergencyContactName;
       }
       if (registration.newData.emergencyContactPhone) {
         updateData.emergencyContactPhone = registration.newData.emergencyContactPhone;
       }
-
-      // ✅ Agregar cuestionario de salud si existe
       if (registration.newData.hasExercisedBefore) {
         updateData.hasExercisedBefore = registration.newData.hasExercisedBefore;
       }
@@ -226,7 +218,19 @@ const handleApprove = async (registration: PendingRegistration) => {
       alert(`✅ Datos actualizados para ${memberName}.`);
 
     } else {
-      // ✅ CREAR NUEVO SOCIO CON TODOS LOS CAMPOS NUEVOS
+      // ✅ CREAR NUEVO SOCIO CON NÚMERO DE SOCIO
+      
+      // 🔧 FIX: Obtener el siguiente número de socio
+      let memberNumber = 0;
+      try {
+        memberNumber = await getNextMemberNumber(gymData.id);
+        console.log('✅ Número de socio asignado:', memberNumber);
+      } catch (error) {
+        console.error('⚠️ Error obteniendo número de socio:', error);
+        // Usar timestamp como fallback
+        memberNumber = Date.now();
+      }
+      
       const newMember: any = {
         gymId: gymData.id,
         firstName: registration.firstName!,
@@ -242,11 +246,12 @@ const handleApprove = async (registration: PendingRegistration) => {
         hasDebt: false,
         activeMemberships: 0,
         
-        // ✅ NUEVOS CAMPOS - CONTACTO DE EMERGENCIA
+        // ✅ AGREGAR NÚMERO DE SOCIO
+        memberNumber: memberNumber,
+        
+        // NUEVOS CAMPOS
         emergencyContactName: registration.emergencyContactName || null,
         emergencyContactPhone: registration.emergencyContactPhone || null,
-        
-        // ✅ NUEVOS CAMPOS - CUESTIONARIO DE SALUD Y FITNESS
         hasExercisedBefore: registration.hasExercisedBefore || null,
         fitnessGoal: (registration.fitnessGoal && registration.fitnessGoal.length > 0) 
           ? registration.fitnessGoal 
@@ -262,7 +267,7 @@ const handleApprove = async (registration: PendingRegistration) => {
       };
 
       await addDoc(collection(db, `gyms/${gymData.id}/members`), newMember);
-      alert(`✅ ${registration.firstName} ha sido registrado como socio.`);
+      alert(`✅ ${registration.firstName} ha sido registrado como socio #${memberNumber}.`);
     }
 
     // Marcar como aprobado

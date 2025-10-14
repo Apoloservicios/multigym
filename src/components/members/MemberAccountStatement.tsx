@@ -17,9 +17,13 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatting.utils';
 import useAuth from '../../hooks/useAuth';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, doc, where, getDocs, getDoc, orderBy } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { registerPayment } from '../../services/monthlyPayments.service';
+import PaymentReceipt from './PaymentReceipt';
+
+import { Member } from '../../types/member.types'; // ✅ AGREGAR ESTE IMPORT
+
 
 interface MonthlyPayment {
   id: string;
@@ -39,6 +43,7 @@ interface MemberAccountStatementProps {
   totalDebt: number;
   onPaymentClick: () => void;
   onRefresh?: () => void;
+   member?: Member; // ✅ AGREGAR ESTA LÍNEA
 }
 
 const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
@@ -46,7 +51,8 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   memberName,
   totalDebt,
   onPaymentClick,
-  onRefresh
+  onRefresh,
+  member  
 }) => {
   const { gymData } = useAuth();
   
@@ -56,6 +62,10 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'summary' | 'pending' | 'history'>('summary');
+
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [receiptData, setReceiptData] = useState<any>(null);
+
 
   // Cargar pagos mensuales
   const loadPayments = async () => {
@@ -88,6 +98,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
             payment.status = 'overdue';
           }
         }
+
         
         if (payment.status === 'paid') {
           paid.push(payment);
@@ -117,42 +128,98 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
   }, [gymData?.id, memberId]);
 
   // Refrescar datos
-  const refreshData = async () => {
-    setRefreshing(true);
-    try {
-      await loadPayments();
-      if (onRefresh) {
-        await onRefresh();
-      }
-    } finally {
-      setRefreshing(false);
+const refreshData = async () => {
+  setRefreshing(true);
+  try {
+    await loadPayments();
+    if (onRefresh) {
+      await onRefresh();
     }
-  };
+  } finally {
+    setRefreshing(false);
+  }
+};
+
+
+
+    const handleShowReceipt = async (payment: MonthlyPayment) => {
+      if (!gymData?.id || !memberId) return;
+      
+      try {
+        const membershipRef = doc(db, `gyms/${gymData.id}/members/${memberId}/memberships`, payment.membershipId);
+        const membershipSnap = await getDoc(membershipRef);
+        
+        let membershipData = {
+          startDate: payment.dueDate,
+          endDate: payment.dueDate,
+          activityName: payment.activityName
+        };
+        
+        if (membershipSnap.exists()) {
+          const data = membershipSnap.data();
+          membershipData = {
+            startDate: data.startDate || payment.dueDate,
+            endDate: data.endDate || payment.dueDate,
+            activityName: data.activityName || payment.activityName
+          };
+        }
+        
+        setReceiptData({
+          memberName: memberName,
+          memberPhone: member?.phone || '', // ✅ CAMBIAR: usar phone en lugar de email
+          memberDNI: member?.dni || '',
+          memberNumber: member?.memberNumber || 0,
+          activityName: membershipData.activityName,
+          amount: payment.amount,
+          paymentDate: payment.paidDate || payment.dueDate,
+          paymentMethod: 'cash',
+          membershipStartDate: membershipData.startDate,
+          membershipEndDate: membershipData.endDate,
+          gymName: gymData?.name || 'Gimnasio',
+          transactionId: payment.id
+        });
+        
+        setShowReceipt(true);
+      } catch (error) {
+        console.error('Error preparando comprobante:', error);
+        alert('Error al cargar el comprobante');
+      }
+    };
+
 
   // Pagar un pago específico
-  const handlePaySingle = async (paymentId: string, amount: number) => {
-    if (!gymData?.id) return;
+const handlePaySingle = async (paymentId: string, amount: number) => {
+  if (!gymData?.id) return;
 
-    const confirmed = window.confirm(
-      `¿Confirmar pago de ${formatCurrency(amount)}?`
-    );
+  const confirmed = window.confirm(
+    `¿Confirmar pago de ${formatCurrency(amount)}?`
+  );
 
-    if (!confirmed) return;
+  if (!confirmed) return;
 
-    try {
-      const result = await registerPayment(gymData.id, paymentId, 'cash');
+  try {
+    const result = await registerPayment(gymData.id, paymentId, 'cash');
+    
+    if (result.success) {
+      alert('Pago registrado correctamente');
       
-      if (result.success) {
-        alert('Pago registrado correctamente');
-        await refreshData();
-      } else {
-        alert(`Error: ${result.error}`);
+      // ✅ FIX: Refrescar AMBOS - pagos Y datos del socio
+      await refreshData(); // Refresca la lista de pagos
+      
+      // ✅ AGREGAR ESTO: También refrescar el member completo
+      if (onRefresh) {
+        await onRefresh(); // Esto actualiza la deuda en el header
       }
-    } catch (error) {
-      console.error('Error al pagar:', error);
-      alert('Error al registrar el pago');
+    } else {
+      alert(`Error: ${result.error}`);
     }
-  };
+  } catch (error) {
+    console.error('Error al pagar:', error);
+    alert('Error al registrar el pago');
+  }
+};
+
+
 
   // Formatear fecha
   const formatDate = (dateStr: string) => {
@@ -398,16 +465,7 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
                         <p className="text-2xl font-bold text-gray-900">
                           {formatCurrency(payment.amount)}
                         </p>
-                        <button
-                          onClick={() => handlePaySingle(payment.id, payment.amount)}
-                          className={`mt-2 px-3 py-1 text-sm rounded ${
-                            isOverdue 
-                              ? 'bg-red-600 text-white hover:bg-red-700' 
-                              : 'bg-yellow-600 text-white hover:bg-yellow-700'
-                          }`}
-                        >
-                          Pagar Ahora
-                        </button>
+                  
                       </div>
                     </div>
                   </div>
@@ -420,47 +478,57 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
 
       {/* Tab: Historial */}
       {activeTab === 'history' && (
-        <div>
-          {paidPayments.length === 0 ? (
-            <div className="text-center py-8">
-              <Receipt size={48} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500">No hay pagos registrados</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actividad</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Mes</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pagado</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Monto</th>
+      <div className="space-y-4">
+        {paidPayments.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th>Actividad</th>
+                  <th>Mes</th>
+                  <th>Fecha de Pago</th>
+                  <th>Monto</th>
+                  <th>Acciones</th> {/* ✅ AGREGAR ESTA COLUMNA */}
+                </tr>
+              </thead>
+              <tbody>
+                {paidPayments.map((payment) => (
+                  <tr key={payment.id}>
+                    <td>{payment.activityName}</td>
+                    <td>{payment.month}</td>
+                    <td>{payment.paidDate ? formatDate(payment.paidDate) : '-'}</td>
+                    <td>{formatCurrency(payment.amount)}</td>
+                    <td>
+                      {/* ✅ AGREGAR ESTE BOTÓN */}
+                      <button
+                        onClick={() => handleShowReceipt(payment)}
+                        className="inline-flex items-center px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                      >
+                        <Receipt className="h-4 w-4 mr-1" />
+                        Ver Comprobante
+                      </button>
+                    </td>
                   </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {paidPayments.map((payment) => (
-                    <tr key={payment.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 text-sm text-gray-900">
-                        {payment.activityName}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-500">
-                        {payment.month}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-500">
-                        {payment.paidDate ? formatDate(payment.paidDate) : 'N/A'}
-                      </td>
-                      <td className="px-6 py-4 text-sm font-medium text-right text-green-600">
-                        {formatCurrency(payment.amount)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p>No hay pagos registrados</p>
+        )}
+      </div>
+    )}
+
+    
+      {/* ✅ AGREGAR ESTE MODAL AQUÍ, ANTES DEL CIERRE FINAL */}
+    {showReceipt && receiptData && (
+      <PaymentReceipt
+        {...receiptData}
+        onClose={() => setShowReceipt(false)}
+      />
+    )}
     </div>
+    
   );
 };
 

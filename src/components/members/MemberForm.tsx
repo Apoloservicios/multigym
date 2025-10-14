@@ -1,7 +1,7 @@
 // src/components/members/MemberForm.tsx
 // ✅ ACTUALIZADO CON NUEVOS CAMPOS: FOTO, CONTACTO EMERGENCIA Y CUESTIONARIO
 
-import React, { useState } from 'react';
+import React, { useState ,useEffect } from 'react';
 import { User, Mail, Phone, MapPin, Calendar, Camera, X, UserPlus, Heart } from 'lucide-react';
 import { MemberFormData } from '../../types/member.types';
 import { 
@@ -32,32 +32,43 @@ const MemberForm: React.FC<MemberFormProps> = ({
 }) => {
   // ✅ FUNCIÓN HELPER PARA CONVERTIR DATOS INICIALES
   const convertInitialData = (data: any): Partial<MemberFormData> => {
-    if (!data) return {};
-      
-    const birthDateString = data.birthDate ? firebaseDateToHtmlDate(data.birthDate) : '';
+  if (!data) return {};
     
-    return {
-      firstName: data.firstName || '',
-      lastName: data.lastName || '',
-      email: data.email || '',
-      phone: data.phone || '',
-      address: data.address || '',
-      birthDate: birthDateString,
-      photo: null,
-      status: data.status || 'active',
-      dni: data.dni || '',
-      // ✅ Nuevos campos
-      emergencyContactName: data.emergencyContactName || '',
-      emergencyContactPhone: data.emergencyContactPhone || '',
-      hasExercisedBefore: data.hasExercisedBefore || undefined,
-      fitnessGoal: Array.isArray(data.fitnessGoal) ? data.fitnessGoal : [],
-      fitnessGoalOther: data.fitnessGoalOther || '',
-      medicalConditions: data.medicalConditions || '',
-      injuries: data.injuries || '',
-      allergies: data.allergies || '',
-      hasMedicalCertificate: data.hasMedicalCertificate || undefined
-    };
+  const birthDateString = data.birthDate ? firebaseDateToHtmlDate(data.birthDate) : '';
+  
+  return {
+    firstName: data.firstName || '',
+    lastName: data.lastName || '',
+    email: data.email || '',
+    phone: data.phone || '',
+    address: data.address || '',
+    birthDate: birthDateString,
+    photo: null, // La foto no se carga en el input file
+    status: data.status || 'active',
+    dni: data.dni || '',
+    
+    // ✅ CARGAR NUEVOS CAMPOS AL EDITAR
+    emergencyContactName: data.emergencyContactName || '',
+    emergencyContactPhone: data.emergencyContactPhone || '',
+    hasExercisedBefore: data.hasExercisedBefore || undefined,
+    fitnessGoal: Array.isArray(data.fitnessGoal) ? data.fitnessGoal : [],
+    fitnessGoalOther: data.fitnessGoalOther || '',
+    medicalConditions: data.medicalConditions || '',
+    injuries: data.injuries || '',
+    allergies: data.allergies || '',
+    hasMedicalCertificate: data.hasMedicalCertificate || undefined
   };
+};
+
+// ✅ TAMBIÉN NECESITAS: Cargar la foto en el preview al editar
+// Agrega este useEffect después de la declaración del estado:
+
+useEffect(() => {
+  // Si hay datos iniciales y tienen foto, mostrarla en el preview
+  if (initialData?.photo && typeof initialData.photo === 'string') {
+    setPhotoPreview(initialData.photo);
+  }
+}, [initialData?.photo]);
 
   // Inicializar datos del formulario
   const [formData, setFormData] = useState<MemberFormData>(() => {
@@ -95,9 +106,15 @@ const MemberForm: React.FC<MemberFormProps> = ({
   });
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
-  const [photoPreview, setPhotoPreview] = useState<string | null>(
-    initialData?.photo || null
-  );
+
+    const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+    useEffect(() => {
+  // Cargar la foto en el preview cuando hay datos iniciales
+      if (initialData?.photo && typeof initialData.photo === 'string') {
+        setPhotoPreview(initialData.photo);
+      }
+    }, [initialData?.photo]);
 
   // Manejar cambios en inputs
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {

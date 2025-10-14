@@ -34,17 +34,20 @@ interface MemberData {
   phone?: string;
   birthDate?: string;
   address?: string;
-  photo?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
-  hasExercisedBefore?: 'yes' | 'no';
-  fitnessGoal?: string[]; // ✅ Array para múltiples objetivos
-  fitnessGoalOther?: string;
-  medicalConditions?: string;
-  injuries?: string;
-  allergies?: string;
-  hasMedicalCertificate?: 'yes' | 'no';
-  [key: string]: any; // Para otros campos de Firestore
+  photo?: string | null; // ✅ CAMBIO
+  
+  // ✅ TODOS estos campos ahora aceptan null
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  hasExercisedBefore?: 'yes' | 'no' | null;
+  fitnessGoal?: string[] | null;
+  fitnessGoalOther?: string | null;
+  medicalConditions?: string | null;
+  injuries?: string | null;
+  allergies?: string | null;
+  hasMedicalCertificate?: 'yes' | 'no' | null;
+  
+  [key: string]: any;
 }
 
 interface PendingRegistration {
@@ -57,16 +60,19 @@ interface PendingRegistration {
   phone?: string;
   birthDate?: string;
   address?: string;
-  photoURL?: string;
-  emergencyContactName?: string;
-  emergencyContactPhone?: string;
-  hasExercisedBefore?: 'yes' | 'no';
-  fitnessGoal?: string[]; // ✅ Array para múltiples objetivos
-  fitnessGoalOther?: string;
-  medicalConditions?: string;
-  injuries?: string;
-  allergies?: string;
-  hasMedicalCertificate?: 'yes' | 'no';
+  photoURL?: string | null; // ✅ CAMBIO
+  
+  // ✅ TODOS estos campos ahora aceptan null
+  emergencyContactName?: string | null;
+  emergencyContactPhone?: string | null;
+  hasExercisedBefore?: 'yes' | 'no' | null;
+  fitnessGoal?: string[] | null;
+  fitnessGoalOther?: string | null;
+  medicalConditions?: string | null;
+  injuries?: string | null;
+  allergies?: string | null;
+  hasMedicalCertificate?: 'yes' | 'no' | null;
+  
   isUpdate?: boolean;
   memberId?: string;
   previousData?: any;
@@ -442,108 +448,86 @@ const uploadPhoto = async (): Promise<string | null> => {
 };
 
   // PASO 3: Enviar formulario
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    
-    if (!formData.firstName.trim()) {
-      setError('El nombre es obligatorio');
-      return;
-    }
-    if (!formData.lastName.trim()) {
-      setError('El apellido es obligatorio');
-      return;
-    }
-    if (!formData.email.trim() || !/\S+@\S+\.\S+/.test(formData.email)) {
-      setError('Email inválido');
-      return;
-    }
-    if (!formData.phone.trim()) {
-      setError('El teléfono es obligatorio');
-      return;
-    }
-    if (!formData.birthDate) {
-      setError('La fecha de nacimiento es obligatoria');
-      return;
-    }
-    if (!formData.address.trim()) {
-      setError('La dirección es obligatoria');
-      return;
-    }
+ const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setLoading(true);
+  setError('');
 
-    setLoading(true);
-
-    try {
-      // Subir foto si hay una nueva
-      let photoURL = existingMember?.photo || '';
-      if (photoFile) {
-        const uploadedURL = await uploadPhoto();
-        if (uploadedURL) {
-          photoURL = uploadedURL;
-        }
+  try {
+    // Subir foto si existe
+    let photoURL: string | null = null;
+    if (photoFile) {
+      const uploadedURL = await uploadPhoto();
+      if (uploadedURL) {
+        photoURL = uploadedURL;
       }
+    }
 
-      const registrationData: Omit<PendingRegistration, 'id'> = {
-        gymId: gymId!,
-        gymName: gymName,
-        status: 'pending',
-        createdAt: serverTimestamp()
+    const registrationData: Omit<PendingRegistration, 'id'> = {
+      gymId: gymId!,
+      gymName: gymName,
+      status: 'pending',
+      createdAt: serverTimestamp()
+    };
+
+    if (existingMember) {
+      // 🔧 ACTUALIZACIÓN: usar null en lugar de undefined
+      registrationData.isUpdate = true;
+      registrationData.memberId = existingMember.id;
+      registrationData.previousData = existingMember;
+      registrationData.newData = {
+        firstName: formData.firstName.trim(),
+        lastName: formData.lastName.trim(),
+        email: formData.email.trim().toLowerCase(),
+        phone: formData.phone.trim(),
+        birthDate: formData.birthDate,
+        address: formData.address.trim(),
+        // ✅ CAMBIAR || undefined POR || null
+        photoURL: photoURL || null,
+        emergencyContactName: formData.emergencyContactName.trim() || null,
+        emergencyContactPhone: formData.emergencyContactPhone.trim() || null,
+        hasExercisedBefore: formData.hasExercisedBefore || null,
+        fitnessGoal: formData.fitnessGoal && formData.fitnessGoal.length > 0 ? formData.fitnessGoal : null,
+        fitnessGoalOther: formData.fitnessGoalOther.trim() || null,
+        medicalConditions: formData.medicalConditions.trim() || null,
+        injuries: formData.injuries.trim() || null,
+        allergies: formData.allergies.trim() || null,
+        hasMedicalCertificate: formData.hasMedicalCertificate || null
       };
-
-      if (existingMember) {
-        registrationData.isUpdate = true;
-        registrationData.memberId = existingMember.id;
-        registrationData.previousData = existingMember;
-        registrationData.newData = {
-          firstName: formData.firstName.trim(),
-          lastName: formData.lastName.trim(),
-          email: formData.email.trim().toLowerCase(),
-          phone: formData.phone.trim(),
-          birthDate: formData.birthDate,
-          address: formData.address.trim(),
-          photoURL: photoURL || undefined,
-          emergencyContactName: formData.emergencyContactName.trim() || undefined,
-          emergencyContactPhone: formData.emergencyContactPhone.trim() || undefined,
-          hasExercisedBefore: formData.hasExercisedBefore || undefined,
-          fitnessGoal: formData.fitnessGoal || undefined,
-          fitnessGoalOther: formData.fitnessGoalOther.trim() || undefined,
-          medicalConditions: formData.medicalConditions.trim() || undefined,
-          injuries: formData.injuries.trim() || undefined,
-          allergies: formData.allergies.trim() || undefined,
-          hasMedicalCertificate: formData.hasMedicalCertificate || undefined
-        };
-      } else {
-        registrationData.isUpdate = false;
-        registrationData.firstName = formData.firstName.trim();
-        registrationData.lastName = formData.lastName.trim();
-        registrationData.dni = formData.dni.trim();
-        registrationData.email = formData.email.trim().toLowerCase();
-        registrationData.phone = formData.phone.trim();
-        registrationData.birthDate = formData.birthDate;
-        registrationData.address = formData.address.trim();
-        registrationData.photoURL = photoURL || undefined;
-        registrationData.emergencyContactName = formData.emergencyContactName.trim() || undefined;
-        registrationData.emergencyContactPhone = formData.emergencyContactPhone.trim() || undefined;
-        registrationData.hasExercisedBefore = formData.hasExercisedBefore || undefined;
-        registrationData.fitnessGoal = formData.fitnessGoal || undefined;
-        registrationData.fitnessGoalOther = formData.fitnessGoalOther.trim() || undefined;
-        registrationData.medicalConditions = formData.medicalConditions.trim() || undefined;
-        registrationData.injuries = formData.injuries.trim() || undefined;
-        registrationData.allergies = formData.allergies.trim() || undefined;
-        registrationData.hasMedicalCertificate = formData.hasMedicalCertificate || undefined;
-      }
-
-      await addDoc(collection(db, 'pendingRegistrations'), registrationData);
-
-      setStep('success');
-      setLoading(false);
-
-    } catch (err) {
-      console.error('Error:', err);
-      setError('Error al enviar. Intenta nuevamente.');
-      setLoading(false);
+    } else {
+      // 🔧 NUEVO REGISTRO: usar null en lugar de undefined
+      registrationData.isUpdate = false;
+      registrationData.firstName = formData.firstName.trim();
+      registrationData.lastName = formData.lastName.trim();
+      registrationData.dni = formData.dni.trim();
+      registrationData.email = formData.email.trim().toLowerCase();
+      registrationData.phone = formData.phone.trim();
+      registrationData.birthDate = formData.birthDate;
+      registrationData.address = formData.address.trim();
+      // ✅ CAMBIAR || undefined POR || null
+      registrationData.photoURL = photoURL || null;
+      registrationData.emergencyContactName = formData.emergencyContactName.trim() || null;
+      registrationData.emergencyContactPhone = formData.emergencyContactPhone.trim() || null;
+      registrationData.hasExercisedBefore = formData.hasExercisedBefore || null;
+      registrationData.fitnessGoal = formData.fitnessGoal && formData.fitnessGoal.length > 0 ? formData.fitnessGoal : null;
+      registrationData.fitnessGoalOther = formData.fitnessGoalOther.trim() || null;
+      registrationData.medicalConditions = formData.medicalConditions.trim() || null;
+      registrationData.injuries = formData.injuries.trim() || null;
+      registrationData.allergies = formData.allergies.trim() || null;
+      registrationData.hasMedicalCertificate = formData.hasMedicalCertificate || null;
     }
-  };
+
+    await addDoc(collection(db, 'pendingRegistrations'), registrationData);
+
+    setStep('success');
+    setLoading(false);
+
+  } catch (err) {
+    console.error('Error:', err);
+    setError('Error al enviar. Intenta nuevamente.');
+    setLoading(false);
+  }
+};
 
   // PANTALLA: Éxito
   if (step === 'success') {
