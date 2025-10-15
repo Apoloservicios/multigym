@@ -40,6 +40,11 @@ interface MemberInfo {
   email: string;
   photo?: string | null;
   status?: string;
+  // 🆕 Agregar estos campos:
+  dni?: string;
+  memberNumber?: number;
+  totalDebt?: number;
+  hasDebt?: boolean;
 }
 
 interface MembershipInfo {
@@ -94,63 +99,81 @@ const AttendanceScanner: React.FC = () => {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // ✅ BÚSQUEDA DEBOUNCED
-  const debouncedSearch = useMemo(
-    () => debounce(async (term: string) => {
-      if (!gymData?.id || term.trim().length < 2) {
+const debouncedSearch = useMemo(
+  () => debounce(
+    async (term: string) => {
+      if (!gymData?.id || term.trim().length < 1) {
         setSearchResults([]);
         setSearchError(null);
         return;
       }
-      
+
       setIsSearching(true);
       setSearchError(null);
-      
+
       try {
+        const searchLower = term.toLowerCase().trim();
         const membersRef = collection(db, `gyms/${gymData.id}/members`);
-        const q = query(
-          membersRef,
-          where('status', '==', 'active'),
-          limit(1000)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        const allMembers: MemberInfo[] = [];
-        
-        querySnapshot.forEach(doc => {
+        const membersSnapshot = await getDocs(membersRef);
+
+        const results: MemberInfo[] = [];
+
+        membersSnapshot.forEach(doc => {
           const data = doc.data();
-          allMembers.push({
+          const member: MemberInfo = {
             id: doc.id,
             firstName: data.firstName || "",
             lastName: data.lastName || "",
             email: data.email || "",
             photo: data.photo || null,
-            status: data.status || "active"
-          });
-        });
-        
-        const searchTermLower = term.toLowerCase();
-        const filtered = allMembers.filter(member => {
+            status: data.status || "active",
+            // 🆕 Agregar DNI y número de socio
+            dni: data.dni || "",
+            memberNumber: data.memberNumber || 0,
+            totalDebt: data.totalDebt || 0,
+            hasDebt: data.hasDebt || false
+          };
+
+          // Búsqueda por nombre completo
           const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
-          const email = member.email.toLowerCase();
-          
-          return fullName.includes(searchTermLower) || 
-                email.includes(searchTermLower) ||
-                member.firstName.toLowerCase().includes(searchTermLower) ||
-                member.lastName.toLowerCase().includes(searchTermLower);
+          if (fullName.includes(searchLower)) {
+            results.push(member);
+            return;
+          }
+
+          // Búsqueda por email
+          if (member.email.toLowerCase().includes(searchLower)) {
+            results.push(member);
+            return;
+          }
+
+          // 🆕 Búsqueda por DNI (exacta o parcial)
+          if (member.dni && member.dni.includes(term.trim())) {
+            results.push(member);
+            return;
+          }
+
+          // 🆕 Búsqueda por número de socio (exacta)
+          if (member.memberNumber) {
+            const searchAsNumber = parseInt(term.trim(), 10);
+            if (!isNaN(searchAsNumber) && member.memberNumber === searchAsNumber) {
+              results.push(member);
+              return;
+            }
+          }
         });
-        
-        const limitedResults = filtered.slice(0, 20);
-        
+
         setTimeout(() => {
-          setSearchResults(limitedResults);
-          
-          if (filtered.length === 0) {
-            setSearchError(`No se encontraron socios que coincidan con "${term}"`);
-          } else if (filtered.length > 20) {
-            setSearchError(`Se encontraron ${filtered.length} resultados. Mostrando los primeros 20.`);
+          if (results.length === 0) {
+            setSearchError('No se encontraron socios con ese criterio');
+          } else if (results.length > 20) {
+            setSearchResults(results.slice(0, 20));
+            setSearchError(`Se encontraron ${results.length} socios. Mostrando los primeros 20.`);
+          } else {
+            setSearchResults(results);
           }
         }, 0);
-        
+
       } catch (error) {
         console.error('Error en búsqueda:', error);
         setTimeout(() => {
@@ -165,8 +188,8 @@ const AttendanceScanner: React.FC = () => {
         }, 50);
       }
     }, 400),
-    [gymData?.id]
-  );
+  [gymData?.id]
+);
 
   // ✅ CARGAR MIEMBROS RECIENTES
   const loadRecentMembers = useCallback(async () => {
@@ -253,6 +276,32 @@ const AttendanceScanner: React.FC = () => {
     setSelectedMember(member);
     setSearchTerm(`${member.firstName} ${member.lastName}`);
     setSearchResults([]);
+    setSearchError(null);
+
+      // 🆕 MOSTRAR ADVERTENCIA DE DEUDA SI CORRESPONDE
+      if (member.hasDebt || (member.totalDebt && member.totalDebt > 0)) {
+        const shouldContinue = window.confirm(
+          `⚠️ ADVERTENCIA\n\n` +
+          `${member.firstName} ${member.lastName} tiene una deuda de $${member.totalDebt?.toFixed(2) || 0}\n\n` +
+          `¿Desea continuar con el registro de asistencia de todos modos?`
+        );
+        
+        if (!shouldContinue) {
+          setSelectedMember(null);
+          return;
+        }
+      }
+
+      if (!gymData?.id) {
+        setScanResult({
+          success: false,
+          message: "No se encontró información del gimnasio",
+          timestamp: new Date(),
+          member: null,
+          error: "gymData no disponible"
+        });
+        return;
+      }
     
     const memberships = await loadMemberMemberships(member.id);
     setMemberMemberships(memberships);
@@ -833,7 +882,7 @@ const AttendanceScanner: React.FC = () => {
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="Buscar socio por nombre, apellido o email..."
+            placeholder="Buscar por nombre, DNI, N° socio, email..."
             value={searchTerm}
             onChange={(e) => {
               e.preventDefault();
@@ -932,10 +981,11 @@ const AttendanceScanner: React.FC = () => {
                 className="p-4 border-b border-gray-100 last:border-b-0 hover:bg-blue-50 cursor-pointer transition-colors"
                 onClick={() => handleMemberSelect(member)}
               >
-                <div className="flex items-center">
+                <div className="flex items-center justify-between">
+                <div className="flex items-center flex-1">
                   {member.photo ? (
-                    <img 
-                      src={member.photo} 
+                    <img
+                      src={member.photo}
                       alt={`${member.firstName} ${member.lastName}`}
                       className="h-12 w-12 rounded-full object-cover mr-3"
                     />
@@ -948,14 +998,32 @@ const AttendanceScanner: React.FC = () => {
                     <div className="font-medium text-gray-900">
                       {member.firstName} {member.lastName}
                     </div>
-                    <div className="text-sm text-gray-500">{member.email}</div>
-                  </div>
-                  <div className="text-blue-600">
-                    <User size={20} />
+                    <div className="text-sm text-gray-500 flex items-center gap-2 mt-1">
+                      {member.memberNumber && (
+                        <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">
+                          N° {member.memberNumber}
+                        </span>
+                      )}
+                      {member.dni && (
+                        <span className="text-gray-600 text-xs">DNI: {member.dni}</span>
+                      )}
+                      <span className="text-gray-400">•</span>
+                      <span className="text-xs">{member.email}</span>
+                    </div>
                   </div>
                 </div>
+                {(member.hasDebt || (member.totalDebt && member.totalDebt > 0)) && (
+                  <div className="ml-3 flex-shrink-0">
+                    <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full font-medium whitespace-nowrap">
+                      Deuda ${member.totalDebt?.toFixed(0)}
+                    </span>
+                  </div>
+                )}
+              </div>
               </div>
             ))}
+
+
           </div>
         </div>
       )}
@@ -1155,7 +1223,7 @@ const AttendanceScanner: React.FC = () => {
   // ✅ COMPONENTE PRINCIPAL
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold mb-6">Control de Asistencias</h2>
+      <h2 className="text-xl font-semibold mb-6">Control de Asistenciaswww</h2>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Sección de escáner/entrada manual */}
