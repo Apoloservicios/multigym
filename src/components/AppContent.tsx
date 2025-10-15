@@ -44,6 +44,10 @@ import QRCodeGenerator from '../pages/admin/QRCodeGenerator';
 
 import HelpCenter from '../pages/help/HelpCenter';
 
+import MemberUpdateTracker from '../pages/admin/MemberUpdateTracker';
+import MembershipAssignmentControl from '../pages/admin/MembershipAssignmentControl';
+
+
 
 // Componente de protección de rutas
 const ProtectedRoute: React.FC<{ 
@@ -249,6 +253,28 @@ const AppContent: React.FC = () => {
                   <QRCodeGenerator />
                 </ProtectedRoute>
               } />
+
+              <Route 
+                path="/update-tracker" 
+                element={
+                  <ProtectedRoute requiredRole="admin">
+                    
+                      <MemberUpdateTracker />
+                    
+                  </ProtectedRoute>
+                } 
+              />
+
+              <Route 
+                path="/membership-control" 
+                element={
+                  <ProtectedRoute requiredRole="admin">
+                    
+                      <MembershipAssignmentControl />
+                    
+                  </ProtectedRoute>
+                } 
+              />
               
               {/* Ruta por defecto */}
               <Route path="/" element={<Navigate to="dashboard" replace />} />

@@ -1,3 +1,7 @@
+
+// 📍 ARCHIVO: src/components/Layout/GymLayout.tsx
+// 🔧 VERSIÓN FINAL - SIN PADDING QUE CAUSE DESPLAZAMIENTO
+
 import React from 'react';
 import Sidebar from './Sidebar';
 
@@ -11,16 +15,16 @@ interface GymLayoutProps {
 const GymLayout: React.FC<GymLayoutProps> = ({ children }) => {
   const { gymData } = useAuth();
   
-  // 🤖 Activar el scheduler automático   -->> anterior useMonthlyPaymentScheduler();
- 
-   useMonthlyPaymentsAutomation(gymData?.id, true);
+  // 🤖 Activar el scheduler automático
+  useMonthlyPaymentsAutomation(gymData?.id, true);
   
   return (
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
       
-      <div className="flex-1 md:ml-64 overflow-y-auto">
-        <div className="p-6 bg-gray-50 min-h-full">
+      {/* ✅ CRÍTICO: Sin p-6, solo bg-gray-50 */}
+      <div className="flex-1 md:ml-64 overflow-y-auto overflow-x-hidden">
+        <div className="bg-gray-50 min-h-full">
           {children}
         </div>
       </div>

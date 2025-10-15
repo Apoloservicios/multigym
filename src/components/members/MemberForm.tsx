@@ -15,6 +15,8 @@ import {
   htmlDateToUTCDate
 } from '../../utils/date.utils';
 
+import PhotoCapture from '../common/PhotoCapture';
+
 interface MemberFormProps {
   initialData?: Partial<MemberFormData> | any;
   onSubmit: (data: MemberFormData) => Promise<void>;
@@ -247,6 +249,7 @@ useEffect(() => {
       <h2 className="text-2xl font-bold text-gray-800 mb-6">{title}</h2>
 
       <form onSubmit={handleSubmit} className="space-y-8">
+      
         {/* SECCIÓN: FOTO */}
         <div className="pb-6 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
@@ -254,53 +257,17 @@ useEffect(() => {
             Foto del Socio
           </h3>
           
-          <div className="flex items-start gap-6">
-            {/* Preview de la foto */}
-            {photoPreview ? (
-              <div className="relative">
-                <img
-                  src={photoPreview}
-                  alt="Preview"
-                  className="w-32 h-32 rounded-lg object-cover border-2 border-gray-300"
-                />
-                <button
-                  type="button"
-                  onClick={handleRemovePhoto}
-                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="w-32 h-32 bg-gray-100 rounded-lg flex items-center justify-center border-2 border-dashed border-gray-300">
-                <Camera className="h-12 w-12 text-gray-400" />
-              </div>
-            )}
-
-            {/* Input para subir foto */}
-            <div className="flex-1">
-              <label className="cursor-pointer block">
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 hover:bg-blue-50 transition-colors">
-                  <Camera className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600 mb-1">
-                    Click para {photoPreview ? 'cambiar' : 'subir'} foto
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    JPG, PNG o GIF (máx. 5MB)
-                  </p>
-                </div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoChange}
-                  className="hidden"
-                />
-              </label>
-              {errors.photo && (
-                <p className="text-sm text-red-600 mt-2">{errors.photo}</p>
-              )}
-            </div>
-          </div>
+          <PhotoCapture
+            onPhotoCapture={(file, preview) => {
+              setFormData(prev => ({ ...prev, photo: file }));
+              setPhotoPreview(preview);
+            }}
+            currentPreview={photoPreview}
+            onRemove={() => {
+              setFormData(prev => ({ ...prev, photo: null }));
+              setPhotoPreview(null);
+            }}
+          />
         </div>
 
         {/* SECCIÓN: DATOS PERSONALES */}

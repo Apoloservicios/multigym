@@ -23,6 +23,7 @@ import {
 import { db,  } from '../../config/firebase';
 
 import { uploadToCloudinary } from '../../utils/cloudinary.utils';
+import PhotoCapture from '../../components/common/PhotoCapture';
 
 // Interfaz para los datos del socio
 interface MemberData {
@@ -753,42 +754,25 @@ const uploadPhoto = async (): Promise<string | null> => {
           )}
 
           <form onSubmit={handleSubmit}>
+            
             {/* SECCIÓN: FOTO */}
             <div className="mb-8 pb-8 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
                 <Camera className="h-5 w-5 mr-2 text-blue-600" />
                 Foto del Socio
               </h3>
-              <div className="flex items-center space-x-6">
-                {photoPreview && (
-                  <div className="relative">
-                    <img
-                      src={photoPreview}
-                      alt="Preview"
-                      className="w-32 h-32 object-cover rounded-lg border-2 border-gray-300"
-                    />
-                  </div>
-                )}
-                <div className="flex-1">
-                  <label className="cursor-pointer">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-500 transition-colors">
-                      <Camera className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                      <p className="text-sm text-gray-600 mb-1">
-                        {photoPreview ? 'Cambiar foto' : 'Subir foto'}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        JPG, PNG o GIF (máx. 5MB)
-                      </p>
-                    </div>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handlePhotoChange}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              </div>
+              
+              <PhotoCapture
+                onPhotoCapture={(file, preview) => {
+                  setPhotoFile(file);
+                  setPhotoPreview(preview);
+                }}
+                currentPreview={photoPreview}
+                onRemove={() => {
+                  setPhotoFile(null);
+                  setPhotoPreview('');
+                }}
+              />
             </div>
 
             {/* SECCIÓN: DATOS PERSONALES */}

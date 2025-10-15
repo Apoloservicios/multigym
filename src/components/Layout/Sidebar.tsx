@@ -172,26 +172,34 @@ const isMembershipManagementActive = (): boolean => {
         </div>
         
         {/* Logo/Título */}
-        <div className="px-4 py-6 flex-shrink-0">
-          <div className="mb-8 flex flex-col items-center">
-            {gymData?.logo ? (
-              <img 
-                src={gymData.logo} 
-                alt={gymData?.name || "Gym Logo"} 
-                className="h-22 w-22 object-contain rounded-md" 
-              />
-            ) : (
-              <>
-                <div className="h-16 w-16 bg-blue-100 rounded-md flex items-center justify-center mb-2">
-                  <Building2 size={32} className="text-blue-600" />
+          <div className="px-4 py-6 flex-shrink-0">
+            <div className="mb-8 flex flex-col items-center">
+              {gymData?.logo ? (
+                <div className="relative">
+                  <img 
+                    src={gymData.logo} 
+                    alt={gymData?.name || "Gym Logo"} 
+                    className="h-32 w-32 object-cover rounded-full border-4 border-blue-100 shadow-lg"
+                  />
                 </div>
-                <h1 className="text-xl font-bold text-center mt-2">
-                  {userRole === 'superadmin' ? 'MultiGym Admin' : (gymData?.name || "GymSystem")}
-                </h1>
-              </>
-            )}
+              ) : (
+                <>
+                  <div className="h-16 w-16 bg-blue-100 rounded-full flex items-center justify-center mb-2 shadow-md">
+                    <Building2 size={32} className="text-blue-600" />
+                  </div>
+                  <h1 className="text-xl font-bold text-center mt-2">
+                    {userRole === 'superadmin' ? 'MultiGym Admin' : (gymData?.name || "GymSystem")}
+                  </h1>
+                </>
+              )}
+              {/* Mostrar nombre del gimnasio debajo del logo */}
+              {gymData?.logo && gymData?.name && (
+                <h2 className="text-sm font-semibold text-gray-700 text-center mt-3">
+                  {gymData.name}
+                </h2>
+              )}
+            </div>
           </div>
-        </div>
         
         {/* Navegación */}
         <div className="flex-1 overflow-y-auto px-4 pb-6 max-h-[calc(100vh-320px)]">
@@ -275,7 +283,7 @@ const isMembershipManagementActive = (): boolean => {
                     
                   />  
 
-                  {/* ✅ NUEVAS OPCIONES - Auto-registro */}
+                 {/* ✅ NUEVAS OPCIONES - Auto-registro */}
                 {userRole === 'admin' && (
                   <>
                     <div className="border-t border-gray-200 my-2"></div>
@@ -304,6 +312,34 @@ const isMembershipManagementActive = (): boolean => {
                   </>
                 )}
 
+                {/* ✅ NUEVAS OPCIONES - Control de Datos y Membresías - AGREGAR ESTO */}
+                {userRole === 'admin' && (
+                  <>
+                    <div className="border-t border-gray-200 my-2"></div>
+                    
+                    <div className="py-2">
+                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                        Control de Datos
+                      </h3>
+                      
+                      <NavItem
+                        icon={<RefreshCw size={20} />}
+                        text="Actualizaciones"
+                        active={isActive('update-tracker')}
+                        onClick={() => handleNavigate('update-tracker')}
+                        isNew={false}
+                      />
+                      
+                      <NavItem
+                        icon={<CreditCard size={20} />}
+                        text="Control Membresías"
+                        active={isActive('membership-control')}
+                        onClick={() => handleNavigate('membership-control')}
+                        isNew={false}
+                      />
+                    </div>
+                  </>
+                )}
            
                 
                 <NavItem
@@ -414,6 +450,8 @@ const isMembershipManagementActive = (): boolean => {
                       active={isActive('help')}
                       onClick={() => handleNavigate('help')}
                     />
+
+              
                   </DropdownNav>
 
                   

@@ -69,7 +69,7 @@ const AttendanceScanner: React.FC = () => {
   const [cameraError, setCameraError] = useState<string | null>(null);
   
   // Estados para registro manual
-  const [showManualEntry, setShowManualEntry] = useState<boolean>(false);
+  const [showManualEntry, setShowManualEntry] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [searchResults, setSearchResults] = useState<MemberInfo[]>([]);
   const [isSearching, setIsSearching] = useState<boolean>(false);
@@ -1223,7 +1223,7 @@ const debouncedSearch = useMemo(
   // ✅ COMPONENTE PRINCIPAL
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold mb-6">Control de Asistenciaswww</h2>
+      <h2 className="text-xl font-semibold mb-6">Control de Asistencias</h2>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Sección de escáner/entrada manual */}
