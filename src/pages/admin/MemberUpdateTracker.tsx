@@ -1,5 +1,8 @@
 // src/pages/admin/MemberUpdateTracker.tsx
 // Monitor de actualización de datos con filtros mejorados
+// ✅ CAMBIOS: 
+// - Eliminada columna de Email
+// - Navegación al detalle del socio corregida
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -41,7 +44,7 @@ interface Member {
   missingFields?: string[];
 }
 
-type SortField = 'firstName' | 'memberNumber' | 'email' | 'updatedAt' | 'missingFields';
+type SortField = 'firstName' | 'memberNumber' | 'updatedAt' | 'missingFields';
 type SortDirection = 'asc' | 'desc';
 
 const MemberUpdateTracker = () => {
@@ -88,12 +91,15 @@ const MemberUpdateTracker = () => {
       missing.push('Contacto Emergencia');
     }
     if (!member.medicalConditions && !member.injuries && !member.allergies && !member.hasMedicalCertificate) {
-      missing.push('Info. Salud');
+      missing.push('Info. Médica');
     }
     
     return missing;
   };
 
+  /**
+   * Cargar todos los socios
+   */
   const loadMembers = async () => {
     if (!gymData?.id) return;
     
@@ -103,72 +109,51 @@ const MemberUpdateTracker = () => {
       const membersQuery = query(membersRef, orderBy('firstName', 'asc'));
       const snapshot = await getDocs(membersQuery);
 
-      const now = new Date();
-      const membersData: Member[] = [];
-      let updatedCount = 0;
-      let incompleteCount = 0;
-
-      snapshot.forEach((doc) => {
+      const membersData: Member[] = snapshot.docs.map(doc => {
         const data = doc.data();
-        const createdAt = data.createdAt?.toDate() || new Date();
-        const updatedAt = data.updatedAt?.toDate();
-
-        const hasUpdated = updatedAt && updatedAt.getTime() !== createdAt.getTime();
         
-        if (hasUpdated) {
-          updatedCount++;
-        }
-
-        let daysSinceUpdate = undefined;
+        // Calcular si actualizó datos
+        const createdAt = data.createdAt?.toDate();
+        const updatedAt = data.updatedAt?.toDate();
+        const hasUpdated = !!updatedAt && updatedAt > createdAt;
+        
+        // Calcular días desde última actualización
+        let daysSinceUpdate: number | undefined;
         if (updatedAt) {
-          const diffTime = now.getTime() - updatedAt.getTime();
-          daysSinceUpdate = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+          const now = new Date();
+          const diffTime = Math.abs(now.getTime() - updatedAt.getTime());
+          daysSinceUpdate = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         }
-
+        
         // Verificar campos faltantes
         const missingFields = checkMissingFields(data);
-        const missingFieldsCount = missingFields.length;
         
-        if (missingFieldsCount > 0) {
-          incompleteCount++;
-        }
-
-        membersData.push({
+        return {
           id: doc.id,
-          firstName: data.firstName || '',
-          lastName: data.lastName || '',
-          email: data.email || '',
-          phone: data.phone || '',
-          memberNumber: data.memberNumber || 0,
-          createdAt: createdAt,
-          updatedAt: updatedAt,
-          hasUpdated: !!hasUpdated,
+          ...data,
+          createdAt,
+          updatedAt,
+          hasUpdated,
           daysSinceUpdate,
-          
-          // Campos opcionales
-          photo: data.photo || null,
-          dni: data.dni || '',
-          address: data.address || '',
-          emergencyContactName: data.emergencyContactName || '',
-          emergencyContactPhone: data.emergencyContactPhone || '',
-          medicalConditions: data.medicalConditions || '',
-          injuries: data.injuries || '',
-          allergies: data.allergies || '',
-          hasMedicalCertificate: data.hasMedicalCertificate || undefined,
-          
-          // Campos calculados
-          missingFieldsCount,
-          missingFields
-        });
+          missingFields,
+          missingFieldsCount: missingFields.length
+        } as Member;
       });
 
       setMembers(membersData);
+      
+      // Calcular estadísticas
+      const updatedCount = membersData.filter(m => m.hasUpdated).length;
+      const notUpdatedCount = membersData.filter(m => !m.hasUpdated).length;
+      const incompleteCount = membersData.filter(m => (m.missingFieldsCount || 0) > 0).length;
+      
       setStats({
         total: membersData.length,
         updated: updatedCount,
-        notUpdated: membersData.length - updatedCount,
+        notUpdated: notUpdatedCount,
         incomplete: incompleteCount,
-        percentage: membersData.length > 0 ? Math.round((updatedCount / membersData.length) * 100) : 0
+        percentage: membersData.length > 0 
+          ? Math.round((updatedCount / membersData.length) * 100) : 0
       });
 
     } catch (error) {
@@ -216,12 +201,10 @@ const MemberUpdateTracker = () => {
         const search = searchTerm.toLowerCase();
         const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
         const memberNum = member.memberNumber.toString();
-        const email = member.email.toLowerCase();
         const phone = member.phone.toLowerCase();
         
         return fullName.includes(search) || 
                memberNum.includes(search) || 
-               email.includes(search) ||
                phone.includes(search);
       }
       
@@ -241,10 +224,6 @@ const MemberUpdateTracker = () => {
         case 'memberNumber':
           aValue = a.memberNumber;
           bValue = b.memberNumber;
-          break;
-        case 'email':
-          aValue = a.email.toLowerCase();
-          bValue = b.email.toLowerCase();
           break;
         case 'updatedAt':
           aValue = a.updatedAt?.getTime() || 0;
@@ -290,10 +269,13 @@ const MemberUpdateTracker = () => {
   };
 
   /**
-   * Navegar al detalle del socio
+   * ✅ NAVEGACIÓN CORREGIDA: Ahora se pasa el ID del socio directamente
    */
   const goToMember = (memberId: string) => {
-    navigate(`/members?memberId=${memberId}`);
+    // En lugar de usar query params, pasamos state
+    navigate('/members', { 
+      state: { memberId: memberId }
+    });
   };
 
   if (!gymData?.id) {
@@ -328,79 +310,69 @@ const MemberUpdateTracker = () => {
         </p>
       </div>
 
-      {/* Estadísticas */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
+      {/* Tarjetas de estadísticas */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Total Socios</p>
-              <p className="text-3xl font-bold text-gray-800">{stats.total}</p>
+              <p className="text-sm text-gray-600 mb-1">Total Socios</p>
+              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
             </div>
             <Users className="h-10 w-10 text-blue-500" />
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
+        <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Actualizaron</p>
-              <p className="text-3xl font-bold text-green-600">{stats.updated}</p>
+              <p className="text-sm text-gray-600 mb-1">Actualizaron Datos</p>
+              <p className="text-2xl font-bold text-green-600">{stats.updated}</p>
+              <p className="text-xs text-gray-500">{stats.percentage}% del total</p>
             </div>
             <CheckCircle className="h-10 w-10 text-green-500" />
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-red-500">
+        <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">No Actualizaron</p>
-              <p className="text-3xl font-bold text-red-600">{stats.notUpdated}</p>
+              <p className="text-sm text-gray-600 mb-1">Sin Actualizar</p>
+              <p className="text-2xl font-bold text-red-600">{stats.notUpdated}</p>
             </div>
             <AlertCircle className="h-10 w-10 text-red-500" />
           </div>
         </div>
 
-        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-orange-500">
+        <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Datos Incompletos</p>
-              <p className="text-3xl font-bold text-orange-600">{stats.incomplete}</p>
+              <p className="text-sm text-gray-600 mb-1">Datos Incompletos</p>
+              <p className="text-2xl font-bold text-orange-600">{stats.incomplete}</p>
             </div>
             <AlertTriangle className="h-10 w-10 text-orange-500" />
           </div>
         </div>
-
-        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-600">% Actualizado</p>
-              <p className="text-3xl font-bold text-purple-600">{stats.percentage}%</p>
-            </div>
-            <Calendar className="h-10 w-10 text-purple-500" />
-          </div>
-        </div>
       </div>
 
-      {/* Búsqueda y Filtros */}
+      {/* Filtros y búsqueda */}
       <div className="bg-white rounded-lg shadow p-4 mb-6">
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           {/* Barra de búsqueda */}
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
-              <input
-                type="text"
-                placeholder="Buscar por nombre, N° socio, email o teléfono..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+          <div className="flex-1 relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-5 w-5 text-gray-400" />
             </div>
+            <input
+              type="text"
+              placeholder="Buscar por nombre, N° socio o teléfono..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
 
-          {/* Filtros */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-gray-700 whitespace-nowrap">Filtrar:</span>
+          {/* Botones de filtro */}
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setFilter('all')}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
@@ -481,15 +453,7 @@ const MemberUpdateTracker = () => {
                     <SortIcon field="firstName" />
                   </div>
                 </th>
-                <th 
-                  onClick={() => handleSort('email')}
-                  className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
-                >
-                  <div className="flex items-center gap-2">
-                    Email
-                    <SortIcon field="email" />
-                  </div>
-                </th>
+                {/* ✅ COLUMNA DE EMAIL ELIMINADA */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                   Teléfono
                 </th>
@@ -527,9 +491,7 @@ const MemberUpdateTracker = () => {
                       {member.firstName} {member.lastName}
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                    {member.email || '-'}
-                  </td>
+                  {/* ✅ CELDA DE EMAIL ELIMINADA */}
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                     {member.phone || '-'}
                   </td>
@@ -565,15 +527,15 @@ const MemberUpdateTracker = () => {
                               {field === 'Teléfono' && <Phone className="h-3 w-3" />}
                               {field === 'Dirección' && <MapPin className="h-3 w-3" />}
                               {field === 'Contacto Emergencia' && <UserPlus className="h-3 w-3" />}
-                              {field === 'Info. Salud' && <Heart className="h-3 w-3" />}
+                              {field === 'Info. Médica' && <Heart className="h-3 w-3" />}
                               {field}
                             </span>
                           ))}
                         </div>
                       </div>
                     ) : (
-                      <span className="flex items-center gap-1 text-green-600 text-sm">
-                        <CheckCircle className="h-4 w-4" />
+                      <span className="inline-flex items-center gap-1 text-xs text-green-700 bg-green-100 px-2 py-1 rounded-full font-medium">
+                        <CheckCircle className="h-3 w-3" />
                         Completo
                       </span>
                     )}
@@ -581,7 +543,7 @@ const MemberUpdateTracker = () => {
                   <td className="px-6 py-4 whitespace-nowrap">
                     <button
                       onClick={() => goToMember(member.id)}
-                      className="inline-flex items-center gap-1 px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition"
                     >
                       <ExternalLink className="h-4 w-4" />
                       Ver Socio
@@ -595,58 +557,60 @@ const MemberUpdateTracker = () => {
 
         {/* Paginación */}
         {totalPages > 1 && (
-          <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-            <div className="text-sm text-gray-600">
-              Página {currentPage} de {totalPages}
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Anterior
-              </button>
-              
-              <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum: number;
-                  if (totalPages <= 5) {
-                    pageNum = i + 1;
-                  } else if (currentPage <= 3) {
-                    pageNum = i + 1;
-                  } else if (currentPage >= totalPages - 2) {
-                    pageNum = totalPages - 4 + i;
-                  } else {
-                    pageNum = currentPage - 2 + i;
-                  }
-                  
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => setCurrentPage(pageNum)}
-                      className={`px-3 py-1 rounded text-sm font-medium ${
-                        currentPage === pageNum
-                          ? 'bg-blue-600 text-white'
-                          : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  );
-                })}
+          <div className="bg-gray-50 px-4 py-3 border-t border-gray-200">
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-gray-700">
+                Página {currentPage} de {totalPages}
               </div>
               
-              <button
-                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                disabled={currentPage === totalPages}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                Siguiente
-                <ChevronRight className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Anterior
+                </button>
+                
+                <div className="flex gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum : number;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
+                          currentPage === pageNum
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-gray-300 text-gray-700 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+                
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  Siguiente
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
         )}

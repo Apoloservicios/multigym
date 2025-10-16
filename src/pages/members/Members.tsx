@@ -1,6 +1,8 @@
 // src/pages/members/Members.tsx - VERSIÓN CORREGIDA
+// ✅ NUEVO: Ahora captura el memberId desde la navegación y abre el detalle automáticamente
 
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom'; // ✅ AGREGADO
 import MemberList from '../../components/members/MemberList';
 import MemberForm from '../../components/members/MemberForm';
 import MemberDetail from '../../components/members/MemberDetail';
@@ -20,6 +22,7 @@ type ViewType = 'list' | 'form' | 'detail' | 'qr' | 'membership' | 'payment';
 const Members: React.FC = () => {
   const { gymData } = useAuth();
   const membersFirestore = useFirestore<Member>('members');
+  const location = useLocation(); // ✅ AGREGADO
   
   const [view, setView] = useState<ViewType>('list');
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
@@ -27,6 +30,39 @@ const Members: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
+  
+  // ✅ NUEVO: Detectar si venimos de otra página con un memberId
+  useEffect(() => {
+    const loadMemberFromNavigation = async () => {
+      // Verificar si hay un memberId en el state de navegación
+      const state = location.state as { memberId?: string } | null;
+      
+      if (state?.memberId && gymData?.id) {
+        setLoading(true);
+        try {
+          // Cargar el socio por su ID
+          const member = await membersFirestore.getById(state.memberId);
+          
+          if (member) {
+            setSelectedMember(member);
+            setView('detail'); // Abrir la vista de detalle automáticamente
+            
+            // Limpiar el state de navegación para que no se vuelva a activar
+            window.history.replaceState({}, document.title);
+          } else {
+            setError('Socio no encontrado');
+          }
+        } catch (err) {
+          console.error('Error cargando socio:', err);
+          setError('Error al cargar los datos del socio');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadMemberFromNavigation();
+  }, [location.state, gymData?.id]);
   
   // Limpiar mensajes después de un tiempo
   useEffect(() => {
@@ -128,38 +164,28 @@ const Members: React.FC = () => {
       console.log("Guardando socio:", formData);
       
       if (isEdit && selectedMember) {
-        // Actualizar socio existente usando el servicio original
-        console.log("Actualizando socio existente ID:", selectedMember.id);
+        // Actualizar socio existente
+        await updateMember(gymData.id, selectedMember.id, formData);
+        setSuccess('Socio actualizado correctamente');
         
-        const result = await updateMember(gymData.id, selectedMember.id, formData);
-        
-        if (result) {
-          console.log("Socio actualizado correctamente");
-          setSuccess('Socio actualizado correctamente');
-          
-          // Recargar los datos del socio
-          const updatedMember = await membersFirestore.getById(selectedMember.id);
-          if (updatedMember) {
-            setSelectedMember(updatedMember);
-            setView('detail');
-          } else {
-            setSelectedMember(null);
-            setView('list');
-          }
-        }
+        // Recargar el socio actualizado
+        await reloadSelectedMember();
       } else {
-        // Crear nuevo socio usando el servicio original
-        console.log("Creando nuevo socio");
-        
+        // ✅ FIX: addMember retorna el Member completo, no solo el ID
         const newMember = await addMember(gymData.id, formData);
         
-        if (newMember) {
-          console.log("Nuevo socio creado con ID:", newMember.id);
-          setSuccess('Socio creado correctamente');
-          setSelectedMember(newMember);
-          setView('detail');
+        if (!newMember) {
+          throw new Error('No se pudo crear el socio');
         }
+        
+        setSuccess('Socio registrado correctamente');
+        
+        // Establecer el nuevo socio directamente (ya lo tenemos completo)
+        setSelectedMember(newMember);
       }
+      
+      // Volver a la vista correcta
+      setView(selectedMember ? 'detail' : 'list');
     } catch (err: any) {
       console.error('Error saving member:', err);
       setError(err.message || 'Error al guardar el socio');
@@ -168,9 +194,9 @@ const Members: React.FC = () => {
     }
   };
 
-  // Función para recargar datos del socio seleccionado
+  // Recargar datos del socio seleccionado
   const reloadSelectedMember = async () => {
-    if (!selectedMember?.id || !gymData?.id) return;
+    if (!selectedMember?.id) return;
     
     try {
       const updatedMember = await membersFirestore.getById(selectedMember.id);
@@ -181,28 +207,24 @@ const Members: React.FC = () => {
       console.error('Error reloading member:', err);
     }
   };
-  
-  // Renderizado condicional según la vista actual
+
+  // Renderizar la vista apropiada según el estado
   const renderView = () => {
     switch (view) {
       case 'form':
         return (
-            <MemberForm 
+          <MemberForm 
               initialData={selectedMember ? {
-                // ✅ DATOS BÁSICOS
                 firstName: selectedMember.firstName,
                 lastName: selectedMember.lastName,
                 email: selectedMember.email,
                 phone: selectedMember.phone,
                 address: selectedMember.address,
-                birthDate: selectedMember.birthDate ? 
-                  firebaseDateToHtmlDate(selectedMember.birthDate) : '',
-                photo: selectedMember.photo || null,
+                birthDate: selectedMember.birthDate ? firebaseDateToHtmlDate(selectedMember.birthDate) : '',
                 status: selectedMember.status,
                 dni: selectedMember.dni || '',
-                memberNumber: selectedMember.memberNumber || 0,
                 
-                // ✅ NUEVOS CAMPOS - AGREGAR ESTO!
+                // Datos adicionales
                 emergencyContactName: selectedMember.emergencyContactName || '',
                 emergencyContactPhone: selectedMember.emergencyContactPhone || '',
                 hasExercisedBefore: selectedMember.hasExercisedBefore || undefined,
@@ -243,6 +265,10 @@ const Members: React.FC = () => {
         );
         case 'payment':
           if (!selectedMember) return null;
+          // ✅ FIX: Guardar el ID en una constante para evitar errores de TypeScript
+          const memberIdForPayment = selectedMember.id;
+          const previousDebt = selectedMember.totalDebt;
+          
           return (
             <MemberPayment 
               member={selectedMember}
@@ -251,12 +277,12 @@ const Members: React.FC = () => {
                 
                 // ✅ FIX: Recargar los datos del socio COMPLETOS
                 try {
-                  const updatedMember = await membersFirestore.getById(selectedMember.id);
+                  const updatedMember = await membersFirestore.getById(memberIdForPayment);
                   if (updatedMember) {
                     console.log('✅ Socio actualizado después de pago:', {
                       id: updatedMember.id,
                       nombre: `${updatedMember.firstName} ${updatedMember.lastName}`,
-                      deudaAnterior: selectedMember.totalDebt,
+                      deudaAnterior: previousDebt,
                       deudaNueva: updatedMember.totalDebt
                     });
                     
