@@ -51,7 +51,10 @@ interface DashboardMetrics {
   expiringMemberships: number;
   pendingPayments: number;
   upcomingBirthdays: number;
+  pendingRegistrations: number; 
 }
+
+
 
 interface AttendanceRecord {
   id: string;
@@ -93,7 +96,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     thisWeekAttendance: 0,
     expiringMemberships: 0,
     pendingPayments: 0,
-    upcomingBirthdays: 0
+    upcomingBirthdays: 0,
+    pendingRegistrations: 0 
   });
   
   const [recentAttendance, setRecentAttendance] = useState<AttendanceRecord[]>([]);
@@ -152,6 +156,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       return 0;
     }
   }, [gymData?.id]);
+
+  // Cargar registros pendientes de aprobación
+const loadPendingRegistrations = useCallback(async () => {
+  if (!gymData?.id) return 0;
+  
+  try {
+    const registrationsRef = collection(db, 'pendingRegistrations');
+    const q = query(
+      registrationsRef,
+      where('gymId', '==', gymData.id),
+      where('status', '==', 'pending')
+    );
+    
+    const snapshot = await getDocs(q);
+    return snapshot.size;
+  } catch (err: any) {
+    console.error('Error loading pending registrations:', err);
+    return 0;
+  }
+}, [gymData?.id]);
 
   // Cargar métricas principales
   const loadMetrics = useCallback(async () => {
@@ -280,6 +304,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       // Cargar próximos cumpleaños
       const birthdayCount = await loadUpcomingBirthdays();
 
+      const pendingRegistrationsCount = await loadPendingRegistrations();
+
       // Calcular revenues
       let monthlyRevenue = 0;
       monthlyTransactionsSnap.forEach(doc => {
@@ -305,7 +331,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
         thisWeekAttendance: weekAttendanceCount,
         expiringMemberships: expiringMembershipsSnap.size,
         pendingPayments: pendingPaymentsSnap.size,
-        upcomingBirthdays: birthdayCount || 0
+        upcomingBirthdays: birthdayCount || 0,
+        pendingRegistrations: pendingRegistrationsCount || 0 
       });
 
     } catch (err: any) {
@@ -697,12 +724,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </div>
         </div>
 
-        {/* Alertas */}
+        {/* Alertas - Card de Atención Requerida */}
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-600">Atención Requerida</p>
               <div className="mt-2 space-y-1">
+                {/* ✅ NUEVO: Registros pendientes */}
+                {metrics.pendingRegistrations > 0 && (
+                  <div className="text-sm text-purple-600 font-medium">
+                    {metrics.pendingRegistrations} registro{metrics.pendingRegistrations !== 1 ? 's' : ''} pendiente{metrics.pendingRegistrations !== 1 ? 's' : ''}
+                  </div>
+                )}
+                
                 {metrics.expiringMemberships > 0 && (
                   <div className="text-sm text-amber-600">
                     {metrics.expiringMemberships} membresías por vencer
@@ -723,8 +757,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                     {metrics.upcomingBirthdays} cumpleaños próximos
                   </div>
                 )}
-                {metrics.expiringMemberships === 0 && metrics.pendingPayments === 0 && 
-                 metrics.membersWithDebt === 0 && metrics.upcomingBirthdays === 0 && (
+                {metrics.pendingRegistrations === 0 && 
+                metrics.expiringMemberships === 0 && 
+                metrics.pendingPayments === 0 && 
+                metrics.membersWithDebt === 0 && 
+                metrics.upcomingBirthdays === 0 && (
                   <div className="text-sm text-green-600">
                     Todo al día ✓
                   </div>
