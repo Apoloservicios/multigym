@@ -1000,12 +1000,12 @@ const formatDate = (dateString: string) => {
                           <div>
                             <h4 className="font-medium text-green-900">{membership.activityName}</h4>
                             <div className="flex space-x-2 text-sm text-green-700">
-                              <span>
-                                {membership.maxAttendances > 0 
-                                  ? `${membership.currentAttendances}/${membership.maxAttendances} asistencias`
-                                  : 'Ilimitado'
-                                }
-                              </span>
+                                <span>
+                                  {membership.maxAttendances && membership.maxAttendances > 0 
+                                    ? `${membership.currentAttendances || 0}/${membership.maxAttendances} asistencias`
+                                    : 'Asistencias ilimitadas'
+                                  }
+                                </span>
                               {membership.autoRenewal && (
                                 <span className="flex items-center">
                                   <RefreshCw size={12} className="mr-1" />
@@ -1073,11 +1073,16 @@ const formatDate = (dateString: string) => {
                     {member.status === 'active' ? 'Activo' : 'Inactivo'}
                   </span>
                   
-                  <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                    calculatedDebt > 0 ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
-                  }`}>
-                    {calculatedDebt > 0 ? `Con deuda: ${formatCurrency(calculatedDebt)}` : 'Sin deuda'}
-                  </span>
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                        (member.totalDebt && member.totalDebt > 0) || calculatedDebt > 0
+                          ? 'bg-red-100 text-red-800'
+                          : 'bg-green-100 text-green-800'
+                      }`}>
+                        {(member.totalDebt && member.totalDebt > 0) || calculatedDebt > 0
+                          ? `Deuda: ${formatCurrency(member.totalDebt || calculatedDebt)}`
+                          : 'Sin deuda'
+                        }
+                      </span>
                 </div>
               </div>
               

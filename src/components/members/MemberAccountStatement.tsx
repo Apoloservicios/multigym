@@ -68,60 +68,72 @@ const MemberAccountStatement: React.FC<MemberAccountStatementProps> = ({
 
 
   // Cargar pagos mensuales
-  const loadPayments = async () => {
-    if (!gymData?.id || !memberId) {
-      setLoading(false);
-      return;
-    }
+const loadPayments = async () => {
+  if (!gymData?.id || !memberId) {
+    setLoading(false);
+    return;
+  }
 
-    try {
-      const paymentsRef = collection(db, `gyms/${gymData.id}/monthlyPayments`);
-      const q = query(
-        paymentsRef,
-        where('memberId', '==', memberId),
-        orderBy('dueDate', 'desc')
-      );
+  try {
+    const paymentsRef = collection(db, `gyms/${gymData.id}/monthlyPayments`);
+    const q = query(
+      paymentsRef,
+      where('memberId', '==', memberId),
+      orderBy('dueDate', 'desc')
+    );
+    
+    const snapshot = await getDocs(q);
+    
+    const pending: MonthlyPayment[] = [];
+    const paid: MonthlyPayment[] = [];
+    
+    snapshot.forEach(doc => {
+      const payment = { id: doc.id, ...doc.data() } as MonthlyPayment;
       
-      const snapshot = await getDocs(q);
-      
-      const pending: MonthlyPayment[] = [];
-      const paid: MonthlyPayment[] = [];
-      
-      snapshot.forEach(doc => {
-        const payment = { id: doc.id, ...doc.data() } as MonthlyPayment;
-        
-        // Verificar si está vencido
-        if (payment.status === 'pending') {
-          const today = new Date();
-          const dueDate = new Date(payment.dueDate);
-          if (today > dueDate) {
-            payment.status = 'overdue';
-          }
-        }
-
-        
-        if (payment.status === 'paid') {
-          paid.push(payment);
-        } else {
-          pending.push(payment);
-        }
+      console.log('🔍 Pago encontrado:', {
+        id: payment.id,
+        status: payment.status,
+        amount: payment.amount,
+        activityName: payment.activityName,
+        dueDate: payment.dueDate
       });
       
-      setPendingPayments(pending);
-      setPaidPayments(paid);
+      // Verificar si está vencido
+      if (payment.status === 'pending') {
+        const today = new Date();
+        const dueDate = new Date(payment.dueDate);
+        if (today > dueDate) {
+          payment.status = 'overdue';
+        }
+      }
       
-      console.log('📊 Pagos cargados:', {
-        pendientes: pending.length,
-        pagados: paid.length
-      });
-      
-    } catch (err) {
-      console.error('Error cargando pagos:', err);
-      setError('Error al cargar los pagos');
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (payment.status === 'paid') {
+        paid.push(payment);
+      } else {
+        pending.push(payment);
+      }
+    });
+    
+    setPendingPayments(pending);
+    setPaidPayments(paid);
+    
+    console.log('📊 Pagos cargados:', {
+      pendientes: pending.length,
+      pagados: paid.length,
+      detallePendientes: pending.map(p => ({
+        id: p.id,
+        amount: p.amount,
+        activity: p.activityName
+      }))
+    });
+    
+  } catch (err) {
+    console.error('Error cargando pagos:', err);
+    setError('Error al cargar los pagos');
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     loadPayments();
