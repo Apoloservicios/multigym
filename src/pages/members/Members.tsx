@@ -34,20 +34,25 @@ const Members: React.FC = () => {
   // ✅ NUEVO: Detectar si venimos de otra página con un memberId
   useEffect(() => {
     const loadMemberFromNavigation = async () => {
-      // Verificar si hay un memberId en el state de navegación
-      const state = location.state as { memberId?: string } | null;
+      const state = location.state as { memberId?: string; activeTab?: string } | null;
+      
+      console.log('📍 Members.tsx - State recibido:', state);
       
       if (state?.memberId && gymData?.id) {
         setLoading(true);
         try {
-          // Cargar el socio por su ID
           const member = await membersFirestore.getById(state.memberId);
           
           if (member) {
+            console.log('👤 Socio cargado:', member.firstName, member.lastName);
             setSelectedMember(member);
-            setView('detail'); // Abrir la vista de detalle automáticamente
+            setView('detail');
             
-            // Limpiar el state de navegación para que no se vuelva a activar
+            // Verificar sessionStorage
+            const savedTab = sessionStorage.getItem('memberDetailActiveTab');
+            console.log('💾 Tab en sessionStorage antes de mostrar detalle:', savedTab);
+            
+            // Limpiar el state de navegación
             window.history.replaceState({}, document.title);
           } else {
             setError('Socio no encontrado');

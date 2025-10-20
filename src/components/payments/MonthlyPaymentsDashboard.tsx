@@ -15,10 +15,13 @@ import {
   Search,
   Filter,
   TrendingUp,
-  TrendingDown
+  TrendingDown,
+  MessageCircle,
+  CreditCard
 } from 'lucide-react';
 import useAuth from '../../hooks/useAuth';
 import useMonthlyPaymentsAutomation from '../../hooks/useMonthlyPaymentsAutomation';
+import { useNavigate } from 'react-router-dom';
 import {
   getPendingPaymentsList,
   getMonthlySummary,
@@ -32,6 +35,7 @@ import {
 const MonthlyPaymentsDashboard: React.FC = () => {
   const { gymData } = useAuth();
   const automation = useMonthlyPaymentsAutomation(gymData?.id, true);
+   const navigate = useNavigate(); 
 
   // Estados
   const [loading, setLoading] = useState(true);
@@ -40,6 +44,12 @@ const MonthlyPaymentsDashboard: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'overdue'>('all');
   const [selectedMonth, setSelectedMonth] = useState<string>('');
+
+  // Estados para paginación y ordenamiento
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  const [sortField, setSortField] = useState<'name' | 'amount' | 'dueDate'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   // Cargar datos
   useEffect(() => {
@@ -92,7 +102,62 @@ const MonthlyPaymentsDashboard: React.FC = () => {
   };
 
   /**
-   * 🔍 Filtrar pagos
+   * 📱 Notificar deuda por WhatsApp
+   */
+  const handleNotifyDebt = (payment: MonthlyPaymentListItem) => {
+    // Obtener el teléfono del socio - NOTA: necesitas agregarlo al tipo
+    const phoneNumber = (payment as any).memberPhone || '';
+    
+    if (!phoneNumber) {
+      alert('Este socio no tiene teléfono registrado');
+      return;
+    }
+    
+    // Limpiar el teléfono
+    let cleanPhone = phoneNumber.replace(/\D/g, '');
+    if (!cleanPhone.startsWith('54')) {
+      cleanPhone = '54' + cleanPhone;
+    }
+    
+    // Construir el mensaje
+    const totalDebt = payment.pendingActivities.reduce((sum, act) => sum + act.amount, 0);
+    const activities = payment.pendingActivities.map(act => act.activityName).join(', ');
+    
+    // Obtener la fecha de vencimiento más próxima
+    const nextDueDate = payment.pendingActivities[0]?.dueDate || 'Consultar';
+    
+    const message = `Hola ${payment.memberName}! 👋
+
+Le informamos que según nuestro sistema posee una deuda pendiente de *$${totalDebt.toLocaleString('es-AR')}*
+
+📋 *Actividades:* ${activities}
+📅 *Vencimiento:* ${nextDueDate}
+
+Por favor, acérquese al gimnasio para regularizar su situación.
+
+¡Gracias! 💪`;
+
+    const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank');
+  };
+
+/**
+ * 💳 Ir a la cuenta del socio para pagar
+ */
+
+
+const handleGoToPay = (memberId: string) => {
+  // Guardar en sessionStorage ANTES de navegar
+  sessionStorage.setItem('memberDetailActiveTab', 'cuenta');
+  
+  // Navegar pasando el memberId en el state
+  navigate('/members', { 
+    state: { memberId }
+  });
+};
+
+  /**
+   * 🔍 Filtrar pagos - DEBE ESTAR ANTES DE sortedPayments
    */
   const filteredPayments = pendingPayments.filter(payment => {
     // Filtro por búsqueda
@@ -110,6 +175,47 @@ const MonthlyPaymentsDashboard: React.FC = () => {
 
     return matchesSearch && matchesStatus;
   });
+
+  /**
+   * Función para ordenar - DESPUÉS de filteredPayments
+   */
+  const sortedPayments = [...filteredPayments].sort((a, b) => {
+    let comparison = 0;
+    
+    if (sortField === 'name') {
+      comparison = a.memberName.localeCompare(b.memberName);
+    } else if (sortField === 'amount') {
+      const amountA = a.pendingActivities.reduce((sum, act) => sum + act.amount, 0);
+      const amountB = b.pendingActivities.reduce((sum, act) => sum + act.amount, 0);
+      comparison = amountA - amountB;
+    } else if (sortField === 'dueDate') {
+      // Usar la primera fecha de vencimiento pendiente
+      const dateA = a.pendingActivities[0]?.dueDate || '';
+      const dateB = b.pendingActivities[0]?.dueDate || '';
+      comparison = dateA.localeCompare(dateB);
+    }
+    
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  /**
+   * Paginación
+   */
+  const totalPages = Math.ceil(sortedPayments.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedPayments = sortedPayments.slice(startIndex, startIndex + itemsPerPage);
+
+  /**
+   * Función para cambiar orden
+   */
+  const handleSort = (field: 'name' | 'amount' | 'dueDate') => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
 
   /**
    * 💵 Formatear moneda
@@ -259,32 +365,57 @@ const MonthlyPaymentsDashboard: React.FC = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                {/* Socio - CON ORDENAMIENTO */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Socio
+                  <button
+                    onClick={() => handleSort('name')}
+                    className="flex items-center gap-1 hover:text-gray-700"
+                  >
+                    Socio
+                    {sortField === 'name' && (
+                      <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </button>
                 </th>
+
+                {/* Actividades */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actividades
                 </th>
+
+                {/* Total - CON ORDENAMIENTO */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Total Pendiente
+                  <button
+                    onClick={() => handleSort('amount')}
+                    className="flex items-center gap-1 hover:text-gray-700"
+                  >
+                    Total Pendiente
+                    {sortField === 'amount' && (
+                      <span>{sortDirection === 'asc' ? '↑' : '↓'}</span>
+                    )}
+                  </button>
                 </th>
+
+                {/* Estado */}
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Estado
                 </th>
+
+                {/* Acciones */}
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Acciones
                 </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {filteredPayments.length === 0 ? (
+              {paginatedPayments.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
                     {searchTerm ? 'No se encontraron resultados' : 'No hay pagos pendientes'}
                   </td>
                 </tr>
               ) : (
-                filteredPayments.map((payment) => (
+                paginatedPayments.map((payment) => (
                   <tr key={payment.memberId} className="hover:bg-gray-50">
                     {/* Socio */}
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -335,18 +466,27 @@ const MonthlyPaymentsDashboard: React.FC = () => {
 
                     {/* Acciones */}
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button
-                        onClick={() => {
-                          // Registrar pago de la primera actividad pendiente
-                          if (payment.pendingActivities[0]) {
-                            handlePayment(payment.pendingActivities[0].paymentId);
-                          }
-                        }}
-                        className="text-green-600 hover:text-green-900 flex items-center justify-end gap-1"
-                      >
-                        <CheckCircle className="w-4 h-4" />
-                        Cobrar
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        {/* Botón Notificar */}
+                        <button
+                          onClick={() => handleNotifyDebt(payment)}
+                          className="text-blue-600 hover:text-blue-900 flex items-center gap-1 px-3 py-1 border border-blue-300 rounded-md hover:bg-blue-50"
+                          title="Notificar por WhatsApp"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                          Notificar
+                        </button>
+
+                        {/* Botón Ir a Pagar */}
+                        <button
+                          onClick={() => handleGoToPay(payment.memberId)}
+                          className="text-green-600 hover:text-green-900 flex items-center gap-1 px-3 py-1 border border-green-300 rounded-md hover:bg-green-50"
+                          title="Ir a pagar"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          Ir a Pagar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -354,6 +494,37 @@ const MonthlyPaymentsDashboard: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* CONTROLES DE PAGINACIÓN - VA AQUÍ, DESPUÉS DE LA TABLA */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-6 py-3 bg-gray-50 border-t">
+            <div className="text-sm text-gray-700">
+              Mostrando {startIndex + 1} a {Math.min(startIndex + itemsPerPage, sortedPayments.length)} de {sortedPayments.length} socios
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 border rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+              >
+                Anterior
+              </button>
+              
+              <span className="text-sm text-gray-700">
+                Página {currentPage} de {totalPages}
+              </span>
+              
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 border rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Estado de automatización */}

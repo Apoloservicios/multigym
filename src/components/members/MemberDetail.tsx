@@ -39,18 +39,21 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   onRefreshMember
 }) => {
   const { gymData } = useAuth();
-  const [activeView, setActiveView] = useState<'details' | 'memberships' | 'account' | 'attendance' | 'payment' | 'routines'>('details');
+
   const [memberships, setMemberships] = useState<MembershipAssignment[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
   const [calculatedDebt, setCalculatedDebt] = useState<number>(0);
+const [activeView, setActiveView] = useState<'details' | 'memberships' | 'account' | 'attendance' | 'payment' | 'routines'>('details');
 
-
-  const [expandedSections, setExpandedSections] = useState({
+// Estados para secciones expandibles
+const [expandedSections, setExpandedSections] = useState({
   emergency: false,
   health: false
 });
+  
+  
 
 const toggleSection = (section: 'emergency' | 'health') => {
   setExpandedSections(prev => ({
@@ -59,6 +62,18 @@ const toggleSection = (section: 'emergency' | 'health') => {
   }));
 };
   
+
+useEffect(() => {
+  const savedTab = sessionStorage.getItem('memberDetailActiveTab');
+  console.log('🔄 useEffect inicial - Tab guardado:', savedTab);
+  
+  if (savedTab === 'cuenta') {
+    console.log('✅ Cambiando a tab CUENTA');
+    setActiveView('account');
+    sessionStorage.removeItem('memberDetailActiveTab');
+  }
+}, []); 
+
   // 🆕 ESTADOS PARA EL MODAL DE CANCELACIÓN MEJORADO
   const [showCancellationModal, setShowCancellationModal] = useState(false);
   const [membershipToCancel, setMembershipToCancel] = useState<MembershipAssignment | null>(null);
@@ -1163,7 +1178,7 @@ const formatDate = (dateString: string) => {
             Rutinas
           </button>
           
-          <button 
+           <button 
             onClick={() => setActiveView('account')}
             className={`flex-1 text-center py-3 px-4 text-sm font-medium ${activeView === 'account' || activeView === 'payment' ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-100'} flex items-center justify-center`}
           >

@@ -37,6 +37,7 @@ import Routines from '../pages/routines/Routines';
 import MemberRoutines from '../pages/member-routines/MemberRoutines';
 import MonthlyPaymentsDashboard from '../components/payments/MonthlyPaymentsDashboard';
 
+
 // ✅ NUEVOS IMPORTS - Auto-registro unificado
 import UnifiedRegistration from '../pages/public/UnifiedRegistration';
 import PendingRegistrations from '../pages/admin/PendingRegistrations';
@@ -46,6 +47,10 @@ import HelpCenter from '../pages/help/HelpCenter';
 
 import MemberUpdateTracker from '../pages/admin/MemberUpdateTracker';
 import MembershipAssignmentControl from '../pages/admin/MembershipAssignmentControl';
+
+
+import Birthdays from '../pages/birthdays/Birthdays';
+import Products from '../pages/products/Products';
 
 
 
@@ -264,6 +269,11 @@ const AppContent: React.FC = () => {
                   </ProtectedRoute>
                 } 
               />
+
+              <Route path="/birthdays" element={<Birthdays />} />
+              <Route path="/products" element={<Products />} />
+
+           
 
               <Route 
                 path="/membership-control" 

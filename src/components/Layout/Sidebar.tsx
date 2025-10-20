@@ -6,7 +6,7 @@ import {
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
   Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap, Database,
-  UserCheck, QrCode,HelpCircle  // ← AGREGAR ESTOS DOS
+  UserCheck, QrCode,HelpCircle  ,Package ,Cake // ← AGREGAR ESTOS DOS
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -282,6 +282,17 @@ const isMembershipManagementActive = (): boolean => {
                     onClick={() => handleNavigate('payments')}
                     
                   />  
+                    <NavItem
+                        icon={<ShoppingBag size={16} />}
+                        text="Caja Diaria"
+                        active={isActive('cashier')}
+                        onClick={() => handleNavigate('cashier')}
+                      />
+                      
+                 
+
+                  
+
 
                  {/* ✅ NUEVAS OPCIONES - Auto-registro */}
                 {userRole === 'admin' && (
@@ -340,14 +351,22 @@ const isMembershipManagementActive = (): boolean => {
                     </div>
                   </>
                 )}
+
+                 <NavItem
+                    icon={<Package size={20} />}
+                    text="Productos"
+                    active={isActive('products')}
+                    onClick={() => handleNavigate('products')}
+                  />
+                  <NavItem
+                    icon={<Cake size={20} />}
+                    text="Cumpleaños"
+                    active={isActive('birthdays')}
+                    onClick={() => handleNavigate('birthdays')}
+                  />
            
                 
-                <NavItem
-                  icon={<Receipt size={20} />}
-                  text="Reportes"
-                  active={isActive('reports')}
-                  onClick={() => handleNavigate('reports')}
-                />
+               
                 
                 
                 
@@ -355,10 +374,18 @@ const isMembershipManagementActive = (): boolean => {
                 {userRole === 'admin' && (
                   <DropdownNav
                     icon={<Wallet size={20} />}
-                    text="Finanzas"
+                    text="Reportes"
                     active={isFinancialActive()}
                   >
                     <div className="space-y-1 py-2">
+
+                       <NavItem
+                          icon={<Receipt size={20} />}
+                          text="Informes"
+                          active={isActive('reports')}
+                          onClick={() => handleNavigate('reports')}
+                        />
+
                       <NavItem
                         icon={<TrendingUp size={16} />}
                         text="Dashboard Financiero"
@@ -366,12 +393,7 @@ const isMembershipManagementActive = (): boolean => {
                         onClick={() => handleNavigate('dashboard-financial')}
                       />
                    
-                      <NavItem
-                        icon={<ShoppingBag size={16} />}
-                        text="Caja Diaria"
-                        active={isActive('cashier')}
-                        onClick={() => handleNavigate('cashier')}
-                      />
+                    
                     </div>
                   </DropdownNav>
                 )}

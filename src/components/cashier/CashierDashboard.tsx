@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Calendar, DollarSign, TrendingUp, TrendingDown, PlusCircle, MinusCircle, 
-  RefreshCw, AlertCircle, XCircle, CheckCircle, FileText , AlertTriangle,FileSpreadsheet
+  RefreshCw, AlertCircle, XCircle, CheckCircle, FileText , AlertTriangle,FileSpreadsheet,Package  
 } from 'lucide-react';
 
 import DailyCashService, {
@@ -40,6 +40,8 @@ import IncomeForm from './IncomeForm';
 import ExpenseForm from './ExpenseForm';
 import CloseBoxForm from './CloseBoxForm';
 import OpenBoxForm from './OpenBoxForm';
+import ProductSaleForm from './ProductSaleForm';
+
 
 
 
@@ -48,7 +50,10 @@ const getCashProperty = (cashData: any, primaryProp: string, fallbackProp?: stri
   return cashData[primaryProp] || (fallbackProp ? cashData[fallbackProp] : 0);
 };
 
-type ViewType = 'summary' | 'income' | 'expense' | 'transactions' | 'close' | 'open';
+// Cambiar la línea del tipo ViewType (busca donde dice type ViewType)
+type ViewType = 'summary' | 'open' | 'close' | 'income' | 'expense' | 'transactions' | 'productSale';
+
+
 
 const CashierDashboard: React.FC = () => {
   const { gymData, userData } = useAuth();
@@ -97,6 +102,12 @@ const safeFormatTime = (timestamp: any): string => {
     console.error('Error formatting time:', error);
     return 'Error en hora';
   }
+};
+
+// Reemplaza tu función handleSuccess por esta:
+const handleSuccess = () => {
+  loadDailyCashData(); // ← ESTE ES EL NOMBRE CORRECTO
+  setView('summary');
 };
 
 
@@ -369,6 +380,8 @@ const handleCloseBox = async (closingAmount: number, notes: string) => {
       );
     }
 
+
+
     if (!dailyCash) {
       return (
         <div className="p-6 text-center">
@@ -413,63 +426,77 @@ const handleCloseBox = async (closingAmount: number, notes: string) => {
       );
     }
 
-    switch (view) {
-      case 'income':
-        return (
-          <IncomeForm 
-            selectedDate={selectedDate}
-            onSuccess={() => {
-              setSuccess('Ingreso registrado correctamente');
-              loadDailyCashData();
-              setView('summary');
-              setTimeout(() => setSuccess(''), 3000);
-            }}
-            onCancel={() => setView('summary')}
-          />
-        );
-      case 'expense':
-        return (
-          <ExpenseForm
-            selectedDate={selectedDate}
-            onSuccess={() => {
-              setSuccess('Gasto registrado correctamente');
-              loadDailyCashData();
-              setView('summary');
-              setTimeout(() => setSuccess(''), 3000);
-            }}
-            onCancel={() => setView('summary')}
-          />
-        );
-      case 'transactions':
-        return (
-          <TransactionList 
-            transactions={transactions} 
-            selectedDate={selectedDate}
-            isLoading={loading}
-          />
-        );
-      case 'close':
-        return (
-          <CloseBoxForm
-            dailyCash={dailyCash}
-            currentBalance={calculateCurrentBalance()}
-            onClose={handleCloseBox}
-            onCancel={() => setView('summary')}
-          />
-        );
-      case 'summary':
-      default:
-        return (
+      switch (view) {
+        case 'income':
+          return (
+            <IncomeForm 
+              selectedDate={selectedDate}
+              onSuccess={() => {
+                setSuccess('Ingreso registrado correctamente');
+                loadDailyCashData();
+                setView('summary');
+                setTimeout(() => setSuccess(''), 3000);
+              }}
+              onCancel={() => setView('summary')}
+            />
+          );
+          
+        case 'expense':
+          return (
+            <ExpenseForm
+              selectedDate={selectedDate}
+              onSuccess={() => {
+                setSuccess('Gasto registrado correctamente');
+                loadDailyCashData();
+                setView('summary');
+                setTimeout(() => setSuccess(''), 3000);
+              }}
+              onCancel={() => setView('summary')}
+            />
+          );
+          
+        case 'transactions':
+          return (
+            <TransactionList 
+              transactions={transactions} 
+              selectedDate={selectedDate}
+              isLoading={loading}
+            />
+          );
+          
+        case 'close':
+          return (
+            <CloseBoxForm
+              dailyCash={dailyCash}
+              currentBalance={calculateCurrentBalance()}
+              onClose={handleCloseBox}
+              onCancel={() => setView('summary')}
+            />
+          );
+          
+        // ✅ AGREGAR ESTE CASO:
+        case 'productSale':
+          return (
+            <ProductSaleForm
+              selectedDate={selectedDate}
+              onSuccess={handleSuccess}
+              onCancel={() => setView('summary')}
+            />
+          );
+          
+        case 'summary':
+        default:
+          return (
             <CashierSummary
               dailyCash={dailyCash}
               transactions={transactions}
               currentBalance={calculateCurrentBalance()}
               isLoading={loading}
               onViewTransactions={() => setView('transactions')}
-              selectedDate={selectedDate} // 🆕 PASAR LA FECHA SELECCIONADA
+              selectedDate={selectedDate}
             />
-        );
-    }
+          );
+      }
   };
 
   // Determinar si se puede cerrar la caja
@@ -681,6 +708,19 @@ const handleCloseBox = async (closingAmount: number, notes: string) => {
                 {dailyCash.status === 'closed' ? 'Reabrir Caja' : 'Abrir Caja'}
               </button>
             )}
+
+            <button
+              onClick={() => setView('productSale')}
+              disabled={dailyCash.status === 'closed'}
+              className={`px-4 py-2 rounded-md flex items-center ${
+                dailyCash.status === 'closed'
+                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                  : 'bg-purple-600 text-white hover:bg-purple-700'
+              }`}
+            >
+              <Package size={18} className="mr-2" />
+              Vender Productos
+            </button>
             
             <button
               onClick={() => setView('income')}

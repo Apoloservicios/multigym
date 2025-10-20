@@ -31,6 +31,7 @@ import { getMembersWithUpcomingBirthdays } from '../../services/member.service';
 import QuickAttendanceRegister from '../../components/attendance/QuickAttendanceRegister';
 import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
 import { formatArgentinianDateTime, timestampToArgentinianDate } from '../../utils/timezone.utils';
+import { useNavigate } from 'react-router-dom';
 
 
 // 🆕 NUEVO: Props para navegación
@@ -83,6 +84,7 @@ interface UpcomingBirthday {
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const { gymData } = useAuth();
+  const navigate = useNavigate();
   
   // Estados principales
   const [metrics, setMetrics] = useState<DashboardMetrics>({
@@ -815,21 +817,31 @@ const loadPendingRegistrations = useCallback(async () => {
 
         {/* 🆕 MEJORADO: Próximos Cumpleaños con diseño compacto y expansible */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200">
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Próximos Cumpleaños</h2>
-              <div className="flex items-center space-x-2">
-                <div className="bg-pink-50 p-2 rounded-full">
-                  <Cake size={20} className="text-pink-600" />
+            <div className="p-6 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-900">Próximos Cumpleaños</h2>
+                  <div className="flex items-center space-x-2">
+                    {/* ✅ BOTÓN CON NAVEGACIÓN DE REACT ROUTER */}
+                    <button
+                      onClick={() => navigate('/birthdays')}
+                      className="text-sm text-pink-600 hover:text-pink-800 font-medium flex items-center gap-1 transition-colors"
+                      title="Ver todos los cumpleaños"
+                    >
+                      <Cake size={16} />
+                      Ver todos
+                    </button>
+                    
+                    <div className="bg-pink-50 p-2 rounded-full">
+                      <Cake size={20} className="text-pink-600" />
+                    </div>
+                    {metrics.upcomingBirthdays > 0 && (
+                      <span className="bg-pink-100 text-pink-700 text-xs font-medium px-2 py-1 rounded-full">
+                        {metrics.upcomingBirthdays}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                {metrics.upcomingBirthdays > 0 && (
-                  <span className="bg-pink-100 text-pink-700 text-xs font-medium px-2 py-1 rounded-full">
-                    {metrics.upcomingBirthdays}
-                  </span>
-                )}
               </div>
-            </div>
-          </div>
           <div className="p-6">
             {upcomingBirthdays.length === 0 ? (
               <div className="text-center py-8">
@@ -902,6 +914,13 @@ const loadPendingRegistrations = useCallback(async () => {
                     )}
                   </button>
                 )}
+                <button
+                    onClick={() => navigate('/birthdays')}
+                    className="w-full mt-3 py-2 px-4 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-lg hover:from-pink-600 hover:to-purple-600 transition-all flex items-center justify-center gap-2 font-medium"
+                  >
+                    <Cake size={18} />
+                    Ver todos los cumpleaños
+                </button>
               </div>
             )}
           </div>
