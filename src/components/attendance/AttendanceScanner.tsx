@@ -27,7 +27,12 @@ interface ScanResult {
 interface AttendanceRecord {
   id: string;
   memberId: string;
-  member: any;
+  member: {
+    firstName: string;
+    lastName: string;
+    totalDebt?: number;    // 🆕 AGREGAR
+    hasDebt?: boolean;     // 🆕 AGREGAR
+  };
   timestamp: Date;
   status: string;
   error?: string;
@@ -376,19 +381,21 @@ const debouncedSearch = useMemo(
       
       setScanResult(scanResultObj);
       
-      const attendanceRecord: AttendanceRecord = {
-        id: result.attendanceId || `ATT${Date.now()}`,
-        memberId: member.id,
-        member: {
-          firstName: member.firstName,
-          lastName: member.lastName
-        },
-        timestamp: new Date(),
-        status: result.success ? 'success' : 'failed',
-        error: !result.success ? result.error : undefined
-      };
+        const attendanceRecord: AttendanceRecord = {
+          id: result.attendanceId || `ATT${Date.now()}`,
+          memberId: member.id,
+          member: {
+            firstName: member.firstName,
+            lastName: member.lastName,
+            totalDebt: member.totalDebt || 0,     // 🆕 AGREGAR
+            hasDebt: (member.totalDebt && member.totalDebt > 0) || false  // 🆕 AGREGAR
+          },
+          timestamp: new Date(),
+          status: result.success ? 'success' : 'failed',
+          error: !result.success ? result.error : undefined
+        };
       
-      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 25));
       setLastScan(new Date());
       
       // ✅ LIMPIAR DATOS DESPUÉS DEL REGISTRO
@@ -437,6 +444,41 @@ const debouncedSearch = useMemo(
   useEffect(() => {
     loadRecentMembers();
   }, [loadRecentMembers]);
+
+
+
+  // 💾 Cargar historial desde localStorage al montar el componente
+useEffect(() => {
+  if (gymData?.id) {
+    const savedHistory = localStorage.getItem(`attendanceHistory_${gymData.id}`);
+    if (savedHistory) {
+      try {
+        const parsed = JSON.parse(savedHistory);
+        // Convertir timestamps de string a Date
+        const historyWithDates = parsed.map((record: any) => ({
+          ...record,
+          timestamp: new Date(record.timestamp)
+        }));
+        setScanHistory(historyWithDates.slice(0, 25)); // Máximo 25
+      } catch (error) {
+        console.error('Error loading attendance history from localStorage:', error);
+        localStorage.removeItem(`attendanceHistory_${gymData.id}`);
+      }
+    }
+  }
+}, [gymData?.id]);
+
+// 💾 Guardar historial en localStorage cada vez que cambia
+useEffect(() => {
+  if (gymData?.id && scanHistory.length > 0) {
+    try {
+      const historyToSave = scanHistory.slice(0, 25); // Solo guardar las últimas 25
+      localStorage.setItem(`attendanceHistory_${gymData.id}`, JSON.stringify(historyToSave));
+    } catch (error) {
+      console.error('Error saving attendance history to localStorage:', error);
+    }
+  }
+}, [scanHistory, gymData?.id]);
 
   // ✅ FUNCIÓN PARA ESCANEAR QR
   const scanQRCode = useCallback(() => {
@@ -587,14 +629,15 @@ const debouncedSearch = useMemo(
         memberId,
         member: {
           firstName: memberData.firstName,
-          lastName: memberData.lastName
+          lastName: memberData.lastName,
+          totalDebt: memberData.totalDebt || 0,     // 🆕 AGREGAR
+          hasDebt: (memberData.totalDebt && memberData.totalDebt > 0) || false  // 🆕 AGREGAR
         },
         timestamp: new Date(),
         status: result.success ? 'success' : 'failed',
         error: !result.success ? result.error : undefined
       };
-      
-      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 25));
       setLastScan(new Date());
       
     } catch (error: any) {
@@ -661,14 +704,16 @@ const debouncedSearch = useMemo(
         memberId: selectedMember.id,
         member: {
           firstName: selectedMember.firstName,
-          lastName: selectedMember.lastName
+          lastName: selectedMember.lastName,
+          totalDebt: selectedMember.totalDebt || 0,     // 🆕 AGREGAR
+          hasDebt: (selectedMember.totalDebt && selectedMember.totalDebt > 0) || false  // 🆕 AGREGAR
         },
         timestamp: new Date(),
         status: result.success ? 'success' : 'failed',
         error: !result.success ? result.error : undefined
       };
-      
-      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 10));
+
+      setScanHistory(prev => [attendanceRecord, ...prev].slice(0, 25));
       setLastScan(new Date());
       
     } catch (error: any) {
@@ -1343,55 +1388,80 @@ const debouncedSearch = useMemo(
             </div>
           ) : (
             <div className="space-y-3 max-h-96 overflow-y-auto">
-              {scanHistory.map((record) => (
-                <div
-                  key={record.id}
-                  className={`p-4 rounded-lg border-l-4 ${
-                    record.status === 'success' 
-                      ? 'border-l-green-500 bg-green-50 border border-green-200' 
-                      : 'border-l-red-500 bg-red-50 border border-red-200'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-medium ${
-                        record.status === 'success' ? 'bg-green-500' : 'bg-red-500'
-                      }`}>
-                        {record.member.firstName.charAt(0)}{record.member.lastName.charAt(0)}
-                      </div>
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">
-                          {record.member.firstName} {record.member.lastName}
+              {scanHistory.map((record) => {
+                // 🆕 DETECTAR SI EL SOCIO TIENE DEUDA
+                const memberHasDebt = (record.member?.totalDebt ?? 0) > 0 || record.member?.hasDebt;
+
+                return (
+                  <div
+                    key={record.id}
+                    className={`p-4 rounded-lg border-l-4 transition-colors ${
+                      // 🆕 FONDO ROJO SI TIENE DEUDA
+                      memberHasDebt 
+                        ? 'border-l-red-500 bg-red-50 border border-red-200' 
+                        : record.status === 'success' 
+                          ? 'border-l-green-500 bg-green-50 border border-green-200' 
+                          : 'border-l-red-500 bg-red-50 border border-red-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center flex-1">
+                        <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-medium ${
+                          memberHasDebt 
+                            ? 'bg-red-500' 
+                            : record.status === 'success' 
+                              ? 'bg-green-500' 
+                              : 'bg-red-500'
+                        }`}>
+                          {record.member?.firstName?.charAt(0) || 'S'}{record.member?.lastName?.charAt(0) || 'M'}
                         </div>
-                        <div className="text-xs text-gray-600">
-                          {record.status === 'success' ? (
-                            'Asistencia registrada'
-                          ) : (
-                            record.error || 'Error al registrar'
-                          )}
+                        <div className="ml-3 flex-1">
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium text-gray-900">
+                              {record.member?.firstName || 'Socio'} {record.member?.lastName || 'Desconocido'}
+                            </div>
+                            {/* 🆕 BADGE DE DEUDA */}
+                              {memberHasDebt && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white">
+                                  Deuda: ${((record.member?.totalDebt ?? 0).toFixed(2))}
+                                </span>
+                              )}
+                          </div>
+                          <div className="text-xs text-gray-600">
+                            {record.status === 'success' ? (
+                              'Asistencia registrada'
+                            ) : (
+                              record.error || 'Error al registrar'
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs text-gray-500">
-                        {formatDateTime(record.timestamp)}
-                      </div>
-                      <div className={`text-xs font-medium ${
-                        record.status === 'success' ? 'text-green-600' : 'text-red-600'
-                      }`}>
-                        {record.status === 'success' ? '✓ Exitoso' : '✗ Error'}
+                      <div className="text-right ml-3">
+                        <div className="text-xs text-gray-500">
+                          {formatDateTime(record.timestamp)}
+                        </div>
+                        <div className={`text-xs font-medium ${
+                          record.status === 'success' ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {record.status === 'success' ? '✓ Exitoso' : '✗ Error'}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           
           {scanHistory.length > 0 && (
             <div className="mt-6 flex justify-center">
               <button 
-                onClick={() => setScanHistory([])}
+                onClick={() => {
+                  setScanHistory([]);
+                  if (gymData?.id) {
+                    localStorage.removeItem(`attendanceHistory_${gymData.id}`);
+                  }
+                }}
                 className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition-colors"
               >
                 Limpiar Historial

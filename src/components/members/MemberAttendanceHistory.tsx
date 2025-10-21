@@ -1,90 +1,55 @@
 // src/components/members/MemberAttendanceHistory.tsx
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Activity, AlertCircle, Filter, Download, UserCheck, Building,FileSpreadsheet } from 'lucide-react';
-import { Member } from '../../types/member.types';
+import { Activity, Calendar, AlertCircle } from 'lucide-react';
 import { AttendanceRecord } from '../../types/attendance.types';
 import attendanceService from '../../services/attendance.service';
 import useAuth from '../../hooks/useAuth';
-import { exportAttendancesToExcel } from '../../utils/excel.utils';
-import { getCurrentDateInArgentina } from '../../utils/timezone.utils';
-
-
 
 interface MemberAttendanceHistoryProps {
-  member: Member;
+  member: any; // El objeto completo del socio con toda su información
   onClose?: () => void;
 }
 
-const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
+const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({ 
   member,
   onClose
 }) => {
   const { gymData } = useAuth();
-  
-  // Usar AttendanceRecord en lugar de Attendance
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'this_month' | 'this_week'>('all');
+  const [filter, setFilter] = useState<'all' | 'week' | 'month'>('all');
+
+  // 🆕 Detectar si el socio tiene deuda
+  const memberHasDebt = (member.totalDebt && member.totalDebt > 0) || member.hasDebt;
+  const memberDebtAmount = member.totalDebt || 0;
 
   useEffect(() => {
-    loadAttendanceHistory();
-  }, [member.id, filter]);
+    loadAttendances();
+  }, [member.id, gymData?.id]);
 
-  const loadAttendanceHistory = async () => {
-    if (!gymData?.id) return;
+  const loadAttendances = async () => {
+    if (!gymData?.id || !member.id) return;
 
+    setLoading(true);
     try {
-      setLoading(true);
-      setError('');
-      
-      // Usar la función corregida del servicio
-      const attendances = await attendanceService.getMemberAttendanceHistory(gymData.id, member.id);      
-      // Filtrar según el filtro seleccionado
-      const filteredHistory = filterAttendances(attendances);
-      setAttendances(filteredHistory);
-    } catch (err: any) {
-      console.error('Error loading attendance history:', err);
-      setError('Error al cargar el historial de asistencias');
+      const data = await attendanceService.getMemberAttendanceHistory(gymData.id, member.id);
+      setAttendances(data);
+    } catch (error) {
+      console.error('Error loading attendances:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const filterAttendances = (attendances: AttendanceRecord[]): AttendanceRecord[] => {
-    if (filter === 'all') return attendances;
-
-    const now = new Date();
-    const startDate = new Date();
-
-    if (filter === 'this_week') {
-      startDate.setDate(now.getDate() - 7);
-    } else if (filter === 'this_month') {
-      startDate.setMonth(now.getMonth() - 1);
-    }
-
-    return attendances.filter(attendance => {
-      try {
-        const attendanceDate = attendance.timestamp?.toDate ? 
-          attendance.timestamp.toDate() : 
-          new Date(attendance.timestamp);
-        
-        return attendanceDate >= startDate;
-      } catch (error) {
-        return false;
-      }
-    });
-  };
-
   const formatDateTime = (timestamp: any): string => {
-    if (!timestamp) return 'Fecha no disponible';
+    if (!timestamp) return 'No disponible';
     
     try {
       const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
       return date.toLocaleString('es-AR', {
         day: '2-digit',
         month: '2-digit',
-        year: '2-digit',
+        year: 'numeric',
         hour: '2-digit',
         minute: '2-digit'
       });
@@ -93,171 +58,96 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
     }
   };
 
-  const formatDate = (timestamp: any): string => {
-    if (!timestamp) return '';
+  const getFilteredAttendances = () => {
+    const now = new Date();
     
-    try {
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      return date.toLocaleDateString('es-AR');
-    } catch (error) {
-      return '';
+    switch (filter) {
+      case 'week':
+        const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        return attendances.filter(a => {
+          const date = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
+          return date >= weekAgo;
+        });
+      case 'month':
+        const monthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+        return attendances.filter(a => {
+          const date = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
+          return date >= monthAgo;
+        });
+      default:
+        return attendances;
     }
   };
 
- const exportToExcel = () => {
-  try {
-    console.log('📊 Exportando asistencias a Excel:', filteredAttendances.length);
-    
-    if (!filteredAttendances.length) {
-      alert('No hay asistencias para exportar');
-      return;
-    }
-
-    // Usar la función de utilidad de Excel existente
-    exportAttendancesToExcel(
-      filteredAttendances,
-      `${member.firstName} ${member.lastName}`,
-      `asistencias-${member.firstName}-${member.lastName}-${getCurrentDateInArgentina().replace(/-/g, '')}.xlsx`
-    );
-    
-    console.log('✅ Asistencias exportadas exitosamente');
-  } catch (err) {
-    console.error('❌ Error exporting to Excel:', err);
-    alert('Error al exportar asistencias');
-  }
-};
-
-  // Filtrar las asistencias según el filtro actual
-  const filteredAttendances = filterAttendances(attendances);
-
-  // Calcular estadísticas
-  const totalAttendances = filteredAttendances.length;
-  const thisMonthAttendances = filterAttendances(attendances.filter(a => {
-    try {
-      const date = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp);
-      const now = new Date();
-      return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
-    } catch {
-      return false;
-    }
-  })).length;
-
-  const gymRegistrations = filteredAttendances.filter(a => a.registeredBy === 'gym').length;
-  const selfRegistrations = filteredAttendances.filter(a => a.registeredBy === 'member').length;
+  const filteredAttendances = getFilteredAttendances();
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="flex justify-center items-center py-12">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-500"></div>
-          <span className="ml-3 text-gray-500">Cargando historial...</span>
-        </div>
+      <div className="flex justify-center items-center py-8">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
       </div>
     );
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-bold text-gray-900">
-            Historial de Asistencias
-          </h2>
-          <p className="text-gray-600">
-            {member.firstName} {member.lastName}
-          </p>
-        </div>
-        
-        <div className="flex items-center space-x-3">
+    <div className="space-y-4">
+      {/* Header con filtros y alerta de deuda */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+          <Activity size={20} className="mr-2" />
+          Historial de Asistencias
+        </h3>
+
+        {/* 🆕 ALERTA DE DEUDA */}
+        {memberHasDebt && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center gap-2">
+            <AlertCircle size={16} className="text-red-600 flex-shrink-0" />
+            <span className="text-sm font-medium text-red-700">
+              Deuda: ${memberDebtAmount.toFixed(2)}
+            </span>
+          </div>
+        )}
+
+        <div className="flex gap-2">
           <button
-            onClick={exportToExcel}
-            className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700 flex items-center"
-            disabled={filteredAttendances.length === 0}
+            onClick={() => setFilter('all')}
+            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+              filter === 'all'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
           >
-            <FileSpreadsheet size={18} className="mr-2" />
-            Exportar Excel
+            Todas
           </button>
-          
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-            >
-              Cerrar
-            </button>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg flex items-center">
-          <AlertCircle size={20} className="mr-3" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* Estadísticas rápidas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
-          <div className="flex items-center">
-            <Activity size={20} className="text-blue-600 mr-3" />
-            <div>
-              <div className="text-2xl font-bold text-blue-600">{totalAttendances}</div>
-              <div className="text-sm text-blue-700">Total Asistencias</div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-green-50 p-4 rounded-lg border border-green-100">
-          <div className="flex items-center">
-            <Calendar size={20} className="text-green-600 mr-3" />
-            <div>
-              <div className="text-2xl font-bold text-green-600">{thisMonthAttendances}</div>
-              <div className="text-sm text-green-700">Este Mes</div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
-          <div className="flex items-center">
-            <Building size={20} className="text-purple-600 mr-3" />
-            <div>
-              <div className="text-2xl font-bold text-purple-600">{gymRegistrations}</div>
-              <div className="text-sm text-purple-700">Por Gimnasio</div>
-            </div>
-          </div>
-        </div>
-        
-        <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
-          <div className="flex items-center">
-            <UserCheck size={20} className="text-orange-600 mr-3" />
-            <div>
-              <div className="text-2xl font-bold text-orange-600">{selfRegistrations}</div>
-              <div className="text-sm text-orange-700">Auto-registro</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filtros */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-2">
-          <Filter size={16} className="text-gray-500" />
-          <span className="text-sm text-gray-700">Filtrar:</span>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value as 'all' | 'this_month' | 'this_week')}
-            className="text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          <button
+            onClick={() => setFilter('week')}
+            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+              filter === 'week'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
           >
-            <option value="all">Todas</option>
-            <option value="this_month">Este mes</option>
-            <option value="this_week">Esta semana</option>
-          </select>
+            Última semana
+          </button>
+          <button
+            onClick={() => setFilter('month')}
+            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+              filter === 'month'
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            Último mes
+          </button>
         </div>
-        
-        <div className="text-sm text-gray-500">
+      </div>
+
+      {/* Contador de asistencias */}
+      <div className="flex items-center gap-2 text-sm text-gray-600">
+        <Calendar size={16} />
+        <span>
           {filteredAttendances.length} asistencia{filteredAttendances.length !== 1 ? 's' : ''}
-        </div>
+        </span>
       </div>
 
       {/* Lista de asistencias */}
@@ -299,9 +189,21 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {filteredAttendances.map((attendance, index) => (
-                  <tr key={attendance.id || index} className="hover:bg-gray-50">
+                  <tr 
+                    key={attendance.id || index} 
+                    className={`
+                      ${memberHasDebt ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}
+                      transition-colors
+                    `}
+                  >
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDateTime(attendance.timestamp)}
+                      <div className="flex items-center gap-2">
+                        {/* 🆕 Indicador visual de deuda */}
+                        {memberHasDebt && (
+                          <div className="w-2 h-2 bg-red-500 rounded-full flex-shrink-0" title="Socio con deuda"></div>
+                        )}
+                        {formatDateTime(attendance.timestamp)}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {attendance.activityName || 'General'}
@@ -316,17 +218,7 @@ const MemberAttendanceHistory: React.FC<MemberAttendanceHistoryProps> = ({
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {attendance.registeredBy === 'member' ? (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-100 text-blue-800">
-                          <UserCheck size={12} className="mr-1" />
-                          Auto-registro
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
-                          <Building size={12} className="mr-1" />
-                          {attendance.registeredByUserName || 'Gimnasio'}
-                        </span>
-                      )}
+                      {attendance.registeredByUserName || 'Sistema'}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
                       {attendance.notes || '-'}

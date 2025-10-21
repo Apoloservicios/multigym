@@ -24,7 +24,7 @@ import {
   getDocs, 
   orderBy, 
   limit,
-  Timestamp
+  Timestamp,getDoc,doc
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getMembersWithUpcomingBirthdays } from '../../services/member.service';
@@ -56,12 +56,14 @@ interface DashboardMetrics {
 }
 
 
-
 interface AttendanceRecord {
   id: string;
+  memberId: string;          // 🆕 AGREGAR
   memberName: string;
   activityName: string;
   timestamp: any;
+  memberHasDebt?: boolean;   // 🆕 AGREGAR
+  memberDebtAmount?: number; // 🆕 AGREGAR
 }
 
 interface RecentActivity {
@@ -344,71 +346,101 @@ const loadPendingRegistrations = useCallback(async () => {
   }, [gymData?.id, getDateRanges, loadUpcomingBirthdays]);
 
   // Cargar asistencias recientes
-  const loadRecentAttendance = useCallback(async () => {
-    if (!gymData?.id) return;
+// 🔧 REEMPLAZA TODA LA FUNCIÓN loadRecentAttendance en Dashboard.tsx
+
+const loadRecentAttendance = useCallback(async () => {
+  if (!gymData?.id) return;
+  
+  try {
+    // Cargar asistencias
+    const attendanceRef = collection(db, `gyms/${gymData.id}/attendance`);
+    const q = query(
+      attendanceRef,
+      where('status', '==', 'success'),
+      orderBy('timestamp', 'desc'),
+      limit(5)
+    );
     
+    const querySnapshot = await getDocs(q);
+    const attendance: AttendanceRecord[] = [];
+    
+    // Para cada asistencia, cargar la información del socio para verificar deuda
+    for (const docSnap of querySnapshot.docs) {
+      const data = docSnap.data();
+      const memberId = data.memberId;
+      
+      // Cargar información del socio
+      let memberHasDebt = false;
+      let memberDebtAmount = 0;
+      
+      if (memberId) {
+        try {
+          const memberDoc = await getDoc(doc(db, `gyms/${gymData.id}/members`, memberId));
+          if (memberDoc.exists()) {
+            const memberData = memberDoc.data();
+            memberDebtAmount = memberData.totalDebt || 0;
+            memberHasDebt = memberDebtAmount > 0 || memberData.hasDebt || false;
+          }
+        } catch (memberErr) {
+          console.error('Error loading member data for attendance:', memberErr);
+        }
+      }
+      
+      attendance.push({
+        id: docSnap.id,
+        memberId: memberId || '',
+        memberName: data.memberName || `${data.memberFirstName || ''} ${data.memberLastName || ''}`.trim() || 'Desconocido',
+        activityName: data.activityName || 'General',
+        timestamp: data.timestamp,
+        memberHasDebt,        // 🆕 INCLUIR
+        memberDebtAmount      // 🆕 INCLUIR
+      });
+    }
+
+    console.log('✅ Asistencias cargadas con deuda:', attendance); // 🔍 Debug
+    setRecentAttendance(attendance);
+    
+  } catch (err: any) {
+    console.error('Error loading recent attendance:', err);
+    // Fallback sin información de deuda
     try {
-      // Usar el servicio de asistencias actualizado
       const attendanceRef = collection(db, `gyms/${gymData.id}/attendance`);
       const q = query(
         attendanceRef,
         where('status', '==', 'success'),
-        orderBy('timestamp', 'desc'),
         limit(5)
       );
       
       const querySnapshot = await getDocs(q);
-
       const attendance: AttendanceRecord[] = [];
+      
       querySnapshot.forEach(doc => {
         const data = doc.data();
         attendance.push({
           id: doc.id,
+          memberId: data.memberId || '',
           memberName: data.memberName || `${data.memberFirstName || ''} ${data.memberLastName || ''}`.trim() || 'Desconocido',
           activityName: data.activityName || 'General',
-          timestamp: data.timestamp
+          timestamp: data.timestamp,
+          memberHasDebt: false,
+          memberDebtAmount: 0
         });
       });
 
-      setRecentAttendance(attendance);
-    } catch (err: any) {
-      console.error('Error loading recent attendance:', err);
-      // Si hay error con la consulta ordenada, intentar sin orderBy
-      try {
-        const attendanceRef = collection(db, `gyms/${gymData.id}/attendance`);
-        const q = query(
-          attendanceRef,
-          where('status', '==', 'success'),
-          limit(5)
-        );
-        
-        const querySnapshot = await getDocs(q);
-        const attendance: AttendanceRecord[] = [];
-        
-        querySnapshot.forEach(doc => {
-          const data = doc.data();
-          attendance.push({
-            id: doc.id,
-            memberName: data.memberName || `${data.memberFirstName || ''} ${data.memberLastName || ''}`.trim() || 'Desconocido',
-            activityName: data.activityName || 'General',
-            timestamp: data.timestamp
-          });
-        });
+      // Ordenar manualmente por timestamp
+      attendance.sort((a, b) => {
+        const aTime = a.timestamp?.seconds || 0;
+        const bTime = b.timestamp?.seconds || 0;
+        return bTime - aTime;
+      });
 
-        // Ordenar manualmente por timestamp
-        attendance.sort((a, b) => {
-          const aTime = a.timestamp?.seconds || 0;
-          const bTime = b.timestamp?.seconds || 0;
-          return bTime - aTime;
-        });
-
-        setRecentAttendance(attendance.slice(0, 5));
-      } catch (fallbackErr) {
-        console.error('Error in fallback attendance query:', fallbackErr);
-        setRecentAttendance([]);
-      }
+      setRecentAttendance(attendance.slice(0, 5));
+    } catch (fallbackErr) {
+      console.error('Error in fallback attendance query:', fallbackErr);
+      setRecentAttendance([]);
     }
-  }, [gymData?.id]);
+  }
+}, [gymData?.id]);
 
   // Generar actividades recientes basadas en datos reales
   const generateRecentActivities = useCallback(async () => {
@@ -787,26 +819,52 @@ const loadPendingRegistrations = useCallback(async () => {
           <div className="p-6">
             {recentAttendance.length === 0 ? (
               <div className="text-center py-8">
-                <Activity size={48} className="mx-auto text-gray-300 mb-3" />
+                <Clock size={48} className="mx-auto text-gray-300 mb-3" />
                 <p className="text-gray-500">No hay asistencias recientes</p>
               </div>
             ) : (
-              <div className="space-y-4">
-                {recentAttendance.map((attendance) => (
-                  <div key={attendance.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center">
-                      <div className="bg-green-100 p-2 rounded-full mr-3">
-                        <UserCheck size={16} className="text-green-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{attendance.memberName}</p>
-                        <p className="text-sm text-gray-600">{attendance.activityName}</p>
+              <div className="space-y-3">
+                {recentAttendance.map(attendance => (
+                  <div
+                    key={attendance.id}
+                    className={`flex items-center justify-between p-3 rounded-lg transition-colors ${
+                      attendance.memberHasDebt 
+                        ? 'bg-red-50 hover:bg-red-100 border border-red-200' 
+                        : 'hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center flex-1">
+                      {/* 🆕 INDICADOR DE DEUDA CON COLOR */}
+                      <div className={`w-2 h-2 rounded-full mr-3 flex-shrink-0 ${
+                        attendance.memberHasDebt ? 'bg-red-500' : 'bg-green-500'
+                      }`}></div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="text-sm font-medium text-gray-900 truncate">
+                            {attendance.memberName}
+                          </div>
+                          {/* 🆕 BADGE DE DEUDA */}
+                          {attendance.memberHasDebt && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white whitespace-nowrap">
+                              Deuda: ${(attendance.memberDebtAmount || 0).toFixed(0)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {attendance.activityName}
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm text-gray-500">
-                        {formatDateTime(attendance.timestamp)}
-                      </p>
+                    
+                    <div className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                      {attendance.timestamp?.toDate ? 
+                        attendance.timestamp.toDate().toLocaleTimeString('es-AR', { 
+                          hour: '2-digit', 
+                          minute: '2-digit' 
+                        }) : 
+                        'N/A'
+                      }
                     </div>
                   </div>
                 ))}
