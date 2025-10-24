@@ -1,6 +1,9 @@
 # Ignorar dependencias
 node_modules/
 fingerprint-server/node_modules/
+# Ignorar ejecutables
+*.exe
+
 
 # Archivos de entorno
 .env
