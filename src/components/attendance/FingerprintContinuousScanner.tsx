@@ -1,11 +1,9 @@
 // ============================================
-// FingerprintContinuousScanner.tsx
-// Componente INDEPENDIENTE para escaneo continuo
-// Se integra con AttendanceScanner sin modificarlo
+// FingerprintContinuousScanner.tsx - VERSIÓN MEJORADA
 // ============================================
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Fingerprint, Power, PowerOff, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Fingerprint, Power, PowerOff, CheckCircle, XCircle, AlertCircle, Volume2 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { fingerprintService } from '../../services/fingerprint.service';
@@ -55,9 +53,21 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
   const [lastResult, setLastResult] = useState<ScanResult | null>(null);
   const [stats, setStats] = useState({ total: 0, success: 0, errors: 0 });
   
+  // NUEVO: Estado para selección de membresía
+  const [showMembershipSelector, setShowMembershipSelector] = useState(false);
+  const [pendingMember, setPendingMember] = useState<MemberInfo | null>(null);
+  const [availableMemberships, setAvailableMemberships] = useState<MembershipInfo[]>([]);
+  
+  // NUEVO: Estado para sonidos
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  
   // Refs para control
   const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isScanningRef = useRef(false);
+
+  // NUEVO: Referencias de audio
+  const successAudioRef = useRef<HTMLAudioElement | null>(null);
+  const errorAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Limpiar al desmontar
   useEffect(() => {
@@ -65,6 +75,34 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
       stopContinuousMode();
     };
   }, []);
+
+  // NUEVO: Inicializar audios
+  useEffect(() => {
+    // Sonido de éxito (tono agradable)
+    successAudioRef.current = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBDCB0fPTgjMGHG7C7+OZUBAKUH') || null;
+    
+    // Sonido de error (tono de alerta)
+    errorAudioRef.current = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACAgICAgICAgICAgICAgICAqqqqgICAqqqqgICAgICAgICAqqqqgICAqqqqgICAgICAgICAqqqqgICAqqqqgICAgICAgICAqqqqgICAqqqqgICAqqqqgICAqqqqgICAqqqqgICAgICAgICAgICAgICAgICAgICAgICA') || null;
+  }, []);
+
+  /**
+   * NUEVO: Reproducir sonido
+   */
+  const playSound = (type: 'success' | 'error') => {
+    if (!soundEnabled) return;
+    
+    try {
+      if (type === 'success' && successAudioRef.current) {
+        successAudioRef.current.currentTime = 0;
+        successAudioRef.current.play().catch(err => console.log('Error reproduciendo sonido:', err));
+      } else if (type === 'error' && errorAudioRef.current) {
+        errorAudioRef.current.currentTime = 0;
+        errorAudioRef.current.play().catch(err => console.log('Error reproduciendo sonido:', err));
+      }
+    } catch (error) {
+      console.log('Error con audio:', error);
+    }
+  };
 
   /**
    * Iniciar modo de escaneo continuo
@@ -80,6 +118,7 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
     if (!isOnline) {
       setStatus('error');
       setStatusMessage('❌ Servidor no disponible. Inicia el servidor de huellas.');
+      playSound('error');
       return;
     }
 
@@ -88,6 +127,7 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
     if (!initResult.success) {
       setStatus('error');
       setStatusMessage(initResult.error || 'Error al inicializar lector');
+      playSound('error');
       return;
     }
 
@@ -178,6 +218,7 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
           timestamp: new Date()
         });
 
+        playSound('error'); // NUEVO: Reproducir sonido de error
         setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
 
         // Volver a esperar después de 2 segundos
@@ -191,26 +232,18 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
         return;
       }
 
-      // 3. Socio identificado - obtener datos completos
+      // 3. Identificar socio
       const memberId = verifyResult.match.memberId;
-      const memberName = verifyResult.match.memberName;
-
-      console.log('✅ Socio identificado:', memberName);
-      setStatusMessage(`✅ ${memberName}`);
-
-      // Obtener datos completos del socio
-      const memberDoc = await getDoc(doc(db, `gyms/${gymId}/members`, memberId));
+      console.log(`✅ Socio identificado: ${memberId}`);
       
-      if (!memberDoc.exists()) {
-        setStatus('error');
-        setStatusMessage('⚠️  Error: Socio no encontrado');
-        setLastResult({
-          success: false,
-          message: 'Datos del socio no encontrados',
-          memberName: memberName,
-          timestamp: new Date()
-        });
+      setStatusMessage('👤 Cargando información del socio...');
 
+      const member = await loadMemberInfo(memberId);
+      if (!member) {
+        setStatus('error');
+        setStatusMessage('❌ Error al cargar información del socio');
+        playSound('error');
+        
         setTimeout(() => {
           setStatus('ready');
           setStatusMessage('✅ Listo - Esperando huella...');
@@ -221,39 +254,19 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
         return;
       }
 
-      const memberData = memberDoc.data();
-      const member: MemberInfo = {
-        id: memberId,
-        firstName: memberData.firstName,
-        lastName: memberData.lastName,
-        email: memberData.email,
-        photo: memberData.photo || null,
-        status: memberData.status,
-        totalDebt: memberData.totalDebt || 0,
-        hasDebt: memberData.hasDebt || false
-      };
-
-      // 4. Verificar deuda (opcional - advertencia)
-      if (member.hasDebt && member.totalDebt && member.totalDebt > 0) {
-        console.warn(`⚠️  ${memberName} tiene deuda de $${member.totalDebt}`);
-        // Puedes decidir si bloquear o solo advertir
-      }
-
-      // 5. Cargar membresías
-      setStatusMessage('📋 Verificando membresías...');
-      const memberships = await loadMemberMemberships(memberId);
-
-      if (memberships.length === 0) {
+      // MEJORADO: Verificar estado del socio
+      if (member.status === 'inactive') {
         setStatus('error');
-        setStatusMessage('⚠️  Sin membresías activas');
+        setStatusMessage('❌ Socio inactivo');
         setLastResult({
           success: false,
-          message: 'No tiene membresías activas',
+          message: 'El socio está inactivo',
           memberName: `${member.firstName} ${member.lastName}`,
           memberPhoto: member.photo,
           timestamp: new Date()
         });
 
+        playSound('error');
         setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
 
         setTimeout(() => {
@@ -266,7 +279,80 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
         return;
       }
 
-      // 6. Registrar asistencia con la primera membresía activa
+      // MEJORADO: Verificar deuda
+      if (member.hasDebt && member.totalDebt && member.totalDebt > 0) {
+        setStatus('error');
+        setStatusMessage(`❌ Tiene deuda pendiente: $${member.totalDebt}`);
+        setLastResult({
+          success: false,
+          message: `Deuda pendiente: $${member.totalDebt}`,
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberPhoto: member.photo,
+          timestamp: new Date()
+        });
+
+        playSound('error');
+        setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
+
+        setTimeout(() => {
+          setStatus('ready');
+          setStatusMessage('✅ Listo - Esperando huella...');
+        }, 3000);
+
+        isScanningRef.current = false;
+        setIsScanning(false);
+        return;
+      }
+
+      // 4. Cargar membresías activas
+      setStatusMessage('📋 Verificando membresías...');
+
+      const memberships = await loadMemberMemberships(memberId);
+      
+      // MEJORADO: Manejo de casos sin membresías
+      if (memberships.length === 0) {
+        setStatus('error');
+        setStatusMessage('❌ No hay membresías activas');
+        setLastResult({
+          success: false,
+          message: 'No tiene membresías activas',
+          memberName: `${member.firstName} ${member.lastName}`,
+          memberPhoto: member.photo,
+          timestamp: new Date()
+        });
+
+        playSound('error');
+        setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
+
+        // CORREGIDO: No detener el modo continuo, solo esperar y continuar
+        setTimeout(() => {
+          setStatus('ready');
+          setStatusMessage('✅ Listo - Esperando huella...');
+          isScanningRef.current = false;
+          setIsScanning(false);
+        }, 3000);
+
+        return; // IMPORTANTE: return aquí, no cerrar el finally
+      }
+
+      // NUEVO: Si tiene múltiples membresías, mostrar selector
+      if (memberships.length > 1) {
+        console.log(`🔄 Socio con ${memberships.length} membresías activas - Mostrando selector`);
+        
+        setPendingMember(member);
+        setAvailableMemberships(memberships);
+        setShowMembershipSelector(true);
+        
+        setStatus('ready');
+        setStatusMessage('⏸️ Esperando selección de membresía...');
+        
+        // Pausar el escaneo mientras se selecciona
+        isScanningRef.current = false;
+        setIsScanning(false);
+        return;
+      }
+
+      // 5. Registrar asistencia con la primera (y única) membresía
       const membership = memberships[0];
       
       setStatusMessage('💾 Registrando asistencia...');
@@ -284,6 +370,7 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
           timestamp: new Date()
         });
 
+        playSound('success'); // NUEVO: Reproducir sonido de éxito
         setStats(prev => ({ ...prev, total: prev.total + 1, success: prev.success + 1 }));
 
         // Notificar callback
@@ -307,8 +394,10 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
           timestamp: new Date()
         });
 
+        playSound('error');
         setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
 
+        // CORREGIDO: Continuar el escaneo después del error
         setTimeout(() => {
           setStatus('ready');
           setStatusMessage('✅ Listo - Esperando huella...');
@@ -320,8 +409,10 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
       setStatus('error');
       setStatusMessage('❌ Error inesperado');
       
+      playSound('error');
       setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
       
+      // CORREGIDO: Continuar después de error inesperado
       setTimeout(() => {
         setStatus('ready');
         setStatusMessage('✅ Listo - Esperando huella...');
@@ -330,6 +421,73 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
       isScanningRef.current = false;
       setIsScanning(false);
     }
+  };
+
+  /**
+   * NUEVO: Manejar selección de membresía
+   */
+  const handleMembershipSelection = async (membership: MembershipInfo) => {
+    if (!pendingMember) return;
+
+    setShowMembershipSelector(false);
+    setStatus('verifying');
+    setStatusMessage('💾 Registrando asistencia...');
+
+    const attendanceResult = await registerAttendance(pendingMember, membership);
+
+    if (attendanceResult.success) {
+      setStatus('success');
+      setStatusMessage('✅ Asistencia registrada');
+      setLastResult({
+        success: true,
+        message: `Asistencia registrada - ${membership.activityName}`,
+        memberName: `${pendingMember.firstName} ${pendingMember.lastName}`,
+        memberPhoto: pendingMember.photo,
+        timestamp: new Date()
+      });
+
+      playSound('success');
+      setStats(prev => ({ ...prev, total: prev.total + 1, success: prev.success + 1 }));
+
+      if (onAttendanceRegistered) {
+        onAttendanceRegistered();
+      }
+    } else {
+      setStatus('error');
+      setStatusMessage('❌ Error al registrar');
+      setLastResult({
+        success: false,
+        message: attendanceResult.error || 'Error al registrar asistencia',
+        memberName: `${pendingMember.firstName} ${pendingMember.lastName}`,
+        memberPhoto: pendingMember.photo,
+        timestamp: new Date()
+      });
+
+      playSound('error');
+      setStats(prev => ({ ...prev, total: prev.total + 1, errors: prev.errors + 1 }));
+    }
+
+    // Limpiar estado pendiente
+    setPendingMember(null);
+    setAvailableMemberships([]);
+
+    // Volver a modo listo después de 3 segundos
+    setTimeout(() => {
+      setStatus('ready');
+      setStatusMessage('✅ Listo - Esperando huella...');
+    }, 3000);
+  };
+
+  /**
+   * NUEVO: Cancelar selección de membresía
+   */
+  const handleCancelSelection = () => {
+    setShowMembershipSelector(false);
+    setPendingMember(null);
+    setAvailableMemberships([]);
+    
+    setStatus('ready');
+    setStatusMessage('✅ Listo - Esperando huella...');
   };
 
   /**
@@ -348,6 +506,41 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
     setStatusMessage('');
     isScanningRef.current = false;
     setIsScanning(false);
+    
+    // Limpiar selector si está abierto
+    setShowMembershipSelector(false);
+    setPendingMember(null);
+    setAvailableMemberships([]);
+  };
+
+  /**
+   * Cargar información del socio
+   */
+  const loadMemberInfo = async (memberId: string): Promise<MemberInfo | null> => {
+    try {
+      const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+      const memberSnap = await getDoc(memberRef);
+      
+      if (!memberSnap.exists()) {
+        return null;
+      }
+
+      const data = memberSnap.data();
+      
+      return {
+        id: memberSnap.id,
+        firstName: data.firstName || '',
+        lastName: data.lastName || '',
+        email: data.email || '',
+        photo: data.photo || null,
+        status: data.status || 'active',
+        totalDebt: data.totalDebt || 0,
+        hasDebt: data.hasDebt || false
+      };
+    } catch (error) {
+      console.error('Error loading member:', error);
+      return null;
+    }
   };
 
   /**
@@ -373,11 +566,11 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
         const classesUsed = data.classesUsed || data.currentAttendances || 0;
         const maxClasses = data.maxAttendances || data.classLimit || 0;
         
-        if (maxClasses === 0 || classesUsed < maxClasses) {
+        if (classesUsed < maxClasses) {
           memberships.push({
             id: doc.id,
             activityId: data.activityId,
-            activityName: data.activityName || 'Membresía',
+            activityName: data.activityName || 'Sin actividad',
             currentAttendances: classesUsed,
             maxAttendances: maxClasses,
             endDate: data.endDate?.toDate() || new Date(),
@@ -389,7 +582,7 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
       
       return memberships;
     } catch (error) {
-      console.error('Error cargando membresías:', error);
+      console.error('Error loading memberships:', error);
       return [];
     }
   };
@@ -397,221 +590,233 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ gymId, onAttendanceRegi
   /**
    * Registrar asistencia
    */
-  const registerAttendance = async (member: MemberInfo, membership: MembershipInfo) => {
+  const registerAttendance = async (
+    member: MemberInfo,
+    membership: MembershipInfo
+  ): Promise<{ success: boolean; error?: string }> => {
     try {
       // Crear registro de asistencia
-      const attendanceRef = collection(db, `gyms/${gymId}/attendance`);
-      await addDoc(attendanceRef, {
+      const attendanceData = {
         memberId: member.id,
+        memberName: `${member.firstName} ${member.lastName}`,
+        memberPhoto: member.photo || null,
         membershipId: membership.id,
         activityId: membership.activityId || null,
         activityName: membership.activityName,
-        memberName: `${member.firstName} ${member.lastName}`,
-        timestamp: serverTimestamp(),
-        method: 'fingerprint_continuous',
-        status: 'success',
-        registeredBy: 'system'
-      });
+        date: serverTimestamp(),
+        method: 'fingerprint',
+        gymId: gymId,
+        status: 'completed'
+      };
 
-      // Actualizar contador de clases usadas en la membresía
+      await addDoc(collection(db, `gyms/${gymId}/attendances`), attendanceData);
+
+      // Actualizar contador de asistencias en la membresía
       const membershipRef = doc(db, `gyms/${gymId}/memberships`, membership.id);
+      const newCount = (membership.classesUsed || 0) + 1;
+      
       await updateDoc(membershipRef, {
-        classesUsed: (membership.classesUsed || 0) + 1,
-        currentAttendances: (membership.currentAttendances || 0) + 1,
+        classesUsed: newCount,
+        currentAttendances: newCount,
         lastAttendance: serverTimestamp()
       });
 
       return { success: true };
     } catch (error: any) {
-      console.error('Error registrando asistencia:', error);
-      return {
-        success: false,
-        error: error.message
+      console.error('Error registering attendance:', error);
+      return { 
+        success: false, 
+        error: error.message || 'Error al registrar asistencia' 
       };
     }
   };
 
   /**
-   * Renderizar indicador de estado
+   * Formatear timestamp
    */
-  const getStatusColor = () => {
-    switch (status) {
-      case 'idle': return 'text-gray-400';
-      case 'ready': return 'text-green-500';
-      case 'capturing': return 'text-blue-500 animate-pulse';
-      case 'verifying': return 'text-yellow-500 animate-pulse';
-      case 'success': return 'text-green-600';
-      case 'error': return 'text-red-500';
-      default: return 'text-gray-400';
-    }
+  const formatTime = (date: Date): string => {
+    return date.toLocaleTimeString('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
   };
 
-  const getStatusBgColor = () => {
-    switch (status) {
-      case 'ready': return 'bg-green-50';
-      case 'capturing': return 'bg-blue-50';
-      case 'verifying': return 'bg-yellow-50';
-      case 'success': return 'bg-green-50';
-      case 'error': return 'bg-red-50';
-      default: return 'bg-gray-50';
-    }
-  };
-
-  // Render principal
   return (
-    <div className="bg-white rounded-lg shadow-md overflow-hidden">
-      {/* Header con botón de toggle */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Fingerprint size={32} className="text-white" />
-            <div>
-              <h2 className="text-xl font-semibold text-white">Modo Continuo</h2>
-              <p className="text-blue-100 text-sm">Escaneo automático de huellas</p>
-            </div>
+    <div className="bg-white rounded-lg shadow-md p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-purple-100 rounded-lg">
+            <Fingerprint className="text-purple-600" size={24} />
           </div>
-          
-          <button
-            onClick={continuousMode ? stopContinuousMode : startContinuousMode}
-            disabled={isScanning && !continuousMode}
-            className={`px-6 py-3 rounded-lg font-medium transition-all flex items-center gap-2 shadow-lg ${
-              continuousMode
-                ? 'bg-red-500 hover:bg-red-600 text-white'
-                : 'bg-white hover:bg-gray-50 text-blue-600'
-            } ${isScanning && !continuousMode ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            {continuousMode ? (
-              <>
-                <PowerOff size={20} />
-                Detener
-              </>
-            ) : (
-              <>
-                <Power size={20} />
-                Iniciar
-              </>
-            )}
-          </button>
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">Modo Continuo</h2>
+            <p className="text-sm text-gray-500">Escaneo automático de huellas</p>
+          </div>
         </div>
 
-        {/* Estadísticas */}
-        {continuousMode && (
-          <div className="mt-4 grid grid-cols-3 gap-4">
-            <div className="bg-white bg-opacity-20 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-white">{stats.total}</div>
-              <div className="text-xs text-blue-100">Total</div>
-            </div>
-            <div className="bg-white bg-opacity-20 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-white">{stats.success}</div>
-              <div className="text-xs text-blue-100">Exitosos</div>
-            </div>
-            <div className="bg-white bg-opacity-20 rounded-lg p-3 text-center">
-              <div className="text-2xl font-bold text-white">{stats.errors}</div>
-              <div className="text-xs text-blue-100">Errores</div>
-            </div>
-          </div>
+        {/* NUEVO: Toggle de sonido */}
+        <button
+          onClick={() => setSoundEnabled(!soundEnabled)}
+          className={`p-2 rounded-lg transition-colors ${
+            soundEnabled 
+              ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' 
+              : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+          }`}
+          title={soundEnabled ? 'Sonido activado' : 'Sonido desactivado'}
+        >
+          <Volume2 size={20} />
+        </button>
+      </div>
+
+      {/* Control Button */}
+      <div className="mb-6">
+        {!continuousMode ? (
+          <button
+            onClick={startContinuousMode}
+            disabled={isScanning}
+            className="w-full bg-gradient-to-r from-green-500 to-green-600 text-white py-4 rounded-lg 
+                     hover:from-green-600 hover:to-green-700 transition-all duration-200 
+                     flex items-center justify-center gap-2 font-semibold text-lg shadow-lg
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Power size={24} />
+            Iniciar Modo Continuo
+          </button>
+        ) : (
+          <button
+            onClick={stopContinuousMode}
+            className="w-full bg-gradient-to-r from-red-500 to-red-600 text-white py-4 rounded-lg 
+                     hover:from-red-600 hover:to-red-700 transition-all duration-200 
+                     flex items-center justify-center gap-2 font-semibold text-lg shadow-lg"
+          >
+            <PowerOff size={24} />
+            Detener Modo Continuo
+          </button>
         )}
       </div>
 
-      <div className="p-6">
-        {/* Indicador visual de estado */}
-        <div className={`flex flex-col items-center justify-center p-8 rounded-lg ${getStatusBgColor()}`}>
-          <Fingerprint size={120} className={getStatusColor()} />
-          <p className="mt-4 text-lg font-medium text-gray-900">
-            {statusMessage || (continuousMode ? 'Inicializando...' : 'Presiona Iniciar para activar')}
-          </p>
-          {isScanning && (
-            <div className="flex gap-2 mt-4">
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-            </div>
-          )}
-        </div>
-
-        {/* Último resultado */}
-        {lastResult && (
-          <div className={`mt-6 p-4 rounded-lg border ${
-            lastResult.success
-              ? 'bg-green-50 border-green-200'
-              : 'bg-red-50 border-red-200'
-          }`}>
-            <div className="flex items-start gap-3">
-              <div className={`flex-shrink-0 rounded-full p-2 ${
-                lastResult.success
-                  ? 'bg-green-100 text-green-600'
-                  : 'bg-red-100 text-red-600'
-              }`}>
-                {lastResult.success ? <CheckCircle size={24} /> : <XCircle size={24} />}
+      {/* Status Display */}
+      {status !== 'idle' && (
+        <div className={`mb-6 p-4 rounded-lg border-2 ${
+          status === 'success' ? 'bg-green-50 border-green-300' :
+          status === 'error' ? 'bg-red-50 border-red-300' :
+          status === 'verifying' ? 'bg-blue-50 border-blue-300' :
+          status === 'capturing' ? 'bg-yellow-50 border-yellow-300' :
+          'bg-gray-50 border-gray-300'
+        }`}>
+          <div className="flex items-center gap-3">
+            {status === 'success' && <CheckCircle className="text-green-600" size={24} />}
+            {status === 'error' && <XCircle className="text-red-600" size={24} />}
+            {(status === 'verifying' || status === 'capturing') && (
+              <div className="animate-spin">
+                <AlertCircle className="text-blue-600" size={24} />
               </div>
-              
-              <div className="flex-1">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className={`text-base font-medium ${
-                      lastResult.success ? 'text-green-800' : 'text-red-800'
-                    }`}>
-                      {lastResult.success ? '✅ Registro exitoso' : '❌ Error'}
-                    </h3>
-                    
-                    {lastResult.memberName && (
-                      <p className="mt-1 text-sm font-semibold text-gray-900">
-                        {lastResult.memberName}
-                      </p>
-                    )}
-                    
-                    <p className={`mt-1 text-sm ${
-                      lastResult.success ? 'text-green-700' : 'text-red-700'
-                    }`}>
-                      {lastResult.message}
-                    </p>
-                    
-                    <p className="mt-2 text-xs text-gray-500">
-                      {lastResult.timestamp.toLocaleTimeString()}
-                    </p>
-                  </div>
-
-                  {lastResult.memberPhoto && (
-                    <img 
-                      src={lastResult.memberPhoto} 
-                      alt="Socio"
-                      className="w-12 h-12 rounded-full object-cover"
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Instrucciones */}
-        <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-          <div className="flex items-start gap-3">
-            <AlertCircle size={20} className="text-blue-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-blue-900 mb-2">
-                ℹ️  ¿Cómo funciona?
-              </p>
-              <ul className="text-xs text-blue-800 space-y-1">
-                <li>• Click en "Iniciar" para activar el lector</li>
-                <li>• El sistema estará siempre listo para escanear</li>
-                <li>• Los socios solo colocan su dedo</li>
-                <li>• La asistencia se registra automáticamente</li>
-                <li>• Después de cada registro, vuelve a estar listo</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        {/* Estado del servidor */}
-        {!continuousMode && (
-          <div className="mt-4 text-center">
-            <p className="text-xs text-gray-500">
-              ⚠️  Asegúrate de que el servidor esté corriendo en puerto 3001
+            )}
+            {status === 'ready' && <Fingerprint className="text-gray-600" size={24} />}
+            
+            <p className={`font-medium ${
+              status === 'success' ? 'text-green-700' :
+              status === 'error' ? 'text-red-700' :
+              status === 'verifying' ? 'text-blue-700' :
+              status === 'capturing' ? 'text-yellow-700' :
+              'text-gray-700'
+            }`}>
+              {statusMessage}
             </p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* NUEVO: Selector de Membresía */}
+      {showMembershipSelector && pendingMember && (
+        <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-300 rounded-lg">
+          <h3 className="font-semibold text-blue-900 mb-3">
+            {pendingMember.firstName} {pendingMember.lastName} - Selecciona Membresía
+          </h3>
+          <div className="space-y-2">
+            {availableMemberships.map((membership) => (
+              <button
+                key={membership.id}
+                onClick={() => handleMembershipSelection(membership)}
+                className="w-full p-3 bg-white border border-blue-200 rounded-lg hover:bg-blue-100 
+                         transition-colors text-left"
+              >
+                <div className="flex justify-between items-center">
+                  <div>
+                    <p className="font-medium text-gray-800">{membership.activityName}</p>
+                    <p className="text-sm text-gray-600">
+                      Clases: {membership.currentAttendances} / {membership.maxAttendances}
+                    </p>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {new Date(membership.endDate).toLocaleDateString('es-AR')}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={handleCancelSelection}
+            className="mt-3 w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 
+                     transition-colors"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+
+      {/* Statistics */}
+      {continuousMode && (
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="bg-gray-50 p-4 rounded-lg text-center">
+            <p className="text-2xl font-bold text-gray-800">{stats.total}</p>
+            <p className="text-sm text-gray-600">Total</p>
+          </div>
+          <div className="bg-green-50 p-4 rounded-lg text-center">
+            <p className="text-2xl font-bold text-green-600">{stats.success}</p>
+            <p className="text-sm text-green-600">Exitosos</p>
+          </div>
+          <div className="bg-red-50 p-4 rounded-lg text-center">
+            <p className="text-2xl font-bold text-red-600">{stats.errors}</p>
+            <p className="text-sm text-red-600">Errores</p>
+          </div>
+        </div>
+      )}
+
+      {/* Last Result */}
+      {lastResult && (
+        <div className={`p-4 rounded-lg ${
+          lastResult.success ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+        }`}>
+          <div className="flex items-start gap-3">
+            {lastResult.memberPhoto && (
+              <img 
+                src={lastResult.memberPhoto} 
+                alt="Foto" 
+                className="w-12 h-12 rounded-full object-cover"
+              />
+            )}
+            <div className="flex-1">
+              {lastResult.memberName && (
+                <p className="font-semibold text-gray-800">{lastResult.memberName}</p>
+              )}
+              <p className={`text-sm ${lastResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                {lastResult.message}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {formatTime(lastResult.timestamp)}
+              </p>
+            </div>
+            {lastResult.success ? (
+              <CheckCircle className="text-green-600" size={20} />
+            ) : (
+              <XCircle className="text-red-600" size={20} />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
