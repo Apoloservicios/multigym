@@ -16,10 +16,13 @@ import DeleteMembershipModal from '../memberships/DeleteMembershipModal'; // �
 import { 
   Mail, Phone, Calendar, MapPin, Edit, Trash, QrCode, CreditCard, Plus, Clock, DollarSign, 
   ChevronDown, ChevronUp, FileText, History, User, Dumbbell, CheckCircle, AlertCircle, 
-  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2,Heart
+  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2,Heart,Fingerprint 
 } from 'lucide-react';
 
 import { formatDisplayDate, toJsDate } from '../../utils/date.utils';
+
+import FingerprintEnrollment from '../fingerprint/FingerprintEnrollment';
+import { fingerprintService } from '../../services/fingerprint.service';
 
 interface MemberDetailProps {
   member: Member;
@@ -53,13 +56,50 @@ const [expandedSections, setExpandedSections] = useState({
   health: false
 });
   
-  
+
 
 const toggleSection = (section: 'emergency' | 'health') => {
   setExpandedSections(prev => ({
     ...prev,
     [section]: !prev[section]
   }));
+};
+
+  const [showFingerprintEnrollment, setShowFingerprintEnrollment] = useState(false);
+const [hasFingerprint, setHasFingerprint] = useState(false);
+
+useEffect(() => {
+  if (member.fingerprint && member.fingerprint.template) {
+    setHasFingerprint(true);
+  } else {
+    setHasFingerprint(false);
+  }
+}, [member]);
+
+
+// 4. FUNCIÓN PARA ELIMINAR HUELLA
+const handleDeleteFingerprint = async () => {
+  if (!gymData?.id) return;
+  
+  const confirmed = window.confirm(
+    '¿Estás seguro de eliminar la huella digital registrada? El socio deberá registrarla nuevamente.'
+  );
+  
+  if (!confirmed) return;
+  
+  try {
+    const result = await fingerprintService.deleteFingerprint(gymData.id, member.id);
+    
+    if (result.success) {
+      alert('Huella eliminada correctamente');
+      setHasFingerprint(false);
+      onRefreshMember?.();
+    } else {
+      alert('Error al eliminar huella: ' + result.error);
+    }
+  } catch (error: any) {
+    alert('Error al eliminar huella: ' + error.message);
+  }
 };
   
 
@@ -814,6 +854,15 @@ const formatDate = (dateString: string) => {
               </div>
             </div>
 
+            {hasFingerprint && (
+                <div className="mt-2">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    <Fingerprint size={14} className="mr-1" />
+                    Huella Registrada
+                  </span>
+                </div>
+              )}
+
              {/* ✅ SECCIÓN: Contacto de Emergencia - EXPANDIBLE */}
               {(member.emergencyContactName || member.emergencyContactPhone) && (
                 <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -1115,7 +1164,29 @@ const formatDate = (dateString: string) => {
                 >
                   <Trash size={16} className="mr-1" />
                   Eliminar
-                </button>
+                </button>.
+
+                 <button
+                    onClick={() => setShowFingerprintEnrollment(true)}
+                    className={`flex items-center px-4 py-2 rounded-lg border transition-colors ${
+                      hasFingerprint
+                        ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100'
+                        : 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100'
+                    }`}
+                  >
+                    <Fingerprint size={18} className="mr-2" />
+                    {hasFingerprint ? 'Actualizar Huella' : 'Registrar Huella'}
+                  </button>
+                  
+                  {hasFingerprint && (
+                    <button
+                      onClick={handleDeleteFingerprint}
+                      className="flex items-center px-4 py-2 bg-red-50 border border-red-200 text-red-700 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      <Trash2 size={18} className="mr-2" />
+                      Eliminar Huella
+                    </button>
+                  )}
               </div>
             </div>
             
@@ -1227,6 +1298,21 @@ const formatDate = (dateString: string) => {
             setMembershipToCancel(null);
           }}
           loading={cancelling}
+        />
+      )}
+
+      {showFingerprintEnrollment && gymData?.id && (
+        <FingerprintEnrollment
+          gymId={gymData.id}
+          memberId={member.id}
+          memberName={`${member.firstName} ${member.lastName}`}
+          onSuccess={() => {
+            setShowFingerprintEnrollment(false);
+            setHasFingerprint(true);
+            onRefreshMember?.();
+            alert('¡Huella registrada correctamente!');
+          }}
+          onCancel={() => setShowFingerprintEnrollment(false)}
         />
       )}
       

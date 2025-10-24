@@ -1,7 +1,8 @@
 // src/types/member.types.ts - VERSIÓN ACTUALIZADA CON NUEVOS CAMPOS
 // ✅ AGREGANDO CAMPOS DE EMERGENCIA Y CUESTIONARIO
 
-import { FirebaseDate as CentralFirebaseDate } from './firebase.types';
+import { FirebaseDate as CentralFirebaseDate } from './firebase.types'
+import { FingerprintData } from './fingerprint.types';
 
 export type FirebaseDate = CentralFirebaseDate;
 
@@ -37,6 +38,8 @@ export interface Member {
   injuries?: string; // Texto libre
   allergies?: string; // Texto libre
   hasMedicalCertificate?: 'yes' | 'no';
+    // 🆕 HUELLA DIGITAL
+  fingerprint?: FingerprintData | null;
 }
 
 export interface MemberFormData {

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, User } from 'lucide-react';
+import { QrCode, CameraOff, Clock, AlertCircle, CheckCircle, XCircle, Search, User ,Fingerprint, Loader,Power } from 'lucide-react';
 import Webcam from 'react-webcam';
 import jsQR from 'jsqr';
 import useAuth from '../../hooks/useAuth';
@@ -9,6 +9,9 @@ import { doc, getDoc, collection, query, where, getDocs, limit, orderBy } from '
 import { db } from '../../config/firebase';
 import { debounce } from 'lodash';
 import useFirestore from '../../hooks/useFirestore';
+
+import { fingerprintService } from '../../services/fingerprint.service';
+import FingerprintContinuousScanner from './FingerprintContinuousScanner';
 
 interface ScanResult {
   success: boolean;
@@ -102,6 +105,12 @@ const AttendanceScanner: React.FC = () => {
   const qrCooldownTimeout = useRef<NodeJS.Timeout | null>(null);
   const membersFirestore = useFirestore<MemberInfo>('members');
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+const [scanMode, setScanMode] = useState<'qr' | 'manual' | 'fingerprint' | 'fingerprint_continuous'>('qr');
+const [fingerprintScanning, setFingerprintScanning] = useState(false);
+const [fingerprintStatus, setFingerprintStatus] = useState<string>('');
+
+
 
   // ✅ BÚSQUEDA DEBOUNCED
 const debouncedSearch = useMemo(
@@ -427,6 +436,8 @@ const debouncedSearch = useMemo(
     setPendingAttendanceData(null);
   };
 
+  
+
 
   // ✅ EFECTOS Y CLEANUP
   useEffect(() => {
@@ -734,6 +745,13 @@ useEffect(() => {
     }
   };
 
+
+
+
+
+
+  
+
   // ✅ FUNCIONES DE CONTROL
   const startScanning = () => {
     setScanResult(null);
@@ -777,6 +795,159 @@ useEffect(() => {
       loadRecentMembers();
     }
   };
+
+  const scanFingerprint = async () => {
+  if (!gymData?.id) return;
+  
+  setFingerprintScanning(true);
+  setFingerprintStatus('Verificando servidor...');
+  setScanResult(null);
+  
+  try {
+    // 1. Verificar servidor
+    const serverOk = await fingerprintService.checkServerStatus();
+    if (!serverOk) {
+      setScanResult({
+        success: false,
+        message: 'Servidor de huellas no disponible',
+        timestamp: new Date(),
+        member: null,
+        error: 'Asegúrate de que el servidor local esté corriendo'
+      });
+      setFingerprintScanning(false);
+      return;
+    }
+    
+    // 2. Inicializar lector
+    setFingerprintStatus('Inicializando lector...');
+    const initResult = await fingerprintService.initialize();
+    
+    if (!initResult.success) {
+      setScanResult({
+        success: false,
+        message: 'Error al inicializar lector',
+        timestamp: new Date(),
+        member: null,
+        error: initResult.error
+      });
+      setFingerprintScanning(false);
+      return;
+    }
+    
+    // 3. Capturar huella
+    setFingerprintStatus('Coloca tu dedo en el lector...');
+    const captureResult = await fingerprintService.capture();
+    
+    if (!captureResult.success || !captureResult.data) {
+      setScanResult({
+        success: false,
+        message: 'Error al capturar huella',
+        timestamp: new Date(),
+        member: null,
+        error: captureResult.error || captureResult.message
+      });
+      setFingerprintScanning(false);
+      return;
+    }
+    
+    // 4. Verificar huella
+    setFingerprintStatus('Verificando identidad...');
+    const verifyResult = await fingerprintService.verifyAndRegisterAttendance(
+      gymData.id,
+      captureResult.data.template
+    );
+    
+    if (!verifyResult.success || !verifyResult.memberData) {
+      setScanResult({
+        success: false,
+        message: 'Huella no reconocida',
+        timestamp: new Date(),
+        member: null,
+        error: verifyResult.error || 'No se encontró coincidencia'
+      });
+      setFingerprintScanning(false);
+      return;
+    }
+    
+    // 5. Socio identificado - obtener membresías
+    const memberData = verifyResult.memberData;
+    setSelectedMember({
+      id: memberData.id,
+      firstName: memberData.firstName,
+      lastName: memberData.lastName,
+      email: memberData.email,
+      photo: memberData.photo,
+      status: memberData.status
+    });
+    
+    setFingerprintStatus('Cargando membresías...');
+    const memberships = await loadMemberMemberships(memberData.id);
+    setMemberMemberships(memberships);
+    
+    if (memberships.length === 0) {
+      setScanResult({
+        success: false,
+        message: 'Este socio no tiene membresías activas',
+        timestamp: new Date(),
+        member: {
+          id: memberData.id,
+          firstName: memberData.firstName,
+          lastName: memberData.lastName,
+          photo: memberData.photo || null
+        },
+        error: 'Sin membresías activas'
+      });
+      setFingerprintScanning(false);
+      return;
+    }
+    
+    if (memberships.length === 1) {
+      // Una sola membresía - mostrar confirmación
+      setSelectedMembership(memberships[0]);
+      showAttendanceConfirmation(
+        {
+          id: memberData.id,
+          firstName: memberData.firstName,
+          lastName: memberData.lastName,
+          email: memberData.email,
+          photo: memberData.photo
+        },
+        memberships[0]
+      );
+    }
+    // Si hay múltiples, ya quedaron en memberMemberships para que el usuario seleccione
+    
+    setFingerprintScanning(false);
+    setFingerprintStatus('');
+    
+  } catch (error: any) {
+    console.error('Error en scanFingerprint:', error);
+    setScanResult({
+      success: false,
+      message: 'Error al procesar huella',
+      timestamp: new Date(),
+      member: null,
+      error: error.message
+    });
+    setFingerprintScanning(false);
+  }
+};
+
+const toggleFingerprintMode = () => {
+  stopScanning();
+  setScanMode(scanMode === 'fingerprint' ? 'manual' : 'fingerprint');
+  setShowManualEntry(false);
+  setShowMembershipSelection(false);
+  setSearchTerm("");
+  setSearchResults([]);
+  setSelectedMember(null);
+  setSelectedMembership(null);
+  setMemberMemberships([]);
+  setScanResult(null);
+  setSearchError(null);
+  setFingerprintStatus('');
+};
+
 
 
   // ✅ FUNCIONES DE BÚSQUEDA
@@ -1126,6 +1297,94 @@ useEffect(() => {
     </div>
   );
 
+  const renderFingerprintScanner = () => (
+  <div className="flex flex-col items-center">
+    <div className="mb-4 h-80 w-full max-w-lg bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg flex flex-col items-center justify-center relative overflow-hidden border-2 border-blue-200">
+      {fingerprintScanning ? (
+        <>
+          <div className="text-blue-600 mb-4">
+            <Fingerprint size={120} className="animate-pulse" />
+          </div>
+          <p className="text-lg font-medium text-blue-700 mb-2">
+            {fingerprintStatus}
+          </p>
+          <div className="flex gap-2 mt-4">
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+            <div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="text-gray-400 mb-4">
+            <Fingerprint size={120} />
+          </div>
+          <p className="text-lg font-medium text-gray-700 mb-2">
+            Lector de Huellas Digital
+          </p>
+          <p className="text-sm text-gray-500 text-center px-4">
+            Presiona el botón para iniciar el escaneo
+          </p>
+        </>
+      )}
+    </div>
+    
+    <button
+      onClick={scanFingerprint}
+      disabled={fingerprintScanning}
+      className={`px-8 py-3 rounded-lg font-medium transition-colors w-full max-w-lg ${
+        fingerprintScanning
+          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          : 'bg-blue-600 text-white hover:bg-blue-700'
+      }`}
+    >
+      {fingerprintScanning ? (
+        <span className="flex items-center justify-center gap-2">
+          <Loader size={20} className="animate-spin" />
+          Procesando...
+        </span>
+      ) : (
+        <span className="flex items-center justify-center gap-2">
+          <Fingerprint size={20} />
+          Escanear Huella
+        </span>
+      )}
+    </button>
+
+      {/* Botón Modo Continuo */}
+      <button
+        onClick={() => {
+          stopScanning();
+          setScanMode('fingerprint_continuous');
+          setShowManualEntry(false);
+          setFingerprintStatus('');
+        }}
+        className={`px-4 py-2 text-sm border rounded-md transition-colors flex items-center gap-2 ${
+          scanMode === 'fingerprint_continuous'
+            ? 'bg-purple-600 text-white border-purple-600'
+            : 'border-gray-300 hover:bg-gray-50'
+        }`}
+        title="Modo de escaneo continuo automático"
+      >
+        <Fingerprint size={16} />
+        <Power size={16} />
+        Continuo
+      </button>
+    
+    <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg max-w-lg w-full">
+      <p className="text-sm font-medium text-blue-900 mb-2">
+        📋 Instrucciones:
+      </p>
+      <ul className="text-xs text-blue-800 space-y-1">
+        <li>• Asegúrate de tener el dedo limpio y seco</li>
+        <li>• Coloca el dedo firmemente en el lector</li>
+        <li>• Mantén el dedo quieto durante el escaneo</li>
+        <li>• El sistema identificará automáticamente al socio</li>
+      </ul>
+    </div>
+  </div>
+);
+
 
 
   // ✅ MODAL PARA SELECCIÓN DE MEMBRESÍA DESDE QR
@@ -1265,219 +1524,253 @@ useEffect(() => {
 
 
 
-  // ✅ COMPONENTE PRINCIPAL
-  return (
-    <div className="bg-white rounded-lg shadow-md p-6">
-      <h2 className="text-xl font-semibold mb-6">Control de Asistencias</h2>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Sección de escáner/entrada manual */}
-        <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-lg font-medium text-gray-900">
-              {showManualEntry ? "Registro Manual" : "Escanear Código QR"}
-            </h3>
+// ✅ COMPONENTE PRINCIPAL
+return (
+  <div className="bg-white rounded-lg shadow-md p-6">
+    <h2 className="text-xl font-semibold mb-6">Control de Asistencias</h2>
+    
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      {/* Sección de escáner/entrada manual */}
+      <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
+        <div className="flex justify-between items-center mb-6">
+          <h3 className="text-lg font-medium text-gray-900">
+            {scanMode === 'fingerprint' ? "Lector de Huellas" :
+             showManualEntry ? "Registro Manual" : 
+             "Escanear Código QR"}
+          </h3>
+          
+          <div className="flex gap-2">
+            {/* Botón QR */}
+            <button
+              onClick={() => {
+                stopScanning();
+                setScanMode('qr');
+                setShowManualEntry(false);
+                setFingerprintStatus('');
+              }}
+              className={`px-4 py-2 text-sm border rounded-md transition-colors flex items-center gap-2 ${
+                scanMode === 'qr' && !showManualEntry
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <QrCode size={16} />
+              QR
+            </button>
             
+            {/* Botón Manual */}
             <button
               onClick={toggleManualEntry}
-              className="px-4 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center"
+              className={`px-4 py-2 text-sm border rounded-md transition-colors flex items-center gap-2 ${
+                showManualEntry
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'border-gray-300 hover:bg-gray-50'
+              }`}
             >
-              {showManualEntry ? (
-                <>
-                  <QrCode size={16} className="mr-2" />
-                  Usar Escáner QR
-                </>
-              ) : (
-                <>
-                  <User size={16} className="mr-2" />
-                  Registro Manual
-                </>
-              )}
+              <User size={16} />
+              Manual
+            </button>
+            
+            {/* Botón Huella */}
+            <button
+              onClick={toggleFingerprintMode}
+              className={`px-4 py-2 text-sm border rounded-md transition-colors flex items-center gap-2 ${
+                scanMode === 'fingerprint'
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <Fingerprint size={16} />
+              Huella
             </button>
           </div>
-          
-          {cameraError && !showManualEntry && (
-            <div className="mb-6 p-4 bg-red-100 text-red-700 rounded-lg border border-red-200">
-              <div className="flex items-start">
-                <AlertCircle size={20} className="mr-3 mt-0.5 flex-shrink-0" />
-                <div>
-                  <p className="font-medium">Error de cámara</p>
-                  <p className="text-sm mt-1">{cameraError}</p>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {showManualEntry ? renderManualEntry() : renderScanner()}
-          
-          {/* Resultado del escaneo */}
-          {scanResult && (
-            <div className={`mt-6 p-4 rounded-lg ${
-              scanResult.success 
-                ? 'bg-green-50 border border-green-200' 
-                : 'bg-red-50 border border-red-200'
-            }`}>
-              <div className="flex items-start">
-                <div className={`flex-shrink-0 rounded-full p-2 ${
-                  scanResult.success 
-                    ? 'bg-green-100 text-green-600' 
-                    : 'bg-red-100 text-red-600'
-                }`}>
-                  {scanResult.success ? <CheckCircle size={24} /> : <XCircle size={24} />}
-                </div>
-                
-                <div className="ml-4 flex-1">
-                  <h3 className={`text-base font-medium ${
-                    scanResult.success ? 'text-green-800' : 'text-red-800'
-                  }`}>
-                    {scanResult.success ? 'Asistencia Registrada' : 'Error al Registrar'}
-                  </h3>
-                  
-                  <p className={`mt-1 text-sm ${
-                    scanResult.success ? 'text-green-700' : 'text-red-700'
-                  }`}>
-                    {scanResult.message}
-                  </p>
-                  
-                  <p className="mt-2 text-xs text-gray-500">
-                    {formatDateTime(scanResult.timestamp)}
-                  </p>
-                  
-                  {scanResult.member && (
-                    <div className="mt-3 flex items-center p-3 bg-white rounded-md border">
-                      {scanResult.member.photo ? (
-                        <img 
-                          src={scanResult.member.photo} 
-                          alt={`${scanResult.member.firstName} ${scanResult.member.lastName}`}
-                          className="h-12 w-12 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
-                          {scanResult.member.firstName.charAt(0)}{scanResult.member.lastName.charAt(0)}
-                        </div>
-                      )}
-                      <div className="ml-3">
-                        <div className="text-sm font-medium text-gray-900">
-                          {scanResult.member.firstName} {scanResult.member.lastName}
-                        </div>
-                        {scanResult.success && scanResult.member.activeMemberships !== undefined && (
-                          <div className="text-xs text-gray-500">
-                            {scanResult.member.activeMemberships} membresía(s) activa(s)
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
         
-        {/* Historial de registros */}
-        <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
-          <h3 className="text-lg font-medium mb-6 text-gray-900">Registros Recientes</h3>
-          
-          {scanHistory.length === 0 ? (
-            <div className="text-center py-12">
-              <Clock size={48} className="mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500 text-base">No hay registros de asistencia recientes</p>
-              <p className="text-gray-400 text-sm mt-2">
-                Los registros aparecerán aquí una vez que comiences a escanear
-              </p>
+        {cameraError && scanMode === 'qr' && (
+          <div className="mb-6 p-4 bg-red-100 text-red-700 rounded-lg border border-red-200">
+            <div className="flex items-start">
+              <AlertCircle size={20} className="mr-3 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-medium">Error de cámara</p>
+                <p className="text-sm mt-1">{cameraError}</p>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {scanHistory.map((record) => {
-                // 🆕 DETECTAR SI EL SOCIO TIENE DEUDA
-                const memberHasDebt = (record.member?.totalDebt ?? 0) > 0 || record.member?.hasDebt;
-
-                return (
-                  <div
-                    key={record.id}
-                    className={`p-4 rounded-lg border-l-4 transition-colors ${
-                      // 🆕 FONDO ROJO SI TIENE DEUDA
-                      memberHasDebt 
-                        ? 'border-l-red-500 bg-red-50 border border-red-200' 
-                        : record.status === 'success' 
-                          ? 'border-l-green-500 bg-green-50 border border-green-200' 
-                          : 'border-l-red-500 bg-red-50 border border-red-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center flex-1">
-                        <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-medium ${
-                          memberHasDebt 
-                            ? 'bg-red-500' 
-                            : record.status === 'success' 
-                              ? 'bg-green-500' 
-                              : 'bg-red-500'
-                        }`}>
-                          {record.member?.firstName?.charAt(0) || 'S'}{record.member?.lastName?.charAt(0) || 'M'}
+          </div>
+        )}
+        
+        {scanMode === 'fingerprint_continuous' ? (
+          <FingerprintContinuousScanner 
+            gymId={gymData?.id || ''} 
+          />
+        ) : scanMode === 'fingerprint' ? renderFingerprintScanner() :
+        showManualEntry ? renderManualEntry() : 
+        renderScanner()}
+        
+        {/* Resultado del escaneo */}
+        {scanResult && (
+          <div className={`mt-6 p-4 rounded-lg ${
+            scanResult.success 
+              ? 'bg-green-50 border border-green-200' 
+              : 'bg-red-50 border border-red-200'
+          }`}>
+            <div className="flex items-start">
+              <div className={`flex-shrink-0 rounded-full p-2 ${
+                scanResult.success 
+                  ? 'bg-green-100 text-green-600' 
+                  : 'bg-red-100 text-red-600'
+              }`}>
+                {scanResult.success ? <CheckCircle size={24} /> : <XCircle size={24} />}
+              </div>
+              
+              <div className="ml-4 flex-1">
+                <h3 className={`text-base font-medium ${
+                  scanResult.success ? 'text-green-800' : 'text-red-800'
+                }`}>
+                  {scanResult.success ? 'Asistencia Registrada' : 'Error al Registrar'}
+                </h3>
+                
+                <p className={`mt-1 text-sm ${
+                  scanResult.success ? 'text-green-700' : 'text-red-700'
+                }`}>
+                  {scanResult.message}
+                </p>
+                
+                <p className="mt-2 text-xs text-gray-500">
+                  {formatDateTime(scanResult.timestamp)}
+                </p>
+                
+                {scanResult.member && (
+                  <div className="mt-3 flex items-center p-3 bg-white rounded-md border">
+                    {scanResult.member.photo ? (
+                      <img 
+                        src={scanResult.member.photo} 
+                        alt={`${scanResult.member.firstName} ${scanResult.member.lastName}`}
+                        className="h-12 w-12 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
+                        {scanResult.member.firstName.charAt(0)}{scanResult.member.lastName.charAt(0)}
+                      </div>
+                    )}
+                    <div className="ml-3">
+                      <div className="text-sm font-medium text-gray-900">
+                        {scanResult.member.firstName} {scanResult.member.lastName}
+                      </div>
+                      {scanResult.success && scanResult.member.activeMemberships !== undefined && (
+                        <div className="text-xs text-gray-500">
+                          {scanResult.member.activeMemberships} membresía(s) activa(s)
                         </div>
-                        <div className="ml-3 flex-1">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium text-gray-900">
-                              {record.member?.firstName || 'Socio'} {record.member?.lastName || 'Desconocido'}
-                            </div>
-                            {/* 🆕 BADGE DE DEUDA */}
-                              {memberHasDebt && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white">
-                                  Deuda: ${((record.member?.totalDebt ?? 0).toFixed(2))}
-                                </span>
-                              )}
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      
+      {/* Historial de registros */}
+      <div className="border border-gray-200 rounded-lg p-6 bg-gray-50">
+        <h3 className="text-lg font-medium mb-6 text-gray-900">Registros Recientes</h3>
+        
+        {scanHistory.length === 0 ? (
+          <div className="text-center py-12">
+            <Clock size={48} className="mx-auto text-gray-300 mb-4" />
+            <p className="text-gray-500 text-base">No hay registros de asistencia recientes</p>
+            <p className="text-gray-400 text-sm mt-2">
+              Los registros aparecerán aquí una vez que comiences a escanear
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {scanHistory.map((record) => {
+              const memberHasDebt = (record.member?.totalDebt ?? 0) > 0 || record.member?.hasDebt;
+
+              return (
+                <div
+                  key={record.id}
+                  className={`p-4 rounded-lg border-l-4 transition-colors ${
+                    memberHasDebt 
+                      ? 'border-l-red-500 bg-red-50 border border-red-200' 
+                      : record.status === 'success' 
+                        ? 'border-l-green-500 bg-green-50 border border-green-200' 
+                        : 'border-l-red-500 bg-red-50 border border-red-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center flex-1">
+                      <div className={`h-10 w-10 rounded-full flex items-center justify-center text-white font-medium ${
+                        memberHasDebt 
+                          ? 'bg-red-500' 
+                          : record.status === 'success' 
+                            ? 'bg-green-500' 
+                            : 'bg-red-500'
+                      }`}>
+                        {record.member?.firstName?.charAt(0) || 'S'}{record.member?.lastName?.charAt(0) || 'M'}
+                      </div>
+                      <div className="ml-3 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-medium text-gray-900">
+                            {record.member?.firstName || 'Socio'} {record.member?.lastName || 'Desconocido'}
                           </div>
-                          <div className="text-xs text-gray-600">
-                            {record.status === 'success' ? (
-                              'Asistencia registrada'
-                            ) : (
-                              record.error || 'Error al registrar'
-                            )}
-                          </div>
+                          {memberHasDebt && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white">
+                              Deuda: ${((record.member?.totalDebt ?? 0).toFixed(2))}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          {record.status === 'success' ? (
+                            'Asistencia registrada'
+                          ) : (
+                            record.error || 'Error al registrar'
+                          )}
                         </div>
                       </div>
-                      <div className="text-right ml-3">
-                        <div className="text-xs text-gray-500">
-                          {formatDateTime(record.timestamp)}
-                        </div>
-                        <div className={`text-xs font-medium ${
-                          record.status === 'success' ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {record.status === 'success' ? '✓ Exitoso' : '✗ Error'}
-                        </div>
+                    </div>
+                    <div className="text-right ml-3">
+                      <div className="text-xs text-gray-500">
+                        {formatDateTime(record.timestamp)}
+                      </div>
+                      <div className={`text-xs font-medium ${
+                        record.status === 'success' ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {record.status === 'success' ? '✓ Exitoso' : '✗ Error'}
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-          
-          {scanHistory.length > 0 && (
-            <div className="mt-6 flex justify-center">
-              <button 
-                onClick={() => {
-                  setScanHistory([]);
-                  if (gymData?.id) {
-                    localStorage.removeItem(`attendanceHistory_${gymData.id}`);
-                  }
-                }}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition-colors"
-              >
-                Limpiar Historial
-              </button>
-            </div>
-          )}
-        </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        
+        {scanHistory.length > 0 && (
+          <div className="mt-6 flex justify-center">
+            <button 
+              onClick={() => {
+                setScanHistory([]);
+                if (gymData?.id) {
+                  localStorage.removeItem(`attendanceHistory_${gymData.id}`);
+                }
+              }}
+              className="px-4 py-2 text-sm border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              Limpiar Historial
+            </button>
+          </div>
+        )}
       </div>
-
-      {/* Modal de selección de membresía desde QR */}
-      {showMembershipSelection && renderMembershipSelection()}
-
-      {/* Modal de confirmación de asistencia */}
-      {renderConfirmationModal()}
     </div>
-  );
+
+    {/* Modal de selección de membresía desde QR */}
+    {showMembershipSelection && renderMembershipSelection()}
+
+    {/* Modal de confirmación de asistencia */}
+    {renderConfirmationModal()}
+  </div>
+);
 };
 
 export default AttendanceScanner;
