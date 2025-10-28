@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Fingerprint, CheckCircle, AlertCircle, Loader, X } from 'lucide-react';
-import { fingerprintService } from '../../services/fingerprint.service';
+import { fingerprintService } from '../../services/fingerprintService';
 
 interface Props {
   gymId: string;

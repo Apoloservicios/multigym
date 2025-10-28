@@ -1,7 +1,8 @@
-// src/components/members/MemberList.tsx - VERSIÓN CON PAGINACIÓN
+// src/components/members/MemberList.tsx - VERSIÓN CORREGIDA CON HUELLAS DIGITALES
+// ✅ Agrega indicador visual de huella registrada
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Search, User, Edit, Trash, Eye, CreditCard, BanknoteIcon, RefreshCw, Filter, UserPlus, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, User, Edit, Trash, Eye, CreditCard, BanknoteIcon, RefreshCw, Filter, UserPlus, AlertCircle, ChevronLeft, ChevronRight, Fingerprint } from 'lucide-react';
 import { Member } from '../../types/member.types';
 import { formatCurrency } from '../../utils/formatting.utils';
 import useAuth from '../../hooks/useAuth';
@@ -32,245 +33,164 @@ const MemberList: React.FC<MemberListProps> = ({
   const membersFirestore = useFirestore<Member>('members');
   
   // Estados principales
-  const [allMembers, setAllMembers] = useState<Member[]>([]); // Todos los miembros
-  const [filteredMembers, setFilteredMembers] = useState<Member[]>([]); // Después de filtros
-  const [displayedMembers, setDisplayedMembers] = useState<Member[]>([]); // Los que se muestran en la página actual
+  const [allMembers, setAllMembers] = useState<Member[]>([]);
+  const [filteredMembers, setFilteredMembers] = useState<Member[]>([]);
+  const [displayedMembers, setDisplayedMembers] = useState<Member[]>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [debtFilter, setDebtFilter] = useState<string>('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [searching, setSearching] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [searching, setSearching] = useState<boolean>(false);
   
-  // Estados para ordenamiento
-  const [sortField, setSortField] = useState<string>('lastName');
+  // Estados de ordenamiento
+  const [sortField, setSortField] = useState<'firstName' | 'lastName' | 'dni' | 'memberNumber' | 'createdAt'>('lastName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
-  // Estados para paginación
+  // Estados de paginación
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [itemsPerPage] = useState<number>(10); // Cambia este número si quieres más/menos items por página
+  const [itemsPerPage] = useState<number>(10);
   
-  // Calcular datos de paginación
-  const totalItems = filteredMembers.length;
-  const totalPages = Math.ceil(totalItems / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-
-  // Función debounced para búsqueda
-// Función mejorada para búsqueda - CORREGIDA
-const debouncedSearch = useMemo(
-  () => debounce(async (term: string) => {
-    if (!term.trim() || !gymData?.id) {
-      return;
-    }
-    
-    setSearching(true);
-    setError('');
-    
-    try {
-      const trimmedTerm = term.trim();
-      
-      // 1️⃣ BUSCAR POR NÚMERO DE SOCIO (búsqueda exacta)
-      if (!isNaN(Number(trimmedTerm))) {
-        const memberNumber = parseInt(trimmedTerm);
-        
-        const membersRef = collection(db, `gyms/${gymData.id}/members`);
-        const q = query(
-          membersRef,
-          where('memberNumber', '==', memberNumber)
-        );
-        
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-          const results = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          } as Member));
-          
-          setAllMembers(results);
-          setSearching(false);
-          return;
-        }
-      }
-      
-      // 2️⃣ BUSCAR POR DNI (búsqueda exacta)
-      if (trimmedTerm.length >= 6 && !isNaN(Number(trimmedTerm))) {
-        const membersRef = collection(db, `gyms/${gymData.id}/members`);
-        const q = query(
-          membersRef,
-          where('dni', '==', trimmedTerm)
-        );
-        
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-          const results = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          } as Member));
-          
-          setAllMembers(results);
-          setSearching(false);
-          return;
-        }
-      }
-      
-      // 3️⃣ BÚSQUEDA POR NOMBRE/APELLIDO/EMAIL/TELÉFONO
-      // Para esto necesitamos buscar en todos los documentos y filtrar localmente
-      const membersRef = collection(db, `gyms/${gymData.id}/members`);
-      const snapshot = await getDocs(membersRef);
-      
-      const searchTermLower = trimmedTerm.toLowerCase();
-      
-      const results = snapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as Member))
-        .filter(member => {
-          const firstName = (member.firstName || '').toLowerCase();
-          const lastName = (member.lastName || '').toLowerCase();
-          const email = (member.email || '').toLowerCase();
-          const phone = (member.phone || '').toLowerCase();
-          
-          return (
-            firstName.includes(searchTermLower) ||
-            lastName.includes(searchTermLower) ||
-            email.includes(searchTermLower) ||
-            phone.includes(searchTermLower)
-          );
-        });
-      
-      setAllMembers(results);
-      
-    } catch (error) {
-      console.error('Error en búsqueda:', error);
-      setError('Error al buscar miembros. Inténtalo de nuevo.');
-      setAllMembers([]);
-    } finally {
-      setSearching(false);
-    }
-  }, 500), // Aumentar el delay a 500ms para evitar muchas búsquedas
-  [gymData?.id]
-);
-
-  // Cargar todos los miembros
-const loadMembers = useCallback(async () => {
-  if (!gymData?.id) {
-    setLoading(false);
-    return;
-  }
-  
-  setLoading(true);
-  setError('');
-  
-  try {
-    const membersRef = collection(db, `gyms/${gymData.id}/members`);
-    
-    // Obtener TODOS los miembros directamente
-    const snapshot = await getDocs(membersRef);
-    
-    const allMembersData = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    } as Member));
-    
-    console.log(`✅ Cargados ${allMembersData.length} socios`);
-    setAllMembers(allMembersData);
-    
-  } catch (error) {
-    console.error('Error cargando miembros:', error);
-    setError('Error al cargar los miembros. Inténtalo de nuevo.');
-    setAllMembers([]);
-  } finally {
-    setLoading(false);
-  }
-}, [gymData?.id]);
-
-  // Aplicar filtros y ordenamiento
-  useEffect(() => {
-    let result = [...allMembers];
-    
-    // Aplicar filtros
-    if (statusFilter !== 'all') {
-      result = result.filter(m => m.status === statusFilter);
-    }
-    
-    if (debtFilter === 'with_debt') {
-      result = result.filter(m => (m.totalDebt || 0) > 0);
-    } else if (debtFilter === 'no_debt') {
-      result = result.filter(m => (m.totalDebt || 0) === 0);
-    }
-    
-    // Aplicar ordenamiento
-    result.sort((a, b) => {
-      const aValue = (a as any)[sortField] || '';
-      const bValue = (b as any)[sortField] || '';
-      
-      const aStr = String(aValue).toLowerCase();
-      const bStr = String(bValue).toLowerCase();
-      
-      if (sortDirection === 'asc') {
-        return aStr > bStr ? 1 : -1;
-      } else {
-        return aStr < bStr ? 1 : -1;
-      }
-    });
-    
-    setFilteredMembers(result);
-    setCurrentPage(1); // Reset a la primera página cuando cambian los filtros
-  }, [allMembers, statusFilter, debtFilter, sortField, sortDirection]);
-
-  // Actualizar miembros mostrados basado en la paginación
-  useEffect(() => {
-    const paginatedMembers = filteredMembers.slice(startIndex, endIndex);
-    setDisplayedMembers(paginatedMembers);
-  }, [filteredMembers, startIndex, endIndex]);
-
-  // Efectos para cargar datos
+  // Cargar miembros inicialmente
   useEffect(() => {
     if (gymData?.id) {
       loadMembers();
     }
-  }, [gymData?.id, statusFilter, debtFilter, sortField, sortDirection]);
+  }, [gymData]);
 
+  // Cargar miembros desde Firebase
+  const loadMembers = async () => {
+    if (!gymData?.id) return;
+    
+    try {
+      setLoading(true);
+      setError('');
+      
+      const membersRef = collection(db, `gyms/${gymData.id}/members`);
+      const snapshot = await getDocs(membersRef);
+      
+      const loadedMembers: Member[] = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Member));
+      
+      setAllMembers(loadedMembers);
+      
+    } catch (error: any) {
+      console.error('Error loading members:', error);
+      setError('Error al cargar los socios. Por favor, intenta nuevamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Aplicar filtros
   useEffect(() => {
+    let filtered = [...allMembers];
+    
+    // Filtro de búsqueda
     if (searchTerm.trim()) {
-      debouncedSearch(searchTerm);
-    } else {
-      if (gymData?.id && allMembers.length === 0) {
-        loadMembers();
-      }
+      const searchLower = searchTerm.toLowerCase().trim();
+      filtered = filtered.filter(member => {
+        const fullName = `${member.firstName} ${member.lastName}`.toLowerCase();
+        const dni = (member.dni || '').toString().toLowerCase();
+        const memberNumber = (member.memberNumber || '').toString();
+        const email = (member.email || '').toLowerCase();
+        
+        return fullName.includes(searchLower) || 
+               dni.includes(searchLower) ||
+               memberNumber.includes(searchLower) ||
+               email.includes(searchLower);
+      });
     }
     
-    return () => {
-      debouncedSearch.cancel();
-    };
-  }, [searchTerm]);
-
-  // Funciones de paginación
-  const goToPage = (page: number) => {
-    if (page >= 1 && page <= totalPages) {
-      setCurrentPage(page);
+    // Filtro de estado
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(member => member.status === statusFilter);
     }
+    
+    // Filtro de deuda
+    if (debtFilter !== 'all') {
+      filtered = filtered.filter(member => {
+        const hasDebt = (member.totalDebt || 0) > 0;
+        return debtFilter === 'with_debt' ? hasDebt : !hasDebt;
+      });
+    }
+    
+    setFilteredMembers(filtered);
+    setCurrentPage(1);
+  }, [allMembers, searchTerm, statusFilter, debtFilter]);
+
+  // Aplicar ordenamiento
+  const sortedMembers = useMemo(() => {
+    const sorted = [...filteredMembers];
+    
+    sorted.sort((a, b) => {
+      let aValue: any;
+      let bValue: any;
+      
+      switch (sortField) {
+        case 'firstName':
+          aValue = a.firstName?.toLowerCase() || '';
+          bValue = b.firstName?.toLowerCase() || '';
+          break;
+        case 'lastName':
+          aValue = a.lastName?.toLowerCase() || '';
+          bValue = b.lastName?.toLowerCase() || '';
+          break;
+        case 'dni':
+          aValue = a.dni || 0;
+          bValue = b.dni || 0;
+          break;
+        case 'memberNumber':
+          aValue = a.memberNumber || 0;
+          bValue = b.memberNumber || 0;
+          break;
+        case 'createdAt':
+          aValue = a.createdAt?.toDate?.() || new Date(0);
+          bValue = b.createdAt?.toDate?.() || new Date(0);
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    
+    return sorted;
+  }, [filteredMembers, sortField, sortDirection]);
+
+  // Aplicar paginación
+  useEffect(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    setDisplayedMembers(sortedMembers.slice(startIndex, endIndex));
+  }, [sortedMembers, currentPage, itemsPerPage]);
+
+  // Cálculos de paginación
+  const totalItems = filteredMembers.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+  // Búsqueda con debounce
+  const debouncedSearch = useCallback(
+    debounce((value: string) => {
+      setSearchTerm(value);
+      setSearching(false);
+    }, 300),
+    []
+  );
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearching(true);
+    debouncedSearch(value);
   };
 
-  const goToPreviousPage = () => {
-    if (currentPage > 1) {
-      setCurrentPage(currentPage - 1);
-    }
-  };
-
-  const goToNextPage = () => {
-    if (currentPage < totalPages) {
-      setCurrentPage(currentPage + 1);
-    }
-  };
-
-  // Función para manejar ordenamiento
-  const handleSort = (field: string) => {
+  // Manejo de ordenamiento
+  const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
     } else {
@@ -371,296 +291,386 @@ const loadMembers = useCallback(async () => {
       });
     }
     
-    if (searchTerm.trim()) {
-      activeFilters.push({
-        label: 'Búsqueda',
-        value: `"${searchTerm}"`,
-        onRemove: () => setSearchTerm('')
-      });
-    }
-    
     if (activeFilters.length === 0) return null;
     
     return (
-      <div className="p-3 bg-blue-50 border-b border-blue-200">
-        <div className="flex items-center flex-wrap gap-2">
-          <span className="text-sm text-blue-700 font-medium">Filtros activos:</span>
-          {activeFilters.map((filter, index) => (
-            <span
-              key={index}
-              className="inline-flex items-center px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full"
+      <div className="flex flex-wrap gap-2 mt-3">
+        <span className="text-sm text-gray-600">Filtros activos:</span>
+        {activeFilters.map((filter, index) => (
+          <span
+            key={index}
+            className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-700"
+          >
+            {filter.label}: {filter.value}
+            <button
+              onClick={filter.onRemove}
+              className="ml-2 text-blue-700 hover:text-blue-900"
             >
-              <span className="mr-1">{filter.label}: {filter.value}</span>
-              <button
-                onClick={filter.onRemove}
-                className="text-blue-600 hover:text-blue-800 ml-1"
-              >
-                ×
-              </button>
-            </span>
-          ))}
-          <button
-            onClick={clearFilters}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
-          >
-            Limpiar todos
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  // Componente de paginación
-  const PaginationControls = () => {
-    if (totalPages <= 1) return null;
-
-    const getPageNumbers = () => {
-      const pages = [];
-      const maxVisiblePages = 5;
-      
-      let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
-      let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-      
-      if (endPage - startPage + 1 < maxVisiblePages) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-      }
-      
-      for (let i = startPage; i <= endPage; i++) {
-        pages.push(i);
-      }
-      
-      return pages;
-    };
-
-    return (
-      <div className="flex items-center justify-between border-t bg-gray-50 px-4 py-3">
-        <div className="flex items-center text-sm text-gray-700">
-          <span>
-            Mostrando {startIndex + 1} a {Math.min(endIndex, totalItems)} de {totalItems} socios
+              ×
+            </button>
           </span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={goToPreviousPage}
-            disabled={currentPage === 1}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          
-          <div className="flex space-x-1">
-            {getPageNumbers().map(page => (
-              <button
-                key={page}
-                onClick={() => goToPage(page)}
-                className={`px-3 py-2 border rounded-md text-sm font-medium ${
-                  page === currentPage
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'text-gray-700 bg-white border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                {page}
-              </button>
-            ))}
-          </div>
-          
-          <button
-            onClick={goToNextPage}
-            disabled={currentPage === totalPages}
-            className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
+        ))}
       </div>
     );
   };
+
+  // Componente optimizado para filas de miembros
+  const MemberRow = React.memo(({ 
+    member, 
+    onView, 
+    onEdit, 
+    onDelete, 
+    onGenerateQr, 
+    onRegisterPayment 
+  }: {
+    member: Member;
+    onView: (m: Member) => void;
+    onEdit: (m: Member) => void;
+    onDelete: (m: Member) => void;
+    onGenerateQr: (m: Member) => void;
+    onRegisterPayment: (m: Member) => void;
+  }) => {
+    // ✅ NUEVO: Verificar si tiene huella registrada
+    const hasFingerprint = Boolean(member.fingerprint && member.fingerprint.template);
+    
+    return (
+      <tr 
+        className="hover:bg-gray-50 cursor-pointer transition-colors"
+        onClick={() => onView(member)}
+      >
+        {/* Número de Socio */}
+        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+          #{member.memberNumber || '---'}
+        </td>
+        
+        {/* DNI */}
+        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+          {member.dni || 'Sin DNI'}
+        </td>
+        
+        {/* Foto */}
+        <td className="px-3 py-4 whitespace-nowrap">
+          <div className="flex-shrink-0 h-10 w-10">
+            {member.photo ? (
+              <img
+                className="h-10 w-10 rounded-full object-cover"
+                src={member.photo}
+                alt={`${member.firstName} ${member.lastName}`}
+              />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center">
+                <User size={20} className="text-gray-500" />
+              </div>
+            )}
+          </div>
+        </td>
+        
+        {/* Apellido */}
+        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+          {member.lastName}
+        </td>
+        
+        {/* Nombre */}
+        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+          {member.firstName}
+        </td>
+        
+        {/* Email */}
+        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+          {member.email || 'Sin email'}
+        </td>
+        
+        {/* Teléfono */}
+        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+          {member.phone || 'Sin teléfono'}
+        </td>
+        
+        {/* Estado */}
+        <td className="px-4 py-4 whitespace-nowrap">
+          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+            member.status === 'active' 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-red-100 text-red-800'
+          }`}>
+            {member.status === 'active' ? 'Activo' : 'Inactivo'}
+          </span>
+        </td>
+        
+        {/* ✅ NUEVO: Indicador de Huella Digital */}
+        <td className="px-4 py-4 whitespace-nowrap">
+          {hasFingerprint ? (
+            <div className="flex items-center text-green-600" title="Huella registrada">
+              <Fingerprint size={18} className="mr-1" />
+              <span className="text-xs font-medium">Registrada</span>
+            </div>
+          ) : (
+            <div className="flex items-center text-gray-400" title="Sin huella">
+              <Fingerprint size={18} className="mr-1" />
+              <span className="text-xs">No registrada</span>
+            </div>
+          )}
+        </td>
+        
+        {/* Última Asistencia */}
+        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+          {formatDate(member.lastAttendance)}
+        </td>
+        
+        {/* Deuda Total */}
+        <td className="px-4 py-4 whitespace-nowrap">
+          <span className={`font-medium transition-colors ${
+            (member.totalDebt || 0) > 0 ? 'text-red-600' : 'text-green-600'
+          }`}>
+            {formatCurrency(member.totalDebt || 0)}
+          </span>
+        </td>
+        
+        {/* Acciones */}
+        <td className="px-4 py-4 whitespace-nowrap">
+          <div className="flex items-center space-x-2">
+            <button 
+              className="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-50 transition-colors" 
+              title="Ver detalles"
+              onClick={(e) => {
+                e.stopPropagation();
+                onView(member);
+              }}
+            >
+              <Eye size={18} />
+            </button>
+            <button 
+              className="text-green-600 hover:text-green-800 p-1 rounded-md hover:bg-green-50 transition-colors" 
+              title="Editar"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(member);
+              }}
+            >
+              <Edit size={18} />
+            </button>
+            <button 
+              className="text-red-600 hover:text-red-800 p-1 rounded-md hover:bg-red-50 transition-colors" 
+              title="Eliminar"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(member);
+              }}
+            >
+              <Trash size={18} />
+            </button>
+            <button 
+              className="text-purple-600 hover:text-purple-800 p-1 rounded-md hover:bg-purple-50 transition-colors" 
+              title="Generar QR"
+              onClick={(e) => {
+                e.stopPropagation();
+                onGenerateQr(member);
+              }}
+            >
+              <CreditCard size={18} />
+            </button>
+            <button 
+              className="text-yellow-600 hover:text-yellow-800 p-1 rounded-md hover:bg-yellow-50 transition-colors" 
+              title="Registrar pago"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRegisterPayment(member);
+              }}
+            >
+              <BanknoteIcon size={18} />
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  });
+
+  MemberRow.displayName = 'MemberRow';
 
   return (
-    <div className="p-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
-        <h1 className="text-2xl font-bold mb-4 md:mb-0">Lista de Socios</h1>
-        <button 
+    <div className="bg-white rounded-lg shadow-md p-6">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-800">Gestión de Socios</h2>
+        <button
           onClick={onNewMember}
-          className="flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-md transition-colors"
+          className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
         >
-          <UserPlus className="mr-2" size={20} />
+          <UserPlus size={20} className="mr-2" />
           Nuevo Socio
         </button>
       </div>
-      
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        {/* Barra de búsqueda y filtros */}
-        <div className="p-4 border-b">
-          <div className="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3">
-            <div className="relative flex-1">
+
+      {/* Filtros y búsqueda */}
+      <div className="mb-6">
+        <div className="flex flex-wrap gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <div className="relative">
+              <Search 
+                size={20} 
+                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" 
+              />
               <input
                 type="text"
-                placeholder="Buscar por #número, DNI, nombre, apellido, email o teléfono..."
+                placeholder="Buscar por nombre, DNI, N° socio o email..."
+                defaultValue={searchTerm}
+                onChange={handleSearchChange}
+                disabled={loading}
                 className="w-full pl-10 pr-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={searchTerm}
-                onChange={(e: any) => setSearchTerm(e.target.value)}
               />
-              <Search className="absolute left-3 top-3 text-gray-400" size={18} />
-              {(searching || loading) && (
-                <div className="absolute right-3 top-3">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                </div>
-              )}
             </div>
-            
-            <select 
-              className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={statusFilter}
-              onChange={(e: any) => setStatusFilter(e.target.value)}
-              disabled={loading || searching}
-            >
-              <option value="all">Todos los estados</option>
-              <option value="active">Activos</option>
-              <option value="inactive">Inactivos</option>
-            </select>
-            
-            <select 
-              className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              value={debtFilter}
-              onChange={(e: any) => setDebtFilter(e.target.value)}
-              disabled={loading || searching}
-            >
-              <option value="all">Estado de deuda</option>
-              <option value="with_debt">Con deuda</option>
-              <option value="no_debt">Sin deuda</option>
-            </select>
-            
+          </div>
+          
+          <select 
+            className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={statusFilter}
+            onChange={(e: any) => setStatusFilter(e.target.value)}
+            disabled={loading || searching}
+          >
+            <option value="all">Todos los estados</option>
+            <option value="active">Activos</option>
+            <option value="inactive">Inactivos</option>
+          </select>
+          
+          <select 
+            className="border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            value={debtFilter}
+            onChange={(e: any) => setDebtFilter(e.target.value)}
+            disabled={loading || searching}
+          >
+            <option value="all">Estado de deuda</option>
+            <option value="with_debt">Con deuda</option>
+            <option value="no_debt">Sin deuda</option>
+          </select>
+          
+          <button 
+            onClick={handleRefresh}
+            disabled={refreshing || loading}
+            className="px-3 py-2 border rounded-md hover:bg-gray-50 focus:outline-none disabled:opacity-50"
+            title="Actualizar lista"
+          >
+            <RefreshCw size={20} className={refreshing ? 'animate-spin text-blue-500' : 'text-gray-500'} />
+          </button>
+
+          {(searchTerm || statusFilter !== 'all' || debtFilter !== 'all') && (
             <button 
-              onClick={handleRefresh}
-              disabled={refreshing || loading}
-              className="px-3 py-2 border rounded-md hover:bg-gray-50 focus:outline-none disabled:opacity-50"
-              title="Actualizar lista"
+              onClick={clearFilters}
+              className="px-3 py-2 border border-red-300 rounded-md text-red-600 hover:bg-red-50 focus:outline-none"
+              title="Limpiar filtros"
             >
-              <RefreshCw size={20} className={refreshing ? 'animate-spin text-blue-500' : 'text-gray-500'} />
+              <Filter size={20} />
             </button>
+          )}
+        </div>
 
-            {(searchTerm || statusFilter !== 'all' || debtFilter !== 'all') && (
-              <button 
-                onClick={clearFilters}
-                className="px-3 py-2 border border-red-300 rounded-md text-red-600 hover:bg-red-50 focus:outline-none"
-                title="Limpiar filtros"
-              >
-                <Filter size={20} />
-              </button>
-            )}
-          </div>
-
-          {/* Información de resultados */}
-          <div className="mt-3 text-sm text-gray-600">
-            {searchTerm.trim() ? (
-              <span>
-                Mostrando {filteredMembers.length} resultado(s) para "{searchTerm}"
-              </span>
-            ) : (
-              <span>
-                Mostrando página {currentPage} de {totalPages} ({totalItems} socios en total
-                {statusFilter !== 'all' || debtFilter !== 'all' ? ' filtrados' : ''})
-              </span>
-            )}
-          </div>
+        {/* Información de resultados */}
+        <div className="mt-3 text-sm text-gray-600">
+          {searchTerm.trim() ? (
+            <span>
+              Mostrando {filteredMembers.length} resultado(s) para "{searchTerm}"
+            </span>
+          ) : (
+            <span>
+              Mostrando página {currentPage} de {totalPages} ({totalItems} socios en total
+              {statusFilter !== 'all' || debtFilter !== 'all' ? ' filtrados' : ''})
+            </span>
+          )}
         </div>
 
         {/* Mostrar filtros activos */}
         <ActiveFilters />
-        
-        {/* Mensaje de error */}
-        {error && (
-          <div className="p-4 bg-red-100 border border-red-400 text-red-700">
-            <div className="flex items-center">
-              <AlertCircle size={20} className="mr-2" />
-              <span>{error}</span>
-              <button
-                onClick={() => setError('')}
-                className="ml-auto text-red-700 hover:text-red-900"
-              >
-                ×
-              </button>
-            </div>
-          </div>
-        )}
+      </div>
 
-        {/* Tabla de socios */}
+      {/* Mensaje de error */}
+      {error && (
+        <div className="p-4 bg-red-100 border border-red-400 text-red-700 mb-4">
+          <div className="flex items-center">
+            <AlertCircle size={20} className="mr-2" />
+            <span>{error}</span>
+            <button
+              onClick={() => setError('')}
+              className="ml-auto text-red-700 hover:text-red-900"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Contenido principal */}
+      <div className="border rounded-lg">
         {loading && allMembers.length === 0 ? (
           <LoadingMembers />
         ) : displayedMembers.length === 0 && !loading ? (
-          <div className="text-center py-12 bg-gray-50">
+          <div className="p-12 text-center">
             <User size={48} className="mx-auto text-gray-300 mb-4" />
-            {searchTerm.trim() ? (
-              <div>
-                <h3 className="text-lg font-medium text-gray-700 mb-2">No se encontraron resultados</h3>
-                <p className="text-gray-500 mb-4">
-                  No hay socios que coincidan con "{searchTerm}"
-                  {(statusFilter !== 'all' || debtFilter !== 'all') && ' con los filtros aplicados'}
-                </p>
-                <div className="flex justify-center space-x-3">
-                  <button 
-                    onClick={() => setSearchTerm('')}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    Limpiar búsqueda
-                  </button>
-                  {(statusFilter !== 'all' || debtFilter !== 'all') && (
-                    <button 
-                      onClick={clearFilters}
-                      className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-                    >
-                      Quitar filtros
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div>
-                <h3 className="text-lg font-medium text-gray-700 mb-2">No hay socios registrados</h3>
-                <p className="text-gray-500 mb-4">
-                  {(statusFilter !== 'all' || debtFilter !== 'all') 
-                    ? 'No hay socios que coincidan con los filtros aplicados'
-                    : 'Comienza agregando un nuevo socio a tu gimnasio'
-                  }
-                </p>
-                <div className="flex justify-center space-x-3">
-                  <button 
-                    onClick={onNewMember}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    Agregar Nuevo Socio
-                  </button>
-                  {(statusFilter !== 'all' || debtFilter !== 'all') && (
-                    <button 
-                      onClick={clearFilters}
-                      className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
-                    >
-                      Quitar filtros
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+            <h3 className="text-lg font-medium text-gray-700 mb-2">No se encontraron socios</h3>
+            <p className="text-gray-500 mb-4">
+              {searchTerm || statusFilter !== 'all' || debtFilter !== 'all'
+                ? 'No hay socios que coincidan con los filtros aplicados'
+                : 'Comienza agregando un nuevo socio a tu gimnasio'
+              }
+            </p>
+            <div className="flex justify-center space-x-3">
+              <button 
+                onClick={onNewMember}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              >
+                Agregar Nuevo Socio
+              </button>
+              {(statusFilter !== 'all' || debtFilter !== 'all') && (
+                <button 
+                  onClick={clearFilters}
+                  className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+                >
+                  Quitar filtros
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            {/* Header de tabla con ordenamiento */}
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  {/* ⭐ NUEVA COLUMNA: Número */}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    #
+                  {/* Número */}
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('memberNumber')}
+                  >
+                    <div className="flex items-center">
+                      #
+                      <span className="ml-1">
+                        {sortField === 'memberNumber' ? (
+                          sortDirection === 'asc' ? '↑' : '↓'
+                        ) : (
+                          <span className="opacity-50">↕</span>
+                        )}
+                      </span>
+                    </div>
                   </th>
-                  {/* ⭐ NUEVA COLUMNA: DNI */}
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    DNI
+                  
+                  {/* DNI */}
+                  <th 
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('dni')}
+                  >
+                    <div className="flex items-center">
+                      DNI
+                      <span className="ml-1">
+                        {sortField === 'dni' ? (
+                          sortDirection === 'asc' ? '↑' : '↓'
+                        ) : (
+                          <span className="opacity-50">↕</span>
+                        )}
+                      </span>
+                    </div>
                   </th>
+                  
                   <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Foto
                   </th>
+                  
+                  {/* Apellido */}
                   <th 
                     className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('lastName')}
@@ -676,6 +686,8 @@ const loadMembers = useCallback(async () => {
                       </span>
                     </div>
                   </th>
+                  
+                  {/* Nombre */}
                   <th 
                     className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('firstName')}
@@ -691,62 +703,43 @@ const loadMembers = useCallback(async () => {
                       </span>
                     </div>
                   </th>
+                  
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Email
+                  </th>
+                  
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Teléfono
                   </th>
-                  <th 
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('status')}
-                  >
+                  
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Estado
+                  </th>
+                  
+                  {/* ✅ NUEVA COLUMNA: Huella Digital */}
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     <div className="flex items-center">
-                      Estado
-                      <span className="ml-1">
-                        {sortField === 'status' ? (
-                          sortDirection === 'asc' ? '↑' : '↓'
-                        ) : (
-                          <span className="opacity-50">↕</span>
-                        )}
-                      </span>
+                      <Fingerprint size={14} className="mr-1" />
+                      Huella
                     </div>
                   </th>
-                  <th 
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('lastAttendance')}
-                  >
-                    <div className="flex items-center">
-                      Última Asistencia
-                      <span className="ml-1">
-                        {sortField === 'lastAttendance' ? (
-                          sortDirection === 'asc' ? '↑' : '↓'
-                        ) : (
-                          <span className="opacity-50">↕</span>
-                        )}
-                      </span>
-                    </div>
+                  
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Última Asist.
                   </th>
-                  <th 
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('totalDebt')}
-                  >
-                    <div className="flex items-center">
-                      Deuda Total
-                      <span className="ml-1">
-                        {sortField === 'totalDebt' ? (
-                          sortDirection === 'asc' ? '↑' : '↓'
-                        ) : (
-                          <span className="opacity-50">↕</span>
-                        )}
-                      </span>
-                    </div>
+                  
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Deuda
                   </th>
+                  
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Acciones
                   </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {displayedMembers.map((member) => (
-                  <MemberRow 
+                {displayedMembers.map(member => (
+                  <MemberRow
                     key={member.id}
                     member={member}
                     onView={onViewMember}
@@ -754,7 +747,6 @@ const loadMembers = useCallback(async () => {
                     onDelete={confirmDelete}
                     onGenerateQr={onGenerateQr}
                     onRegisterPayment={onRegisterPayment}
-                    formatDate={formatDate}
                   />
                 ))}
               </tbody>
@@ -762,172 +754,92 @@ const loadMembers = useCallback(async () => {
           </div>
         )}
 
-        {/* Controles de paginación */}
-        <PaginationControls />
+        {/* Paginación */}
+        {totalPages > 1 && (
+          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6">
+            <div className="flex-1 flex justify-between sm:hidden">
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Anterior
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Siguiente
+              </button>
+            </div>
+            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm text-gray-700">
+                  Mostrando{' '}
+                  <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
+                  {' '}-{' '}
+                  <span className="font-medium">
+                    {Math.min(currentPage * itemsPerPage, totalItems)}
+                  </span>
+                  {' '}de{' '}
+                  <span className="font-medium">{totalItems}</span>
+                  {' '}resultados
+                </p>
+              </div>
+              <div>
+                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  
+                  {/* Números de página */}
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (currentPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (currentPage >= totalPages - 2) {
+                      pageNum = totalPages - 4 + i;
+                    } else {
+                      pageNum = currentPage - 2 + i;
+                    }
+                    
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                          currentPage === pageNum
+                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                  
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                </nav>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 };
-
-// Componente MemberRow (sin cambios)
-const MemberRow = React.memo<{
-  member: Member;
-  onView: (member: Member) => void;
-  onEdit: (member: Member) => void;
-  onDelete: (member: Member) => void;
-  onGenerateQr: (member: Member) => void;
-  onRegisterPayment: (member: Member) => void;
-  formatDate: (date: any) => string;
-}>(({ member, onView, onEdit, onDelete, onGenerateQr, onRegisterPayment, formatDate }) => {
-  const [imageError, setImageError] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleDoubleClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('button') || target.closest('[role="button"]')) {
-      return;
-    }
-    onView(member);
-  };
-
-  return (
-    <tr 
-      className={`transition-all duration-150 cursor-pointer select-none ${
-        isHovered 
-          ? 'bg-blue-50 shadow-md transform scale-[1.01]' 
-          : 'hover:bg-gray-50'
-      }`}
-      onDoubleClick={handleDoubleClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      title="Doble clic para ver detalles"
-    >
-      {/* ⭐ NUEVA COLUMNA: Número de Socio */}
-      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-blue-600">
-        #{member.memberNumber || 'N/A'}
-      </td>
-      
-      {/* ⭐ NUEVA COLUMNA: DNI */}
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-        {member.dni || '-'}
-      </td>
-      
-      {/* Foto */}
-      <td className="px-3 py-4 whitespace-nowrap">
-        {member.photo && !imageError ? (
-          <img 
-            src={member.photo} 
-            alt={`${member.firstName} ${member.lastName}`} 
-            className="h-10 w-10 rounded-full object-cover"
-            onError={() => setImageError(true)}
-          />
-        ) : (
-          <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
-            {member.firstName.charAt(0)}{member.lastName.charAt(0)}
-          </div>
-        )}
-      </td>
-      
-      {/* Apellido */}
-      <td className="px-4 py-4 whitespace-nowrap font-medium text-gray-900">
-        {member.lastName}
-      </td>
-      
-      {/* Nombre */}
-      <td className="px-4 py-4 whitespace-nowrap text-gray-900">
-        {member.firstName}
-      </td>
-      
-      {/* Teléfono */}
-      <td className="px-4 py-4 whitespace-nowrap text-gray-600">
-        {member.phone || 'N/A'}
-      </td>
-      
-      {/* Estado */}
-      <td className="px-4 py-4 whitespace-nowrap">
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium transition-colors ${
-          member.status === 'active' 
-            ? 'bg-green-100 text-green-800' 
-            : 'bg-red-100 text-red-800'
-        }`}>
-          {member.status === 'active' ? 'Activo' : 'Inactivo'}
-        </span>
-      </td>
-      
-      {/* Última Asistencia */}
-      <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-        {formatDate(member.lastAttendance)}
-      </td>
-      
-      {/* Deuda Total */}
-      <td className="px-4 py-4 whitespace-nowrap">
-        <span className={`font-medium transition-colors ${
-          (member.totalDebt || 0) > 0 ? 'text-red-600' : 'text-green-600'
-        }`}>
-          {formatCurrency(member.totalDebt || 0)}
-        </span>
-      </td>
-      
-      {/* Acciones */}
-      <td className="px-4 py-4 whitespace-nowrap">
-        <div className="flex items-center space-x-2">
-          <button 
-            className="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-50 transition-colors" 
-            title="Ver detalles"
-            onClick={(e) => {
-              e.stopPropagation();
-              onView(member);
-            }}
-          >
-            <Eye size={18} />
-          </button>
-          <button 
-            className="text-green-600 hover:text-green-800 p-1 rounded-md hover:bg-green-50 transition-colors" 
-            title="Editar"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit(member);
-            }}
-          >
-            <Edit size={18} />
-          </button>
-          <button 
-            className="text-red-600 hover:text-red-800 p-1 rounded-md hover:bg-red-50 transition-colors" 
-            title="Eliminar"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(member);
-            }}
-          >
-            <Trash size={18} />
-          </button>
-          <button 
-            className="text-purple-600 hover:text-purple-800 p-1 rounded-md hover:bg-purple-50 transition-colors" 
-            title="Generar QR"
-            onClick={(e) => {
-              e.stopPropagation();
-              onGenerateQr(member);
-            }}
-          >
-            <CreditCard size={18} />
-          </button>
-          <button 
-            className="text-yellow-600 hover:text-yellow-800 p-1 rounded-md hover:bg-yellow-50 transition-colors" 
-            title="Registrar pago"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRegisterPayment(member);
-            }}
-          >
-            <BanknoteIcon size={18} />
-          </button>
-        </div>
-      </td>
-    </tr>
-  );
-});
-
-
-MemberRow.displayName = 'MemberRow';
 
 export default MemberList;

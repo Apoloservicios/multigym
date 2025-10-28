@@ -10,7 +10,7 @@ import { db } from '../../config/firebase';
 import { debounce } from 'lodash';
 import useFirestore from '../../hooks/useFirestore';
 
-import { fingerprintService } from '../../services/fingerprint.service';
+import { fingerprintService } from '../../services/fingerprintService';
 import FingerprintContinuousScanner from './FingerprintContinuousScanner';
 
 interface ScanResult {
@@ -1600,8 +1600,11 @@ return (
         
         {scanMode === 'fingerprint_continuous' ? (
           <FingerprintContinuousScanner 
-            gymId={gymData?.id || ''} 
-          />
+            onAttendanceRegistered={() => {
+                  // Callback opcional
+                  console.log('Asistencia registrada desde modo continuo');
+                }}
+              />
         ) : scanMode === 'fingerprint' ? renderFingerprintScanner() :
         showManualEntry ? renderManualEntry() : 
         renderScanner()}

@@ -22,7 +22,7 @@ import {
 import { formatDisplayDate, toJsDate } from '../../utils/date.utils';
 
 import FingerprintEnrollment from '../fingerprint/FingerprintEnrollment';
-import { fingerprintService } from '../../services/fingerprint.service';
+import { fingerprintService } from '../../services/fingerprintService';
 
 interface MemberDetailProps {
   member: Member;
