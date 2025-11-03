@@ -32,6 +32,7 @@ import QuickAttendanceRegister from '../../components/attendance/QuickAttendance
 import AttendanceStatsComponent from '../../components/attendance/AttendanceStats';
 import { formatArgentinianDateTime, timestampToArgentinianDate } from '../../utils/timezone.utils';
 import { useNavigate } from 'react-router-dom';
+import { useFingerprintSync } from '../../hooks/useFingerprintSync';
 
 
 // 🆕 NUEVO: Props para navegación
@@ -120,6 +121,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
       onNavigate('auto-renewals');
     }
   };
+
+  // ✅ AGREGAR ESTO AQUÍ
+const { fingerprintCount, isSyncing, lastSyncTime } = useFingerprintSync();
+
+// Opcional: Ver estado de sincronización
+useEffect(() => {
+  if (!isSyncing && fingerprintCount > 0) {
+    console.log(`✅ ${fingerprintCount} huellas digitales sincronizadas con el servidor`);
+  }
+}, [isSyncing, fingerprintCount]);
 
   // Obtener fechas para filtros temporales
   const getDateRanges = useCallback(() => {

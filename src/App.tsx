@@ -8,6 +8,7 @@ import { AuthProvider } from './contexts/AuthContext';
 // Componente principal de rutas
 import AppContent from './components/AppContent';
 import './index.css';
+import { useFingerprintSync } from './hooks/useFingerprintSync';
 
 // Componente principal App
 const App: React.FC = () => {

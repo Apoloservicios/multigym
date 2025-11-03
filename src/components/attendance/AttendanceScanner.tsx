@@ -45,7 +45,7 @@ interface MemberInfo {
   id: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email?: string ;
   photo?: string | null;
   status?: string;
   // 🆕 Agregar estos campos:
@@ -54,6 +54,8 @@ interface MemberInfo {
   totalDebt?: number;
   hasDebt?: boolean;
 }
+
+
 
 interface MembershipInfo {
   id: string;
@@ -156,7 +158,7 @@ const debouncedSearch = useMemo(
           }
 
           // Búsqueda por email
-          if (member.email.toLowerCase().includes(searchLower)) {
+          if (member.email?.toLowerCase().includes(searchLower)) {
             results.push(member);
             return;
           }
@@ -362,7 +364,7 @@ const debouncedSearch = useMemo(
         memberName: `${member.firstName} ${member.lastName}`,
         memberFirstName: member.firstName,
         memberLastName: member.lastName,
-        memberEmail: member.email,
+        memberEmail: member.email || '',
         membershipId: membership.id,
         activityId: membership.activityId || '',
         activityName: membership.activityName,
@@ -682,7 +684,7 @@ useEffect(() => {
         memberName: `${selectedMember.firstName} ${selectedMember.lastName}`,
         memberFirstName: selectedMember.firstName,
         memberLastName: selectedMember.lastName,
-        memberEmail: selectedMember.email,
+        memberEmail: selectedMember.email || '',
         membershipId: membership.id,
         activityId: membership.activityId || '',
         activityName: membership.activityName,
@@ -857,7 +859,7 @@ useEffect(() => {
       captureResult.data.template
     );
     
-    if (!verifyResult.success || !verifyResult.memberData) {
+    if (!verifyResult.success || !verifyResult.member) {
       setScanResult({
         success: false,
         message: 'Huella no reconocida',
@@ -870,7 +872,7 @@ useEffect(() => {
     }
     
     // 5. Socio identificado - obtener membresías
-    const memberData = verifyResult.memberData;
+    const memberData = verifyResult.member;
     setSelectedMember({
       id: memberData.id,
       firstName: memberData.firstName,

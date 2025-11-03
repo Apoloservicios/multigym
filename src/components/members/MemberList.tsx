@@ -7,7 +7,7 @@ import { Member } from '../../types/member.types';
 import { formatCurrency } from '../../utils/formatting.utils';
 import useAuth from '../../hooks/useAuth';
 import useFirestore from '../../hooks/useFirestore';
-import { debounce } from 'lodash';
+import { debounce, isNumber } from 'lodash';
 
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -148,8 +148,8 @@ const MemberList: React.FC<MemberListProps> = ({
           bValue = b.memberNumber || 0;
           break;
         case 'createdAt':
-          aValue = a.createdAt?.toDate?.() || new Date(0);
-          bValue = b.createdAt?.toDate?.() || new Date(0);
+          aValue = (a.createdAt as any)?.toDate?.() || new Date((a.createdAt as any) || 0);
+          bValue = (b.createdAt as any)?.toDate?.() || new Date((b.createdAt as any) || 0);
           break;
         default:
           return 0;
@@ -799,7 +799,7 @@ const MemberList: React.FC<MemberListProps> = ({
                   
                   {/* Números de página */}
                   {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    let pageNum;
+                    let pageNum: number;
                     if (totalPages <= 5) {
                       pageNum = i + 1;
                     } else if (currentPage <= 3) {

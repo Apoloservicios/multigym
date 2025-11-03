@@ -1,22 +1,6 @@
-// ============================================
-// SERVICIO DE HUELLAS DIGITALES - VERSIÓN CORREGIDA
-// Archivo: src/services/fingerprintService.ts
-// ============================================
-
+import fingerprintWS from './fingerprintWebSocketService';
 import { db } from '../config/firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  doc, 
-  setDoc, 
-  updateDoc, 
-  serverTimestamp,
-  getDoc 
-} from 'firebase/firestore';
-
-const FINGERPRINT_API = 'http://localhost:3001/api';
+import { doc, updateDoc, serverTimestamp, collection, addDoc, getDoc } from 'firebase/firestore';
 
 interface CaptureResult {
   success: boolean;
@@ -49,89 +33,33 @@ interface EnrollResult {
 
 class FingerprintService {
   
-  /**
-   * Verificar si el servidor está disponible
-   */
   async checkServerStatus(): Promise<boolean> {
-    try {
-      const response = await fetch(`${FINGERPRINT_API}/status`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-      return response.ok;
-    } catch (error) {
-      console.error('❌ Servidor de huellas no disponible:', error);
-      return false;
-    }
+    return fingerprintWS.isConnected();
   }
 
-  /**
-   * Inicializar el lector de huellas
-   */
   async initialize(): Promise<{ success: boolean; message?: string; error?: string }> {
-    try {
-      console.log('🔌 Inicializando lector de huellas...');
-      
-      const response = await fetch(`${FINGERPRINT_API}/initialize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        console.log('✅ Lector inicializado correctamente');
-      } else {
-        console.error('❌ Error al inicializar:', data.error);
-      }
-      
-      return data;
-      
-    } catch (error: any) {
-      console.error('❌ Error conectando con servidor:', error);
-      return {
-        success: false,
-        error: 'No se pudo conectar con el servidor de huellas'
-      };
+    if (!fingerprintWS.isConnected()) {
+      fingerprintWS.connect();
     }
+    
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        if (fingerprintWS.isConnected()) {
+          resolve({ success: true, message: 'Conectado' });
+        } else {
+          resolve({ success: false, error: 'No se pudo conectar' });
+        }
+      }, 2000);
+    });
   }
 
-  /**
-   * Capturar una huella digital
-   * ✅ CORREGIDO: Ahora recibe gymId como parámetro opcional
-   */
   async capture(gymId?: string): Promise<CaptureResult> {
-    try {
-      console.log('📸 Capturando huella...');
-      
-      const response = await fetch(`${FINGERPRINT_API}/capture`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        console.log(`✅ Huella capturada: calidad ${data.data.quality}%`);
-      } else {
-        console.error('❌ Error al capturar:', data.error);
-      }
-      
-      return data;
-      
-    } catch (error: any) {
-      console.error('❌ Error en captura:', error);
-      return {
-        success: false,
-        error: error.message || 'Error al capturar huella'
-      };
-    }
+    return {
+      success: false,
+      error: 'Este método está deprecado'
+    };
   }
 
-  /**
-   * Registrar huella de un nuevo socio
-   * ✅ CORREGIDO: Ahora recibe template como tercer parámetro
-   */
   async enrollFingerprint(
     gymId: string,
     memberId: string,
@@ -139,29 +67,20 @@ class FingerprintService {
     quality?: number
   ): Promise<EnrollResult> {
     try {
-      console.log(`💾 Guardando huella para socio ${memberId}...`);
+      const result = await fingerprintWS.saveToFirebase(gymId, memberId, template, quality || 0);
       
-      // Guardar en Firebase
-      const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-      
-      await updateDoc(memberRef, {
-        fingerprint: {
-          template: template,
-          quality: quality || 0,
-          enrolledAt: serverTimestamp(),
-          lastUsed: null
-        }
-      });
-      
-      console.log('✅ Huella guardada correctamente en Firebase');
-      
-      return {
-        success: true,
-        message: 'Huella registrada correctamente'
-      };
-      
+      if (result.success) {
+        return {
+          success: true,
+          message: 'Huella registrada correctamente'
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error
+        };
+      }
     } catch (error: any) {
-      console.error('❌ Error guardando huella:', error);
       return {
         success: false,
         error: error.message || 'Error al guardar la huella'
@@ -169,29 +88,18 @@ class FingerprintService {
     }
   }
 
-  /**
-   * Eliminar huella de un socio
-   */
   async deleteFingerprint(
     gymId: string,
     memberId: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log(`🗑️ Eliminando huella del socio ${memberId}...`);
-      
       const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-      
       await updateDoc(memberRef, {
         fingerprint: null,
         updatedAt: serverTimestamp()
       });
-      
-      console.log('✅ Huella eliminada correctamente');
-      
       return { success: true };
-      
     } catch (error: any) {
-      console.error('❌ Error eliminando huella:', error);
       return {
         success: false,
         error: error.message || 'Error al eliminar la huella'
@@ -199,175 +107,117 @@ class FingerprintService {
     }
   }
 
-  /**
-   * Verificar una huella contra las registradas
-   * ✅ CORREGIDO: Retorna el objeto correcto con match
-   */
   async verifyFingerprint(
     gymId: string,
     capturedTemplate: string
   ): Promise<VerifyResult> {
     try {
-      console.log('🔍 Buscando coincidencia de huella...');
+      const result = await fingerprintWS.verifyAgainstFirebase(gymId, capturedTemplate);
       
-      // 1. Obtener TODOS los miembros activos
-      const membersRef = collection(db, `gyms/${gymId}/members`);
-      const q = query(
-        membersRef,
-        where('status', '==', 'active')
-      );
-      
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        return {
-          success: false,
-          message: 'No hay socios activos en el sistema'
-        };
-      }
-      
-      // 2. Filtrar manualmente los que tienen huella
-      const enrolledFingerprints: Array<{
-        memberId: string;
-        memberName: string;
-        template: string;
-      }> = [];
-      
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        
-        // Solo agregar si tiene huella registrada
-        if (data.fingerprint && data.fingerprint.template) {
-          enrolledFingerprints.push({
-            memberId: doc.id,
-            memberName: `${data.firstName} ${data.lastName}`,
-            template: data.fingerprint.template
-          });
-        }
-      });
-      
-      if (enrolledFingerprints.length === 0) {
-        return {
-          success: false,
-          message: 'No hay huellas registradas en el sistema'
-        };
-      }
-      
-      console.log(`📋 Comparando contra ${enrolledFingerprints.length} huellas registradas...`);
-      
-      // 3. Verificar contra el servidor
-      const response = await fetch(`${FINGERPRINT_API}/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          capturedTemplate,
-          enrolledFingerprints
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || 'Error al verificar huella'
-        };
-      }
-      
-      // ✅ CORREGIDO: Retornar el objeto correcto con match
-      if (data.success && data.match) {
-        console.log('✅ Coincidencia encontrada:', data.match.memberName);
-        
-        // Actualizar última vez usado
-        const memberRef = doc(db, `gyms/${gymId}/members`, data.match.memberId);
-        await updateDoc(memberRef, {
-          'fingerprint.lastUsed': serverTimestamp()
-        });
-
+      if (result.success && result.match) {
         return {
           success: true,
-          memberId: data.match.memberId,
-          memberName: data.match.memberName,
           match: {
-            memberId: data.match.memberId,
-            memberName: data.match.memberName,
-            score: data.match.score || 0
+            memberId: result.match.memberId,
+            memberName: result.match.memberName,
+            score: result.match.confidence
           }
         };
       } else {
-        console.log('❌ No se encontró coincidencia');
         return {
           success: false,
-          message: 'Huella no reconocida'
+          message: result.error || 'Huella no reconocida'
         };
       }
-      
     } catch (error: any) {
-      console.error('❌ Error verificando huella:', error);
       return {
         success: false,
-        error: 'Error al verificar la huella'
+        error: error.message
       };
     }
   }
-  
-  /**
-   * Verificar y obtener datos del socio
-   * ✅ CORREGIDO: Parámetros correctos
-   */
+
   async verifyAndRegisterAttendance(
     gymId: string,
     capturedTemplate: string
   ): Promise<{
     success: boolean;
-    memberId?: string;
-    memberName?: string;
-    memberData?: any;
     error?: string;
+    member?: {
+      id: string;
+      firstName: string;
+      lastName: string;
+      memberNumber: string | number;
+      photoUrl?: string;
+      email?: string;
+      photo?: string;
+      status?: string;
+    };
+    attendance?: {
+      id: string;
+      timestamp: Date;
+    };
   }> {
     try {
-      // Verificar huella
-      const verifyResult = await this.verifyFingerprint(gymId, capturedTemplate);
-      
+      console.log('🔍 Verificando huella y registrando asistencia...');
+
+      const verifyResult = await fingerprintWS.verifyAgainstFirebase(gymId, capturedTemplate);
+
       if (!verifyResult.success || !verifyResult.match) {
         return {
           success: false,
-          error: verifyResult.message || 'Huella no reconocida'
+          error: 'Huella no reconocida'
         };
       }
-      
-      // Obtener datos completos del socio
-      const memberRef = doc(db, `gyms/${gymId}/members`, verifyResult.match.memberId);
-      const memberSnap = await getDoc(memberRef);
-      
-      if (!memberSnap.exists()) {
+
+      const { memberId, memberName } = verifyResult.match;
+
+      const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+      const memberDoc = await getDoc(memberRef);
+
+      if (!memberDoc.exists()) {
         return {
           success: false,
           error: 'Socio no encontrado'
         };
       }
-      
-      const memberData = memberSnap.data();
-      
+
+      const memberData = memberDoc.data();
+
+      const attendanceRef = collection(db, `gyms/${gymId}/attendance`);
+      const attendanceDoc = await addDoc(attendanceRef, {
+        memberId: memberId,
+        memberName: memberName,
+        timestamp: serverTimestamp(),
+        method: 'fingerprint',
+        createdAt: serverTimestamp()
+      });
+
+      console.log(`✅ Asistencia registrada para ${memberName}`);
+
       return {
         success: true,
-        memberId: verifyResult.match.memberId,
-        memberName: verifyResult.match.memberName,
-        memberData: {
-          id: verifyResult.match.memberId,
-          firstName: memberData.firstName,
-          lastName: memberData.lastName,
-          email: memberData.email,
-          photo: memberData.photo || null,
-          status: memberData.status
+        member: {
+          id: memberId,
+          firstName: memberData.firstName || memberName.split(' ')[0] || memberName,
+          lastName: memberData.lastName || memberName.split(' ').slice(1).join(' ') || '',
+          memberNumber: memberData.memberNumber || '',
+          photoUrl: memberData.photoUrl || memberData.photo || undefined,
+          email: memberData.email || '',
+          photo: memberData.photo || memberData.photoUrl || undefined,
+          status: memberData.status || undefined
+        },
+        attendance: {
+          id: attendanceDoc.id,
+          timestamp: new Date()
         }
       };
-      
+
     } catch (error: any) {
-      console.error('Error en verifyAndRegisterAttendance:', error);
+      console.error('❌ Error:', error);
       return {
         success: false,
-        error: error.message || 'Error al verificar huella'
+        error: error.message || 'Error al verificar'
       };
     }
   }
@@ -375,3 +225,4 @@ class FingerprintService {
 
 export const fingerprintService = new FingerprintService();
 export default fingerprintService;
+export { default as fingerprintWS } from './fingerprintWebSocketService';
