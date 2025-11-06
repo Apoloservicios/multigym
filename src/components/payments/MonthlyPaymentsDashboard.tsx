@@ -32,6 +32,9 @@ import {
   MonthlySummary
 } from '../../types/monthlyPayments.types';
 
+import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+
 const MonthlyPaymentsDashboard: React.FC = () => {
   const { gymData } = useAuth();
   const automation = useMonthlyPaymentsAutomation(gymData?.id, true);
@@ -101,20 +104,18 @@ const MonthlyPaymentsDashboard: React.FC = () => {
     }
   };
 
-  /**
-   * 📱 Notificar deuda por WhatsApp
+/**
+   * 📱 Notificar deuda por WhatsApp con registro
    */
-  const handleNotifyDebt = (payment: MonthlyPaymentListItem) => {
-    // Obtener el teléfono del socio - NOTA: necesitas agregarlo al tipo
-    const phoneNumber = (payment as any).memberPhone || '';
-    
-    if (!phoneNumber) {
+  const handleNotifyDebt = async (payment: MonthlyPaymentListItem) => {
+    // Verificar que tenga teléfono
+    if (!payment.memberPhone) {
       alert('Este socio no tiene teléfono registrado');
       return;
     }
     
     // Limpiar el teléfono
-    let cleanPhone = phoneNumber.replace(/\D/g, '');
+    let cleanPhone = payment.memberPhone.replace(/\D/g, '');
     if (!cleanPhone.startsWith('54')) {
       cleanPhone = '54' + cleanPhone;
     }
@@ -138,23 +139,52 @@ Por favor, acérquese al gimnasio para regularizar su situación.
 ¡Gracias! 💪`;
 
     const whatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
+    
+    // Abrir WhatsApp
     window.open(whatsappUrl, '_blank');
+    
+    // Registrar la notificación en Firebase
+    try {
+      if (!gymData?.id) return;
+      
+      const memberRef = doc(db, `gyms/${gymData.id}/members`, payment.memberId);
+      const memberSnap = await getDoc(memberRef);
+      
+      if (memberSnap.exists()) {
+        const currentData = memberSnap.data();
+        const notificationCount = (currentData.debtNotificationCount || 0) + 1;
+        
+        await updateDoc(memberRef, {
+          lastDebtNotification: Timestamp.now(),
+          debtNotificationCount: notificationCount,
+          updatedAt: Timestamp.now()
+        });
+        
+        console.log(`✅ Notificación registrada para ${payment.memberName}`);
+        
+        // Recargar datos para mostrar la actualización
+        loadData();
+      }
+    } catch (error) {
+      console.error('Error registrando notificación:', error);
+      // No mostrar error al usuario, ya se envió el mensaje
+    }
   };
 
-/**
- * 💳 Ir a la cuenta del socio para pagar
- */
+  /**
+   * 💳 Ir a la cuenta del socio para REGISTRAR el pago
+   */
+  const handleGoToPay = (memberId: string) => {
+    // Guardar en sessionStorage para abrir la pestaña correcta
+    sessionStorage.setItem('memberDetailActiveTab', 'cuenta');
+    
+    // Navegar al detalle del socio
+    navigate('/members', { 
+      state: { memberId }
+    });
+  };
 
 
-const handleGoToPay = (memberId: string) => {
-  // Guardar en sessionStorage ANTES de navegar
-  sessionStorage.setItem('memberDetailActiveTab', 'cuenta');
-  
-  // Navegar pasando el memberId en el state
-  navigate('/members', { 
-    state: { memberId }
-  });
-};
 
   /**
    * 🔍 Filtrar pagos - DEBE ESTAR ANTES DE sortedPayments
@@ -464,27 +494,35 @@ const handleGoToPay = (memberId: string) => {
                       )}
                     </td>
 
-                    {/* Acciones */}
+                   {/* Acciones */}
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <div className="flex items-center justify-end gap-2">
-                        {/* Botón Notificar */}
+                      <div className="flex flex-col items-end gap-2">
+                        {/* Botón Notificar con información de última notificación */}
                         <button
                           onClick={() => handleNotifyDebt(payment)}
-                          className="text-blue-600 hover:text-blue-900 flex items-center gap-1 px-3 py-1 border border-blue-300 rounded-md hover:bg-blue-50"
-                          title="Notificar por WhatsApp"
+                          className="text-blue-600 hover:text-blue-900 flex items-center gap-1 px-3 py-1 border border-blue-300 rounded-md hover:bg-blue-50 w-full justify-center"
+                          title={payment.lastNotifiedAt 
+                            ? `Última notificación: ${new Date(payment.lastNotifiedAt.seconds * 1000).toLocaleDateString()}` 
+                            : 'Notificar por WhatsApp'
+                          }
                         >
                           <MessageCircle className="w-4 h-4" />
                           Notificar
+                          {payment.notificationCount && payment.notificationCount > 0 && (
+                            <span className="ml-1 text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded-full">
+                              {payment.notificationCount}
+                            </span>
+                          )}
                         </button>
 
-                        {/* Botón Ir a Pagar */}
+                        {/* Botón REGISTRAR PAGO (texto corregido) */}
                         <button
                           onClick={() => handleGoToPay(payment.memberId)}
-                          className="text-green-600 hover:text-green-900 flex items-center gap-1 px-3 py-1 border border-green-300 rounded-md hover:bg-green-50"
-                          title="Ir a pagar"
+                          className="text-green-600 hover:text-green-900 flex items-center gap-1 px-3 py-1 border border-green-300 rounded-md hover:bg-green-50 w-full justify-center"
+                          title="Ir a registrar el pago"
                         >
                           <CreditCard className="w-4 h-4" />
-                          Ir a Pagar
+                          Registrar pago
                         </button>
                       </div>
                     </td>

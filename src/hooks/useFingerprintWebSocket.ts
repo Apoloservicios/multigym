@@ -1,12 +1,7 @@
-// useFingerprintWebSocket.ts
-// Hook de TypeScript para conectarse al servicio de huellas
-// Para tu proyecto multigym en React + TypeScript + Firebase
+// useFingerprintWebSocket.ts - SIN RECONEXIÓN AUTOMÁTICA
+// Reemplazar en: src/hooks/useFingerprintWebSocket.ts
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-// ===================================
-// TIPOS
-// ===================================
 
 interface EnrollmentProgress {
   memberId: string;
@@ -35,11 +30,8 @@ interface UseFingerprintWebSocketReturn {
   sendCommand: (command: string, data?: any) => void;
   connect: () => void;
   disconnect: () => void;
+  reconnect: () => void; // ← NUEVO: Reconexión manual
 }
-
-// ===================================
-// HOOK PRINCIPAL
-// ===================================
 
 export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
   const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -48,11 +40,19 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
   
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionAttemptedRef = useRef<boolean>(false); // ← NUEVO: Controlar intentos
 
   // Conectar al WebSocket
   const connect = useCallback(() => {
+    // ✅ Si ya intentó conectar y falló, no reintentar
+    if (connectionAttemptedRef.current && wsRef.current === null) {
+      console.log('⚠️ Ya se intentó conectar. No se reintentará automáticamente.');
+      return;
+    }
+
     try {
       console.log('🔌 Conectando al servicio de huellas...');
+      connectionAttemptedRef.current = true; // ← Marcar intento
       
       const ws = new WebSocket('ws://localhost:8080/fingerprint');
       
@@ -111,23 +111,26 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
       ws.onclose = () => {
         console.log('🔌 Desconectado del servicio de huellas');
         setIsConnected(false);
+        wsRef.current = null; // ← Limpiar referencia
         
-        // Intentar reconectar después de 3 segundos
-        reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('🔄 Intentando reconectar...');
-          connect();
-        }, 3000);
+        // ❌ ELIMINADO: No reconectar automáticamente
+        console.log('ℹ️ Para reconectar, usa el botón "Reconectar" manualmente');
       };
 
       wsRef.current = ws;
     } catch (error) {
       console.error('❌ Error al conectar:', error);
-      
-      reconnectTimeoutRef.current = setTimeout(() => {
-        connect();
-      }, 5000);
+      wsRef.current = null;
     }
   }, []);
+
+  // ✅ NUEVO: Reconexión manual
+  const reconnect = useCallback(() => {
+    console.log('🔄 Reconexión manual solicitada...');
+    connectionAttemptedRef.current = false; // Resetear bandera
+    disconnect(); // Limpiar conexión anterior
+    setTimeout(() => connect(), 500); // Esperar un poco antes de reconectar
+  }, [connect]);
 
   // Desconectar
   const disconnect = useCallback(() => {
@@ -140,6 +143,8 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    
+    setIsConnected(false);
   }, []);
 
   // Enviar comando al servicio
@@ -153,7 +158,7 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
       wsRef.current.send(JSON.stringify(message));
       console.log('📤 Comando enviado:', message);
     } else {
-      console.error('❌ WebSocket no está conectado');
+      console.error('❌ WebSocket no está conectado. Intenta reconectar manualmente.');
     }
   }, []);
 
@@ -219,7 +224,7 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
     audio.play().catch(e => console.log('No se pudo reproducir sonido'));
   };
 
-  // Conectar al montar el componente
+  // Conectar al montar el componente (SOLO UNA VEZ)
   useEffect(() => {
     connect();
 
@@ -230,9 +235,9 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
     return () => {
       disconnect();
     };
-  }, [connect, disconnect]);
+  }, []); // ← Sin dependencias para que solo se ejecute al montar
 
-  // Mantener conexión viva con ping cada 30 segundos
+  // Mantener conexión viva con ping cada 30 segundos (solo si está conectado)
   useEffect(() => {
     if (isConnected) {
       const pingInterval = setInterval(() => {
@@ -251,7 +256,8 @@ export const useFingerprintWebSocket = (): UseFingerprintWebSocketReturn => {
     cancelEnrollment,
     sendCommand,
     connect,
-    disconnect
+    disconnect,
+    reconnect // ← NUEVO: Exponer método de reconexión manual
   };
 };
 

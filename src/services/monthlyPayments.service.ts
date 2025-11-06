@@ -215,6 +215,7 @@ export const getPendingPaymentsList = async (
   try {
     const targetMonth = month || getCurrentMonth();
 
+    // 1. Obtener todos los pagos pendientes del mes
     const paymentsRef = collection(db, `gyms/${gymId}/monthlyPayments`);
     const q = query(
       paymentsRef,
@@ -224,12 +225,16 @@ export const getPendingPaymentsList = async (
 
     const paymentsSnap = await getDocs(q);
 
+    // 2. Agrupar por socio y obtener su información
     const memberPayments: Map<string, MonthlyPaymentListItem> = new Map();
+    const memberIds: Set<string> = new Set();
 
     paymentsSnap.forEach((doc) => {
       const payment = doc.data() as MonthlyPayment;
 
       if (payment.status === 'paid') return;
+
+      memberIds.add(payment.memberId);
 
       const overdue = isOverdue(payment.dueDate);
       const status = overdue ? 'overdue' : 'pending';
@@ -269,7 +274,36 @@ export const getPendingPaymentsList = async (
       });
     });
 
-    return Array.from(memberPayments.values()).sort((a, b) => {
+    // 3. Obtener información completa de cada socio (TELÉFONO, EMAIL, NOTIFICACIONES)
+    const enrichedPayments: MonthlyPaymentListItem[] = [];
+
+    // ✅ CORREGIDO: Convertir Set a Array antes de iterar
+    const memberIdsArray = Array.from(memberIds);
+    
+    for (let i = 0; i < memberIdsArray.length; i++) {
+      const memberId = memberIdsArray[i];
+      const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
+      const memberSnap = await getDoc(memberRef);
+
+      const paymentItem = memberPayments.get(memberId)!;
+
+      if (memberSnap.exists()) {
+        const memberData = memberSnap.data();
+        
+        // Agregar información del socio
+        paymentItem.memberPhone = memberData.phone || null;
+        paymentItem.memberEmail = memberData.email || null;
+        
+        // Agregar información de notificaciones
+        paymentItem.lastNotifiedAt = memberData.lastDebtNotification || null;
+        paymentItem.notificationCount = memberData.debtNotificationCount || 0;
+      }
+
+      enrichedPayments.push(paymentItem);
+    }
+
+    // 4. Ordenar: primero vencidos, luego por nombre
+    return enrichedPayments.sort((a, b) => {
       if (a.isOverdue && !b.isOverdue) return -1;
       if (!a.isOverdue && b.isOverdue) return 1;
       return a.memberName.localeCompare(b.memberName);

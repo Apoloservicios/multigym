@@ -107,11 +107,14 @@ export interface MonthlyPaymentListItem {
   memberId: string;
   memberName: string;
   memberEmail?: string;
+  memberPhone?: string;  // ← NUEVO: Teléfono del socio
   totalPending: number;
   activitiesPendingCount: number;
   isOverdue: boolean;
   daysOverdue: number;
-  pendingActivities: {  // ← Se llama pendingActivities, NO activities
+  lastNotifiedAt?: any;  // ← NUEVO: Última notificación (Timestamp)
+  notificationCount?: number;  // ← NUEVO: Cantidad de notificaciones enviadas
+  pendingActivities: {
     paymentId: string;
     membershipId: string;
     activityName: string;

@@ -1,11 +1,9 @@
-
+// ✅ Segunda instancia de Firebase para crear usuarios sin desloguear al admin
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
-// Configura tu aplicación de Firebase
-// Reemplaza estos valores con los de tu propio proyecto Firebase
 const firebaseConfig = {
     apiKey: "AIzaSyD43uNhtAKMTEbjPtQBId67MnrKL81axXg",
     authDomain: "sisgimnasio.firebaseapp.com",
@@ -16,20 +14,15 @@ const firebaseConfig = {
     measurementId: "G-W89SRSVT3D"
 };
 
-// Inicializa Firebase
 const app = initializeApp(firebaseConfig);
 
-// Obtener servicios
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
+// ✅ SEGUNDA INSTANCIA SOLO PARA CREAR USUARIOS
+// Esto evita que el admin sea deslogueado al crear un usuario móvil
+const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
+export const secondaryAuth = getAuth(secondaryApp);
+
 export default app;
-
-
-
-
-
-
-
-

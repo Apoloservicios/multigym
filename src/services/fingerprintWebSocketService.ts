@@ -1,6 +1,5 @@
-// ============================================
-// SERVICIO WEBSOCKET PARA HUELLAS DIGITALES
-// ============================================
+// fingerprintWebSocketService.ts - VERSIÓN FINAL CORREGIDA
+// Reemplazar COMPLETO en: src/services/fingerprintWebSocketService.ts
 
 import { db } from '../config/firebase';
 import { doc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
@@ -21,6 +20,7 @@ class FingerprintWebSocketService {
   private ws: WebSocket | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
   private listeners: Map<string, EventCallback[]> = new Map();
+  private connectionAttempted: boolean = false;
   
   connect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -28,8 +28,15 @@ class FingerprintWebSocketService {
       return;
     }
 
+    if (this.connectionAttempted && this.ws === null) {
+      console.log('⚠️ Ya se intentó conectar anteriormente. No se reintentará automáticamente.');
+      return;
+    }
+
     try {
       console.log('🔌 Conectando al servidor de huellas...');
+      this.connectionAttempted = true;
+      
       this.ws = new WebSocket('ws://localhost:8080/fingerprint');
 
       this.ws.onopen = () => {
@@ -57,18 +64,24 @@ class FingerprintWebSocketService {
       };
 
       this.ws.onclose = () => {
-        console.log('🔌 Desconectado del servidor');
+        console.log('🔌 Desconectado del servidor de huellas');
+        this.ws = null;
         this.emit('disconnected', { type: 'disconnected' });
         
-        this.reconnectTimeout = setTimeout(() => {
-          console.log('🔄 Intentando reconectar...');
-          this.connect();
-        }, 3000);
+        console.log('ℹ️ Para reconectar, usa el botón "Reconectar" manualmente');
       };
 
     } catch (error) {
       console.error('❌ Error al conectar:', error);
+      this.ws = null;
     }
+  }
+
+  reconnect(): void {
+    console.log('🔄 Reconexión manual solicitada...');
+    this.connectionAttempted = false;
+    this.disconnect();
+    this.connect();
   }
 
   disconnect(): void {
@@ -89,7 +102,7 @@ class FingerprintWebSocketService {
       this.ws.send(JSON.stringify(message));
       console.log('📤 Comando enviado:', message);
     } else {
-      console.error('❌ WebSocket no conectado');
+      console.error('❌ WebSocket no conectado. Intenta reconectar manualmente.');
     }
   }
 
@@ -101,17 +114,14 @@ class FingerprintWebSocketService {
     this.send('cancel_enrollment');
   }
 
-  // ✅ NUEVO: Iniciar modo continuo
   startContinuousMode(): void {
     this.send('start_continuous');
   }
 
-  // ✅ NUEVO: Detener modo continuo
   stopContinuousMode(): void {
     this.send('stop_continuous');
   }
 
-  // ✅ NUEVO: Cargar huellas al servidor C#
   async loadFingerprintsToServer(gymId: string): Promise<{ success: boolean; count: number; error?: string }> {
     try {
       if (!this.isConnected()) {
@@ -185,29 +195,43 @@ class FingerprintWebSocketService {
     quality: number = 0
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      console.log(`💾 Guardando huella en Firebase para socio ${memberId}...`);
-      
       const memberRef = doc(db, `gyms/${gymId}/members`, memberId);
-      
+
       await updateDoc(memberRef, {
         fingerprint: {
-          template: template,
-          quality: quality,
-          enrolledAt: serverTimestamp(),
-          lastUsed: null
-        }
+          template,
+          quality,
+          enrolledAt: serverTimestamp()
+        },
+        updatedAt: serverTimestamp()
       });
-      
+
       console.log('✅ Huella guardada en Firebase');
       return { success: true };
-      
+
     } catch (error: any) {
-      console.error('❌ Error guardando en Firebase:', error);
+      console.error('❌ Error guardando huella:', error);
       return { success: false, error: error.message };
     }
   }
 
+  // ✅ Alias para mantener compatibilidad con código existente
   async verifyAgainstFirebase(
+    gymId: string,
+    capturedTemplate: string
+  ): Promise<{
+    success: boolean;
+    match?: {
+      memberId: string;
+      memberName: string;
+      confidence: number;
+    };
+    error?: string;
+  }> {
+    return this.verifyFingerprint(gymId, capturedTemplate);
+  }
+
+  async verifyFingerprint(
     gymId: string,
     capturedTemplate: string
   ): Promise<{

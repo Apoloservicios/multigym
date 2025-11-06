@@ -16,13 +16,20 @@ import DeleteMembershipModal from '../memberships/DeleteMembershipModal'; // �
 import { 
   Mail, Phone, Calendar, MapPin, Edit, Trash, QrCode, CreditCard, Plus, Clock, DollarSign, 
   ChevronDown, ChevronUp, FileText, History, User, Dumbbell, CheckCircle, AlertCircle, 
-  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2,Heart,Fingerprint 
+  RefreshCw, RotateCcw, Ban, XCircle, AlertTriangle, Edit2, Trash2,Heart,Fingerprint ,Smartphone
 } from 'lucide-react';
+
+
+import CreateMobileUserModal from './CreateMobileUserModal';
+import { checkMobileUserExists } from '../../services/mobileUserService';
 
 import { formatDisplayDate, toJsDate } from '../../utils/date.utils';
 
 import FingerprintEnrollment from './FingerprintEnrollment';
 import { fingerprintService } from '../../services/fingerprintService';
+
+import ManageMobileUserModal from './ManageMobileUserModal';
+import { getMobileUserInfo } from '../../services/mobileUserService';
 
 
 interface MemberDetailProps {
@@ -33,6 +40,8 @@ interface MemberDetailProps {
   onAssignMembership: (member: Member) => void;
   onRefreshMember?: () => void;
 }
+
+
 
 const MemberDetail: React.FC<MemberDetailProps> = ({ 
   member, 
@@ -50,6 +59,9 @@ const MemberDetail: React.FC<MemberDetailProps> = ({
   const [success, setSuccess] = useState<string>('');
   const [calculatedDebt, setCalculatedDebt] = useState<number>(0);
 const [activeView, setActiveView] = useState<'details' | 'memberships' | 'account' | 'attendance' | 'payment' | 'routines'>('details');
+
+const [showManageMobileModal, setShowManageMobileModal] = useState(false);
+const [mobileUserInfo, setMobileUserInfo] = useState<any>(null);
 
 // Estados para secciones expandibles
 const [expandedSections, setExpandedSections] = useState({
@@ -101,6 +113,40 @@ const handleDeleteFingerprint = async () => {
   } catch (error: any) {
     alert('Error al eliminar huella: ' + error.message);
   }
+};
+
+const [showMobileUserModal, setShowMobileUserModal] = useState(false);
+const [hasMobileAccess, setHasMobileAccess] = useState(false);
+const [checkingMobileAccess, setCheckingMobileAccess] = useState(true);
+
+// Verificar si el socio ya tiene acceso móvil
+useEffect(() => {
+  const checkMobileAccess = async () => {
+    if (member?.id && gymData?.id) {
+      try {
+        const info = await getMobileUserInfo(gymData.id, member.id);
+        if (info) {
+          setHasMobileAccess(true);
+          setMobileUserInfo(info);
+        } else {
+          setHasMobileAccess(false);
+          setMobileUserInfo(null);
+        }
+      } catch (error) {
+        console.error('Error verificando acceso móvil:', error);
+      } finally {
+        setCheckingMobileAccess(false);
+      }
+    }
+  };
+  checkMobileAccess();
+}, [member?.id, gymData?.id]);
+
+const handleMobileUserCreated = async () => {
+  // Refrescar el estado de acceso móvil
+  const result = await checkMobileUserExists(gymData!.id, member!.id);
+  setHasMobileAccess(result.exists);
+  setShowMobileUserModal(false);
 };
   
 
@@ -1152,6 +1198,27 @@ const formatDate = (dateString: string) => {
               </div>
               
               <div className="flex mt-4 md:mt-0 space-x-2">
+
+                      {/* Botón Crear Acceso Móvil */}
+                      <button
+                        onClick={() => hasMobileAccess ? setShowManageMobileModal(true) : setShowMobileUserModal(true)}
+                        disabled={checkingMobileAccess}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                          hasMobileAccess
+                            ? 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                      >
+                        <Smartphone className="w-4 h-4" />
+                        {checkingMobileAccess ? (
+                          <span>Verificando...</span>
+                        ) : hasMobileAccess ? (
+                          <span>✓ Gestionar Acceso</span>
+                        ) : (
+                          <span>Crear Acceso Móvil</span>
+                        )}
+                      </button>
+
                 <button 
                   onClick={() => onEdit(member)}
                   className="px-3 py-1 border border-gray-300 rounded text-gray-700 hover:bg-gray-50 flex items-center"
@@ -1330,7 +1397,57 @@ const formatDate = (dateString: string) => {
           }}
         />
       )}
+
+        {/* Modal Crear Usuario Móvil */}
+        {member && (
+          <CreateMobileUserModal
+            isOpen={showMobileUserModal}
+            onClose={() => setShowMobileUserModal(false)}
+            member={{
+              id: member.id,
+              firstName: member.firstName,
+              lastName: member.lastName,
+              email: member.email
+            }}
+            gymId={gymData!.id}
+          />
+        )}
+
+         {/* Modal Gestionar Usuario Móvil */}
+          {member && mobileUserInfo && (
+            <ManageMobileUserModal
+              isOpen={showManageMobileModal}
+              onClose={() => setShowManageMobileModal(false)}
+              member={{
+                id: member.id,
+                firstName: member.firstName,
+                lastName: member.lastName,
+                email: member.email
+              }}
+              mobileUserInfo={mobileUserInfo}
+              onUpdate={() => {
+                // Refrescar info después de cambios
+                const checkMobileAccess = async () => {
+                  const info = await getMobileUserInfo(gymData!.id, member.id);
+                  if (info) {
+                    setMobileUserInfo(info);
+                  }
+                };
+                checkMobileAccess();
+                setShowManageMobileModal(false);
+              }}
+            />
+          )}
+
+
+
+
     </div>
+
+
+
+
+    
   );
 };
 

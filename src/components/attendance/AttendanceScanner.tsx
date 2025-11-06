@@ -13,6 +13,11 @@ import useFirestore from '../../hooks/useFirestore';
 import { fingerprintService } from '../../services/fingerprintService';
 import FingerprintContinuousScanner from './FingerprintContinuousScanner';
 
+import FingerprintConnectionStatus from '../../components/fingerprint/FingerprintConnectionStatus';
+import { useFingerprintWebSocket } from '../../hooks/useFingerprintWebSocket';
+import fingerprintWS from '../../services/fingerprintWebSocketService';
+
+
 interface ScanResult {
   success: boolean;
   message: string;
@@ -111,8 +116,7 @@ const AttendanceScanner: React.FC = () => {
 const [scanMode, setScanMode] = useState<'qr' | 'manual' | 'fingerprint' | 'fingerprint_continuous'>('qr');
 const [fingerprintScanning, setFingerprintScanning] = useState(false);
 const [fingerprintStatus, setFingerprintStatus] = useState<string>('');
-
-
+const [fingerprintConnected, setFingerprintConnected] = useState<boolean>(false);
 
   // ✅ BÚSQUEDA DEBOUNCED
 const debouncedSearch = useMemo(
@@ -458,7 +462,25 @@ const debouncedSearch = useMemo(
     loadRecentMembers();
   }, [loadRecentMembers]);
 
+useEffect(() => {
+  setFingerprintConnected(fingerprintWS.isConnected());
+  
+  const handleConnected = () => setFingerprintConnected(true);
+  const handleDisconnected = () => setFingerprintConnected(false);
+  
+  fingerprintWS.on('connected', handleConnected);
+  fingerprintWS.on('disconnected', handleDisconnected);
+  
+  return () => {
+    fingerprintWS.off('connected', handleConnected);
+    fingerprintWS.off('disconnected', handleDisconnected);
+  };
+}, []);
 
+const handleReconnectFingerprint = () => {
+  fingerprintWS.reconnect();
+  setTimeout(() => setFingerprintConnected(fingerprintWS.isConnected()), 2000);
+};
 
   // 💾 Cargar historial desde localStorage al montar el componente
 useEffect(() => {
@@ -1389,6 +1411,8 @@ const toggleFingerprintMode = () => {
 
 
 
+
+
   // ✅ MODAL PARA SELECCIÓN DE MEMBRESÍA DESDE QR
   const renderMembershipSelection = () => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -1774,6 +1798,13 @@ return (
 
     {/* Modal de confirmación de asistencia */}
     {renderConfirmationModal()}
+
+
+     {/* ✅ Agregar esto al inicio */}
+    <FingerprintConnectionStatus 
+      isConnected={fingerprintConnected}
+      onReconnect={handleReconnectFingerprint}
+    />
   </div>
 );
 };
