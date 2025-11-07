@@ -294,63 +294,7 @@ const isMembershipManagementActive = (): boolean => {
                   
 
 
-                 {/* ✅ NUEVAS OPCIONES - Auto-registro */}
-                {userRole === 'admin' && (
-                  <>
-                    <div className="border-t border-gray-200 my-2"></div>
-                    
-                    <div className="py-2">
-                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                        Auto-Registro
-                      </h3>
-                      
-                      <NavItem
-                        icon={<UserCheck size={20} />}
-                        text="Registros Pendientes"
-                        active={isActive('pending-registrations')}
-                        onClick={() => handleNavigate('pending-registrations')}
-                        isNew={true}
-                      />
-                      
-                      <NavItem
-                        icon={<QrCode size={20} />}
-                        text="Código QR"
-                        active={isActive('qr-generator')}
-                        onClick={() => handleNavigate('qr-generator')}
-                        isNew={true}
-                      />
-                    </div>
-                  </>
-                )}
 
-                {/* ✅ NUEVAS OPCIONES - Control de Datos y Membresías - AGREGAR ESTO */}
-                {userRole === 'admin' && (
-                  <>
-                    <div className="border-t border-gray-200 my-2"></div>
-                    
-                    <div className="py-2">
-                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
-                        Control de Datos
-                      </h3>
-                      
-                      <NavItem
-                        icon={<RefreshCw size={20} />}
-                        text="Actualizaciones"
-                        active={isActive('update-tracker')}
-                        onClick={() => handleNavigate('update-tracker')}
-                        isNew={false}
-                      />
-                      
-                      <NavItem
-                        icon={<CreditCard size={20} />}
-                        text="Control Membresías"
-                        active={isActive('membership-control')}
-                        onClick={() => handleNavigate('membership-control')}
-                        isNew={false}
-                      />
-                    </div>
-                  </>
-                )}
 
                  <NavItem
                     icon={<Package size={20} />}
@@ -363,6 +307,13 @@ const isMembershipManagementActive = (): boolean => {
                     text="Cumpleaños"
                     active={isActive('birthdays')}
                     onClick={() => handleNavigate('birthdays')}
+                  />
+
+                    <NavItem
+                    icon={<Calendar size={20} />}
+                    text="Clases"
+                    active={isActive('classes')}
+                    onClick={() => handleNavigate('classes')}
                   />
            
                 
@@ -425,6 +376,65 @@ const isMembershipManagementActive = (): boolean => {
                     />
                   </div>
                 </DropdownNav>
+
+
+                                 {/* ✅ NUEVAS OPCIONES - Auto-registro */}
+                {userRole === 'admin' && (
+                  <>
+                    <div className="border-t border-gray-200 my-2"></div>
+                    
+                    <div className="py-2">
+                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                        Auto-Registro
+                      </h3>
+                      
+                      <NavItem
+                        icon={<UserCheck size={20} />}
+                        text="Registros Pendientes"
+                        active={isActive('pending-registrations')}
+                        onClick={() => handleNavigate('pending-registrations')}
+                        isNew={false}
+                      />
+                      
+                      <NavItem
+                        icon={<QrCode size={20} />}
+                        text="Código QR"
+                        active={isActive('qr-generator')}
+                        onClick={() => handleNavigate('qr-generator')}
+                        isNew={false}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* ✅ NUEVAS OPCIONES - Control de Datos y Membresías - AGREGAR ESTO */}
+                {userRole === 'admin' && (
+                  <>
+                    <div className="border-t border-gray-200 my-2"></div>
+                    
+                    <div className="py-2">
+                      <h3 className="text-xs uppercase font-semibold text-gray-500 tracking-wider px-3 mb-2">
+                        Control de Datos
+                      </h3>
+                      
+                      <NavItem
+                        icon={<RefreshCw size={20} />}
+                        text="Actualizaciones"
+                        active={isActive('update-tracker')}
+                        onClick={() => handleNavigate('update-tracker')}
+                        isNew={false}
+                      />
+                      
+                      <NavItem
+                        icon={<CreditCard size={20} />}
+                        text="Control Membresías"
+                        active={isActive('membership-control')}
+                        onClick={() => handleNavigate('membership-control')}
+                        isNew={false}
+                      />
+                    </div>
+                  </>
+                )}
                 
                 {/* Configuración - Solo para admins */}
                 {userRole === 'admin' && (

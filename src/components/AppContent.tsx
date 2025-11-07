@@ -52,6 +52,8 @@ import MembershipAssignmentControl from '../pages/admin/MembershipAssignmentCont
 import Birthdays from '../pages/birthdays/Birthdays';
 import Products from '../pages/products/Products';
 
+import { ClassesPage } from '../pages/classes/ClassesPage';
+
 
 
 // Componente de protección de rutas
@@ -272,6 +274,7 @@ const AppContent: React.FC = () => {
 
               <Route path="/birthdays" element={<Birthdays />} />
               <Route path="/products" element={<Products />} />
+              <Route path="/classes" element={<ClassesPage />} />
 
            
 
