@@ -123,7 +123,7 @@ const DAYS_OF_WEEK = [
           activityName: selectedActivity?.name || '',
           instructor,
           capacity,
-          date: new Date(date),
+          date: date,
           startTime,
           endTime,
           cancellationDeadline,

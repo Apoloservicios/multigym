@@ -45,8 +45,8 @@ import QRCodeGenerator from '../pages/admin/QRCodeGenerator';
 
 import HelpCenter from '../pages/help/HelpCenter';
 
-import MemberUpdateTracker from '../pages/admin/MemberUpdateTracker';
-import MembershipAssignmentControl from '../pages/admin/MembershipAssignmentControl';
+import MemberUpdateTrackerOptimized from '../pages/admin/MemberUpdateTrackerOptimized';
+import MembershipAssignmentControlOptimized  from '../pages/admin/MembershipAssignmentControlOptimized';
 
 
 import Birthdays from '../pages/birthdays/Birthdays';
@@ -266,7 +266,7 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute requiredRole="admin">
                     
-                      <MemberUpdateTracker />
+                      <MemberUpdateTrackerOptimized />
                     
                   </ProtectedRoute>
                 } 
@@ -283,7 +283,7 @@ const AppContent: React.FC = () => {
                 element={
                   <ProtectedRoute requiredRole="admin">
                     
-                      <MembershipAssignmentControl />
+                      <MembershipAssignmentControlOptimized  />
                     
                   </ProtectedRoute>
                 } 

@@ -32,7 +32,7 @@ export interface ClassSchedule {
   id?: string;
   gymId: string;
   classDefId: string;
-  date: string;  // "YYYY-MM-DD"
+  date: string;
   startDateTime: Timestamp;
   endDateTime: Timestamp;
   activityId: string;
@@ -46,8 +46,18 @@ export interface ClassSchedule {
   maxWaitlist: number;
   status: 'scheduled' | 'full' | 'cancelled' | 'completed';
   cancellationDeadline: Timestamp;
+  
+  // ⭐ NUEVOS CAMPOS
+  isOpenForEnrollment: boolean;        // Si está abierta para inscripciones
+  openingTime?: Timestamp;             // Cuándo se abre (2h antes por defecto)
+  openedManually?: boolean;            // Si fue abierta manualmente por admin
+  
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
+  userEnrollment?: ClassEnrollment | null;
+    // Campos de cancelación (opcionales)
+  cancelledAt?: Timestamp;
+  cancellationReason?: string
 }
 
 export interface ClassEnrollment {

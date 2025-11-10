@@ -3,8 +3,17 @@ import React, { useState, useEffect } from 'react';
 import { CreateClassModal } from '../../components/classes/CreateClassModal';
 import { ClassEnrollmentsModal } from '../../components/classes/ClassEnrollmentsModal';
 import { useAuth } from '../../contexts/AuthContext';
-import { getScheduledClasses } from '../../services/classService';
+
 import { ClassSchedule } from '../../types/class.types';
+
+import { 
+  getScheduledClasses, 
+  openClassEnrollment, 
+  closeClassEnrollment,
+  autoOpenClasses ,
+    deleteClass,    // ⭐ AGREGAR
+  cancelClass 
+} from '../../services/classService';
 
 export const ClassesPage: React.FC = () => {
   const { currentUser } = useAuth();
@@ -58,22 +67,113 @@ export const ClassesPage: React.FC = () => {
     }
   };
   
-  const formatDate = (timestamp: any) => {
-    const date = timestamp.toDate();
-    return date.toLocaleDateString('es-AR', {
-      weekday: 'short',
-      day: '2-digit',
-      month: 'short'
-    });
-  };
+const formatDate = (timestamp: any) => {
+  // ⭐ Obtener fecha en hora local sin conversión UTC
+  const date = timestamp.toDate();
   
-  const formatTime = (timestamp: any) => {
-    const date = timestamp.toDate();
-    return date.toLocaleTimeString('es-AR', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+  // Extraer componentes en hora local
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+  
+  // Crear nueva fecha en hora local
+  const localDate = new Date(year, month, day);
+  
+  console.log('📅 Format date:', {
+    original: date.toISOString(),
+    local: localDate.toLocaleDateString('es-AR'),
+    day: localDate.getDate(),
+    weekday: localDate.toLocaleDateString('es-AR', { weekday: 'long' })
+  });
+  
+  return localDate.toLocaleDateString('es-AR', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short'
+  });
+};
+
+const formatTime = (timestamp: any) => {
+  const date = timestamp.toDate();
+  
+  return date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false  // ⭐ Forzar formato 24h
+  });
+};
+
+  const handleToggleEnrollment = async (classItem: ClassSchedule) => {
+    if (!gymId || !classItem.id) return;
+    
+    try {
+      if (classItem.isOpenForEnrollment) {
+        await closeClassEnrollment(gymId, classItem.id);
+        alert('Inscripciones cerradas');
+      } else {
+        await openClassEnrollment(gymId, classItem.id);
+        alert('Inscripciones abiertas');
+      }
+      loadClasses();
+    } catch (error) {
+      alert('Error al cambiar estado de inscripciones');
+    }
   };
+
+const handleAutoOpen = async () => {
+  if (!gymId) return;
+  
+  try {
+    const count = await autoOpenClasses(gymId);
+    alert(`${count} clases abiertas automáticamente`);
+    loadClasses();
+  } catch (error) {
+    alert('Error en apertura automática');
+  }
+};
+
+const handleDeleteClass = async (classItem: ClassSchedule) => {
+  if (!gymId || !classItem.id) return;
+  
+  // Verificar si tiene inscritos
+  const hasEnrollments = classItem.enrolled > 0 || classItem.waitlist > 0;
+  
+  const confirmMessage = hasEnrollments
+    ? `⚠️ ATENCIÓN: Esta clase tiene ${classItem.enrolled} inscrito(s) y ${classItem.waitlist} en lista de espera.\n\n¿Estás seguro de eliminarla? Esta acción no se puede deshacer.`
+    : '¿Estás seguro de eliminar esta clase? Esta acción no se puede deshacer.';
+  
+  if (!window.confirm(confirmMessage)) return;
+  
+  try {
+    await deleteClass(gymId, classItem.id);
+    alert('✅ Clase eliminada correctamente');
+    loadClasses();
+  } catch (error) {
+    console.error('Error eliminando clase:', error);
+    alert('❌ Error al eliminar la clase');
+  }
+};
+
+const handleCancelClass = async (classItem: ClassSchedule) => {
+  if (!gymId || !classItem.id) return;
+  
+  const reason = window.prompt(
+    `Cancelar clase: ${classItem.activityName}\nFecha: ${new Date(classItem.date).toLocaleDateString('es-AR')}\n\nMotivo de cancelación (opcional):`
+  );
+  
+  // Si presiona Cancelar, no hacer nada
+  if (reason === null) return;
+  
+  try {
+    await cancelClass(gymId, classItem.id, reason);
+    alert('✅ Clase cancelada. Los inscritos serán notificados.');
+    loadClasses();
+  } catch (error) {
+    console.error('Error cancelando clase:', error);
+    alert('❌ Error al cancelar la clase');
+  }
+};
+
   
   const getStatusColor = (schedule: ClassSchedule) => {
     switch (schedule.status) {
@@ -106,14 +206,19 @@ export const ClassesPage: React.FC = () => {
   };
   
   // Agrupar clases por fecha
-  const classesByDate = classes.reduce((acc, classItem) => {
-    const date = classItem.date;
-    if (!acc[date]) {
-      acc[date] = [];
-    }
-    acc[date].push(classItem);
-    return acc;
-  }, {} as Record<string, ClassSchedule[]>);
+// Agrupar clases por fecha
+const classesByDate = classes.reduce((acc, classItem) => {
+  // ⭐ Usar el campo date (string "YYYY-MM-DD") como clave
+  const dateKey = classItem.date;
+  
+  if (!acc[dateKey]) {
+    acc[dateKey] = [];
+  }
+  acc[dateKey].push(classItem);
+  return acc;
+}, {} as Record<string, ClassSchedule[]>);
+
+console.log('📊 Clases agrupadas por fecha:', classesByDate);
   
   const sortedDates = Object.keys(classesByDate).sort();
   
@@ -135,6 +240,15 @@ export const ClassesPage: React.FC = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Crear Clase
+          </button>
+          <button
+            onClick={handleAutoOpen}
+            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Abrir Automáticamente
           </button>
         </div>
         
@@ -218,12 +332,18 @@ export const ClassesPage: React.FC = () => {
               {/* Encabezado de fecha */}
               <div className="bg-gray-50 px-6 py-3 border-b border-gray-200">
                 <h3 className="font-semibold text-gray-900">
-                  {new Date(date).toLocaleDateString('es-AR', {
-                    weekday: 'long',
-                    day: 'numeric',
-                    month: 'long',
-                    year: 'numeric'
-                  })}
+                  {(() => {
+                    // ⭐ Parsear fecha correctamente desde string "YYYY-MM-DD"
+                    const [year, month, day] = date.split('-').map(Number);
+                    const localDate = new Date(year, month - 1, day);
+                    
+                    return localDate.toLocaleDateString('es-AR', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric'
+                    });
+                  })()}
                 </h3>
               </div>
               
@@ -294,13 +414,71 @@ export const ClassesPage: React.FC = () => {
                         </div>
                       </div>
                       
-                      {/* Acciones */}
+                     {/* Acciones */}
                       <div className="ml-4 flex gap-2">
+                        {/* Ver Inscritos */}
                         <button
                           onClick={() => setSelectedClass(classItem)}
-                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
                         >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                          </svg>
                           Ver Inscritos
+                        </button>
+                        
+                        {/* Toggle Abrir/Cerrar */}
+                        {classItem.status === 'scheduled' && (
+                          <button
+                            onClick={() => handleToggleEnrollment(classItem)}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                              classItem.isOpenForEnrollment
+                                ? 'bg-red-50 hover:bg-red-100 text-red-700'
+                                : 'bg-green-50 hover:bg-green-100 text-green-700'
+                            }`}
+                          >
+                            {classItem.isOpenForEnrollment ? (
+                              <>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                                Cerrar
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                                </svg>
+                                Abrir
+                              </>
+                            )}
+                          </button>
+                        )}
+                        
+                        {/* Cancelar Clase */}
+                        {classItem.status === 'scheduled' && (
+                          <button
+                            onClick={() => handleCancelClass(classItem)}
+                            className="bg-orange-50 hover:bg-orange-100 text-orange-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                            title="Cancelar clase (mantiene el registro)"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                            </svg>
+                            Cancelar
+                          </button>
+                        )}
+                        
+                        {/* Eliminar Clase */}
+                        <button
+                          onClick={() => handleDeleteClass(classItem)}
+                          className="bg-red-50 hover:bg-red-100 text-red-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                          title="Eliminar clase permanentemente"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          Eliminar
                         </button>
                       </div>
                     </div>
