@@ -103,13 +103,28 @@ const FingerprintContinuousScanner: React.FC<Props> = ({ onAttendanceRegistered 
     };
   }, [isActive, gymData]);
 
-  const startScanning = () => {
+const startScanning = async () => {
     if (!gymData?.id) {
       alert('Error: No hay gimnasio seleccionado');
       return;
     }
 
     console.log('🟢 Iniciando modo continuo...');
+    setStatus('scanning');
+    setStatusMessage('⏳ Cargando huellas desde Firebase...');
+    
+    // ✅ CARGAR HUELLAS PRIMERO
+    const result = await fingerprintWS.loadFingerprintsToServer(gymData.id);
+    
+    if (!result.success) {
+      alert('Error cargando huellas: ' + (result.error || 'Error desconocido'));
+      setStatus('stopped');
+      setStatusMessage('❌ Error - Presiona INICIAR para reintentar');
+      return;
+    }
+    
+    console.log(`✅ ${result.count} huellas cargadas`);
+    
     setIsActive(true);
     setStatus('ready');
     setStatusMessage('✅ Listo - Esperando huella...');
