@@ -1,8 +1,12 @@
-// src/services/fingerprintWebSocketService.ts - VERSIÓN COMPLETA
+// ===========================================================
+// SERVICIO WEBSOCKET PARA HUELLAS DIGITALES
+// Se comunica con el servidor C# en localhost:8080
+// ===========================================================
 
 import { db } from '../config/firebase';
 import { doc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
 
+// Tipos de eventos que puede enviar el servidor
 interface FingerprintEvent {
   type: string;
   memberId?: string;
@@ -23,6 +27,10 @@ class FingerprintWebSocketService {
   private listeners: Map<string, EventCallback[]> = new Map();
   private connectionAttempted: boolean = false;
   
+  // -------------------------------------------------------
+  // CONEXIÓN
+  // -------------------------------------------------------
+  
   connect(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       console.log('⚠️ Ya conectado al servidor');
@@ -38,6 +46,7 @@ class FingerprintWebSocketService {
       console.log('🔌 Conectando al servidor de huellas...');
       this.connectionAttempted = true;
       
+      // IMPORTANTE: Esta URL debe coincidir con el servidor C#
       this.ws = new WebSocket('ws://localhost:8080/fingerprint');
 
       this.ws.onopen = () => {
@@ -80,7 +89,7 @@ class FingerprintWebSocketService {
     console.log('🔄 Reconexión manual...');
     this.connectionAttempted = false;
     this.disconnect();
-    this.connect();
+    setTimeout(() => this.connect(), 500);
   }
 
   disconnect(): void {
@@ -94,6 +103,10 @@ class FingerprintWebSocketService {
       this.reconnectTimeout = null;
     }
   }
+
+  // -------------------------------------------------------
+  // ENVÍO DE COMANDOS
+  // -------------------------------------------------------
 
   send(command: string, data: any = {}): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -120,6 +133,10 @@ class FingerprintWebSocketService {
   stopContinuousMode(): void {
     this.send('stop_continuous');
   }
+
+  // -------------------------------------------------------
+  // OPERACIONES CON FIREBASE
+  // -------------------------------------------------------
 
   async loadFingerprintsToServer(gymId: string): Promise<{ 
     success: boolean; 
@@ -160,34 +177,6 @@ class FingerprintWebSocketService {
     }
   }
 
-  on(eventType: string, callback: EventCallback): void {
-    if (!this.listeners.has(eventType)) {
-      this.listeners.set(eventType, []);
-    }
-    this.listeners.get(eventType)!.push(callback);
-  }
-
-  off(eventType: string, callback: EventCallback): void {
-    const callbacks = this.listeners.get(eventType);
-    if (callbacks) {
-      const index = callbacks.indexOf(callback);
-      if (index > -1) {
-        callbacks.splice(index, 1);
-      }
-    }
-  }
-
-  private emit(eventType: string, data: FingerprintEvent): void {
-    const callbacks = this.listeners.get(eventType);
-    if (callbacks) {
-      callbacks.forEach(callback => callback(data));
-    }
-  }
-
-  isConnected(): boolean {
-    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
-  }
-
   async saveToFirebase(
     gymId: string,
     memberId: string,
@@ -201,16 +190,15 @@ class FingerprintWebSocketService {
         fingerprint: {
           template: template,
           quality: quality,
-          registeredAt: serverTimestamp(),
-          lastUsed: serverTimestamp()
+          registeredAt: serverTimestamp()
         },
         updatedAt: serverTimestamp()
       });
 
-      console.log(`✅ Huella guardada en Firebase para ${memberId}`);
+      console.log('✅ Huella guardada en Firebase');
       return { success: true };
     } catch (error: any) {
-      console.error('❌ Error guardando huella:', error);
+      console.error('❌ Error guardando en Firebase:', error);
       return { success: false, error: error.message };
     }
   }
@@ -300,7 +288,44 @@ class FingerprintWebSocketService {
       return { success: false, error: error.message };
     }
   }
+
+  // -------------------------------------------------------
+  // SISTEMA DE EVENTOS
+  // -------------------------------------------------------
+
+  on(eventType: string, callback: EventCallback): void {
+    if (!this.listeners.has(eventType)) {
+      this.listeners.set(eventType, []);
+    }
+    this.listeners.get(eventType)!.push(callback);
+  }
+
+  off(eventType: string, callback: EventCallback): void {
+    const callbacks = this.listeners.get(eventType);
+    if (callbacks) {
+      const index = callbacks.indexOf(callback);
+      if (index > -1) {
+        callbacks.splice(index, 1);
+      }
+    }
+  }
+
+  private emit(eventType: string, data: FingerprintEvent): void {
+    const callbacks = this.listeners.get(eventType);
+    if (callbacks) {
+      callbacks.forEach(callback => callback(data));
+    }
+  }
+
+  // -------------------------------------------------------
+  // UTILIDADES
+  // -------------------------------------------------------
+
+  isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
 }
 
+// Exportar una instancia única (Singleton)
 export const fingerprintWS = new FingerprintWebSocketService();
 export default fingerprintWS;

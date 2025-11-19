@@ -6,7 +6,7 @@ import {
   Menu, X, Building2, CreditCard, DollarSign, UserCog, FileText, Dumbbell,
   Activity, LogOut, Calendar, Receipt, Cog, FolderCog, User, TrendingUp,
   Wallet, ArrowUpRight, CheckCircle, RefreshCw, Zap, Database,
-  UserCheck, QrCode,HelpCircle  ,Package ,Cake // ← AGREGAR ESTOS DOS
+  UserCheck, QrCode,HelpCircle  ,Package ,Cake,Clock // ← AGREGAR ESTOS DOS
 } from 'lucide-react';
 import { auth } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -239,6 +239,13 @@ const isMembershipManagementActive = (): boolean => {
                     active={isSuperadminActive('revenue')}
                     onClick={() => handleNavigate('superadmin/revenue')}
                   />
+
+                    <NavItem
+                      icon={<Clock size={20} />}
+                      text="Pagos Pendientes"
+                      active={isSuperadminActive('pending-payments')}
+                      onClick={() => handleNavigate('superadmin/pending-payments')}
+                    />
                   
                   <NavItem
                     icon={<Dumbbell size={20} />}

@@ -1,10 +1,15 @@
 // src/pages/settings/BusinessProfile.tsx
+// VERSIÓN ACTUALIZADA con sistema de renovación
+
 import React, { useState, useEffect } from 'react';
-import { Building2, Phone, Mail, Globe, Instagram, Facebook, Save, Upload, AlertCircle, CheckCircle,Calendar, Clock, AlertTriangle, CreditCard  } from 'lucide-react';
+import { 
+  Building2, Phone, Mail, Globe, Instagram, Facebook, Save, Upload, 
+  AlertCircle, CheckCircle, Calendar, Clock, AlertTriangle, CreditCard  
+} from 'lucide-react';
 import { getGymInfo, updateBusinessProfile, BusinessProfile as BusinessProfileType, gymToBusinessProfile, ensureGymFields } from '../../services/gym.service';
 import useAuth from '../../hooks/useAuth';
-
 import { toJsDate } from '../../utils/date.utils';
+import RenewalRequestModal from '../../components/subscription/RenewalRequestModal';
 
 const BusinessProfile: React.FC = () => {
   const { gymData, currentUser } = useAuth();
@@ -26,6 +31,9 @@ const BusinessProfile: React.FC = () => {
   const [success, setSuccess] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [dataLoading, setDataLoading] = useState<boolean>(true);
+  
+  // Estado para el modal de renovación
+  const [showRenewalModal, setShowRenewalModal] = useState(false);
   
   // Cargar datos del gimnasio al montar el componente
   useEffect(() => {
@@ -91,29 +99,28 @@ const BusinessProfile: React.FC = () => {
     return trialEndDate ? trialEndDate > currentDate : false;
   };
   
-  // Formatear fechas en formato legible
-  const formatDate = (date: any): string => {
-    if (!date) return 'No disponible';
-    
-    const jsDate = toJsDate(date);
-    return jsDate ? jsDate.toLocaleDateString('es-AR') : 'Fecha inválida';
-  };
-  
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Manejar cambios en los campos del formulario
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
+    setFormData(prev => ({
+      ...prev,
       [name]: value
-    });
+    }));
   };
   
+  // Manejar cambio de archivo de logo
   const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validar tamaño (5MB máximo)
+      if (file.size > 5 * 1024 * 1024) {
+        setError('El logo no puede superar los 5MB');
+        return;
+      }
       
-      // Validar tamaño máximo (2MB)
-      if (file.size > 2 * 1024 * 1024) {
-        setError('El archivo de imagen no debe superar los 2MB');
+      // Validar tipo de archivo
+      if (!file.type.startsWith('image/')) {
+        setError('Solo se permiten imágenes');
         return;
       }
       
@@ -125,65 +132,35 @@ const BusinessProfile: React.FC = () => {
         setLogoPreview(reader.result as string);
       };
       reader.readAsDataURL(file);
-      
-      // Limpiar error si existe
-      if (error) {
-        setError('');
-      }
     }
   };
   
+  // Guardar cambios
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!gymData?.id) {
-      setError('No se encontró información del gimnasio');
+      setError('No se pudo identificar el gimnasio');
       return;
     }
     
     setLoading(true);
-    setSuccess(false);
     setError('');
+    setSuccess(false);
     
     try {
-      console.log('Actualizando perfil con datos:', formData);
+      await updateBusinessProfile(gymData.id, formData, logoFile);
+      setSuccess(true);
+      setLogoFile(null);
       
-      // Primero, asegurarnos de que los campos existen
-      await ensureGymFields(gymData.id);
-      
-      // Luego actualizar el perfil
-      const result = await updateBusinessProfile(gymData.id, formData, logoFile);
-      
-      if (result) {
-        setSuccess(true);
-        
-        // Volver a cargar los datos actualizados
-        const updatedGym = await getGymInfo(gymData.id);
-        if (updatedGym) {
-          const updatedProfile = gymToBusinessProfile(updatedGym);
-          setFormData(updatedProfile);
-          
-          if (updatedGym.logo) {
-            setLogoPreview(updatedGym.logo);
-          }
-        }
-        
-        // Resetear el archivo del logo después de subir
-        setLogoFile(null);
-        
-        // Ocultar mensaje de éxito después de 3 segundos
-        setTimeout(() => {
-          setSuccess(false);
-        }, 3000);
-      } else {
-        throw new Error('No se pudo actualizar el perfil');
-      }
+      setTimeout(() => {
+        setSuccess(false);
+      }, 3000);
     } catch (err: any) {
       console.error('Error updating business profile:', err);
       
-      // Mensaje de error específico para problemas con Cloudinary
-      if (err.message && err.message.includes('Cloudinary')) {
-        setError('Error al subir el logo. Por favor, inténtalo de nuevo o usa una imagen diferente.');
+      if (err.code === 'storage/unauthorized') {
+        setError('Error de permisos al subir el logo. Por favor, inténtalo de nuevo o usa una imagen diferente.');
       } else {
         setError(err.message || 'Error al actualizar el perfil del negocio');
       }
@@ -201,444 +178,318 @@ const BusinessProfile: React.FC = () => {
     );
   }
 
-
-  const renderSubscriptionAction = () => {
-  if (gymData?.status === 'active' && isSubscriptionActive()) {
-    // Si la suscripción está activa pero vencerá pronto (menos de 7 días)
-    const endDate = toJsDate(gymData.subscriptionData?.endDate);
+  // Renderizar sección de suscripción
+  const renderSubscriptionSection = () => {
     const now = new Date();
-    const daysLeft = endDate 
-      ? Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) 
-      : 0;
+    let endDate: Date | null = null;
+    let daysLeft = 0;
+    let statusText = '';
+    let statusColor = '';
     
-    if (daysLeft <= 7 && daysLeft > 0) {
-      return (
-        <div className="mt-4 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-          <p className="text-sm text-yellow-800 mb-2">
-            <AlertTriangle size={16} className="inline mr-2" />
-            Tu suscripción vencerá en {daysLeft} día(s). Para continuar usando el sistema sin interrupciones, 
-            solicita la renovación.
-          </p>
-          <button
-            onClick={() => {
-              // Aquí podríamos implementar una función para solicitar renovación
-              // Por ahora, simplemente mostraremos la información de contacto
-              alert('Para renovar tu suscripción, contacta con soporte en info@multigym.com.ar');
-            }}
-            className="px-3 py-1 bg-yellow-200 text-yellow-800 rounded hover:bg-yellow-300 transition-colors text-sm"
-          >
-            Solicitar Renovación
-          </button>
-        </div>
-      );
+    if (gymData?.status === 'active' && gymData.subscriptionData?.endDate) {
+      endDate = toJsDate(gymData.subscriptionData.endDate);
+      if (endDate) {
+        daysLeft = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysLeft > 0) {
+          statusText = `Activa - Vence en ${daysLeft} día(s)`;
+          statusColor = daysLeft <= 7 ? 'text-yellow-800 bg-yellow-50 border-yellow-200' : 'text-green-800 bg-green-50 border-green-200';
+        } else {
+          statusText = 'Vencida';
+          statusColor = 'text-red-800 bg-red-50 border-red-200';
+        }
+      }
+    } else if (gymData?.status === 'trial' && gymData.trialEndsAt) {
+      endDate = toJsDate(gymData.trialEndsAt);
+      if (endDate) {
+        daysLeft = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        
+        if (daysLeft > 0) {
+          statusText = `Período de Prueba - ${daysLeft} día(s) restantes`;
+          statusColor = 'text-blue-800 bg-blue-50 border-blue-200';
+        } else {
+          statusText = 'Período de Prueba Finalizado';
+          statusColor = 'text-red-800 bg-red-50 border-red-200';
+        }
+      }
+    } else if (gymData?.status === 'suspended') {
+      statusText = 'Cuenta Suspendida';
+      statusColor = 'text-red-800 bg-red-50 border-red-200';
     }
-  } else if ((gymData?.status === 'active' && !isSubscriptionActive()) || 
-             (gymData?.status === 'trial' && !isTrialActive()) || 
-             gymData?.status === 'suspended') {
+
+    const needsRenewal = 
+      (gymData?.status === 'active' && !isSubscriptionActive()) ||
+      (gymData?.status === 'trial' && !isTrialActive()) ||
+      gymData?.status === 'suspended' ||
+      (daysLeft > 0 && daysLeft <= 7);
+
     return (
-      <div className="mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
-        <p className="text-sm text-red-800 mb-2">
-          <AlertTriangle size={16} className="inline mr-2" />
-          Tu suscripción ha vencido. Para continuar usando todas las funciones del sistema, 
-          es necesario renovar tu plan.
-        </p>
-        <button
-          onClick={() => {
-            // Aquí podríamos implementar una función para solicitar renovación
-            alert('Para renovar tu suscripción, contacta con soporte en info@multigym.com.ar');
-          }}
-          className="px-3 py-1 bg-red-200 text-red-800 rounded hover:bg-red-300 transition-colors text-sm"
-        >
-          Contactar Soporte
-        </button>
-      </div>
-    );
-  } else if (gymData?.status === 'trial' && isTrialActive()) {
-    // Si está en período de prueba y aún es válido
-    const trialEndDate = toJsDate(gymData.trialEndsAt);
-    const now = new Date();
-    const daysLeft = trialEndDate 
-      ? Math.ceil((trialEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) 
-      : 0;
-    
-    return (
-      <div className="mt-4 bg-blue-50 p-3 rounded-lg border border-blue-200">
-        <p className="text-sm text-blue-800 mb-2">
-          <Clock size={16} className="inline mr-2" />
-          Tu período de prueba finalizará en {daysLeft} día(s). Para continuar usando el sistema después 
-          de este período, deberás adquirir una suscripción.
-        </p>
-        <button
-          onClick={() => {
-            // Aquí podríamos implementar una función para solicitar suscripción
-            alert('Para adquirir una suscripción, contacta con soporte en info@multigym.com.ar');
-          }}
-          className="px-3 py-1 bg-blue-200 text-blue-800 rounded hover:bg-blue-300 transition-colors text-sm"
-        >
-          Adquirir Suscripción
-        </button>
-      </div>
-    );
-  }
-  
-    return null;
-  };
-  
-  return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Perfil del Negocio</h1>
-      
-      <div className="bg-white rounded-lg shadow-md p-6">
-        {error && (
-          <div className="mb-6 p-3 bg-red-100 text-red-700 rounded-md flex items-center">
-            <AlertCircle size={18} className="mr-2" />
-            {error}
-          </div>
-        )}
-        
-        {success && (
-          <div className="mb-6 p-3 bg-green-100 text-green-700 rounded-md flex items-center">
-            <CheckCircle size={18} className="mr-2" />
-            Perfil actualizado correctamente
-          </div>
-        )}
-        
-        <form onSubmit={handleSubmit}>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Nombre del Gimnasio */}
-            <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
-                Nombre del Gimnasio
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Building2 size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="text"
-                  id="name"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleChange}
-                  className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Nombre de tu gimnasio"
-                  required
-                />
-              </div>
-            </div>
-            
-            {/* Domicilio */}
-            <div>
-              <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-1">
-                Domicilio
-              </label>
-              <input
-                type="text"
-                id="address"
-                name="address"
-                value={formData.address}
-                onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Dirección física"
-              />
-            </div>
-            
-            {/* Celular */}
-            <div>
-              <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">
-                Celular
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Phone size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="tel"
-                  id="phone"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleChange}
-                  className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Número de contacto"
-                />
-              </div>
-            </div>
-            
-            {/* CUIT */}
-            <div>
-              <label htmlFor="cuit" className="block text-sm font-medium text-gray-700 mb-1">
-                CUIT
-              </label>
-              <input
-                type="text"
-                id="cuit"
-                name="cuit"
-                value={formData.cuit}
-                onChange={handleChange}
-                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="CUIT de la empresa"
-              />
-            </div>
-            
-            {/* Correo */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
-                Correo
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleChange}
-                  className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Email de contacto"
-                />
-              </div>
-            </div>
-            
-            {/* Sitio Web */}
-            <div>
-              <label htmlFor="website" className="block text-sm font-medium text-gray-700 mb-1">
-                Sitio Web
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Globe size={18} className="text-gray-400" />
-                </div>
-                <input
-                  type="url"
-                  id="website"
-                  name="website"
-                  value={formData.website}
-                  onChange={handleChange}
-                  className="pl-10 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="URL de tu sitio web"
-                />
-              </div>
-            </div>
-            
-            {/* Redes Sociales */}
-            <div>
-              <label htmlFor="socialMedia" className="block text-sm font-medium text-gray-700 mb-1">
-                Redes Sociales
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <div className="flex space-x-1">
-                    <Instagram size={18} className="text-gray-400" />
-                    <Facebook size={18} className="text-gray-400" />
-                  </div>
-                </div>
-                <input
-                  type="text"
-                  id="socialMedia"
-                  name="socialMedia"
-                  value={formData.socialMedia}
-                  onChange={handleChange}
-                  className="pl-16 w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="@tusredes, /tupagina"
-                />
-              </div>
-            </div>
-            
-            {/* Logo */}
-            <div className="md:col-span-2">
-              <label htmlFor="logo" className="block text-sm font-medium text-gray-700 mb-1">
-                Logo
-              </label>
-              <div className="flex items-center">
-                <div className="flex-shrink-0 mr-4">
-                  {logoPreview ? (
-                    <img src={logoPreview} alt="Logo preview" className="h-20 w-20 object-cover rounded-md" />
-                  ) : (
-                    <div className="h-20 w-20 bg-gray-200 rounded-md flex items-center justify-center">
-                      <Building2 size={32} className="text-gray-400" />
-                    </div>
-                  )}
-                </div>
-                <label className="cursor-pointer bg-white border border-gray-300 rounded-md px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <span className="flex items-center">
-                    <Upload size={18} className="mr-2" />
-                    Seleccionar archivo
-                  </span>
-                  <input
-                    type="file"
-                    id="logo"
-                    name="logo"
-                    accept="image/*"
-                    onChange={handleLogoChange}
-                    className="sr-only"
-                  />
-                </label>
-              </div>
-              <p className="mt-1 text-sm text-gray-500">
-                Formatos permitidos: PNG, JPG, GIF. Tamaño máximo: 2MB
-              </p>
-            </div>
-          </div>
-          
-          {/* Mensajes de estado y botón de guardar */}
-          <div className="mt-6 flex items-center justify-between">
-            <div>
-              {success && (
-                <div className="text-green-600 flex items-center">
-                  <span className="mr-2">&#10003;</span>
-                  <span>Cambios guardados correctamente</span>
-                </div>
-              )}
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors flex items-center"
-            >
-              {loading ? (
-                <span className="inline-block h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
-              ) : (
-                <Save size={18} className="mr-2" />
-              )}
-              {loading ? 'Guardando...' : 'Guardar Cambios'}
-            </button>
-          </div>
-        </form>
-      </div>
-      {/* Nueva sección de información de suscripción */}
-    <div className="bg-white rounded-lg shadow-md p-6 mt-6">
-      {renderSubscriptionAction()}
-      <h2 className="text-xl font-semibold mb-4">Estado de Suscripción</h2>
-      
-      {/* Indicador de estado */}
-      <div className="mb-4">
-        <div className="flex items-center">
-          {gymData?.status === 'active' && isSubscriptionActive() && (
-            <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full flex items-center">
-              <CheckCircle size={16} className="mr-2" />
-              <span className="font-medium">Suscripción Activa</span>
-            </div>
-          )}
-          
-          {gymData?.status === 'trial' && isTrialActive() && (
-            <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full flex items-center">
-              <Clock size={16} className="mr-2" />
-              <span className="font-medium">Período de Prueba</span>
-            </div>
-          )}
-          
-          {((gymData?.status === 'active' && !isSubscriptionActive()) || 
-             (gymData?.status === 'trial' && !isTrialActive()) || 
-             gymData?.status === 'suspended') && (
-            <div className="bg-red-100 text-red-800 px-3 py-1 rounded-full flex items-center">
-              <AlertTriangle size={16} className="mr-2" />
-              <span className="font-medium">Suscripción Vencida</span>
-            </div>
-          )}
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+            <CreditCard className="mr-2" size={24} />
+            Estado de Suscripción
+          </h2>
         </div>
-      </div>
-      
-      {/* Detalles de la suscripción */}
-      <div className="border rounded-lg p-4 bg-gray-50">
-        {gymData?.status === 'active' && gymData.subscriptionData && (
-          <div className="space-y-2">
-            <div className="flex items-start">
-              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
-                <CreditCard size={20} />
-              </div>
-              <div>
-                <p className="font-medium">Plan Actual</p>
-                <p className="text-gray-600">{gymData.subscriptionData.plan || 'No especificado'}</p>
-              </div>
-            </div>
-            
-            <div className="flex items-start">
-              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
-                <Calendar size={20} />
-              </div>
-              <div>
-                <p className="font-medium">Período</p>
-                <p className="text-gray-600">
-                  {formatDate(gymData.subscriptionData.startDate)} - {formatDate(gymData.subscriptionData.endDate)}
+
+        <div className={`p-4 rounded-lg border mb-4 ${statusColor}`}>
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <p className="font-semibold text-lg mb-2">{statusText}</p>
+              {endDate && (
+                <p className="text-sm">
+                  <Calendar size={14} className="inline mr-1" />
+                  {gymData?.status === 'active' ? 'Fecha de vencimiento: ' : 'Fecha de finalización: '}
+                  {endDate.toLocaleDateString('es-AR')}
                 </p>
-              </div>
-            </div>
-            
-            <div className="flex items-start">
-              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
-                <CreditCard size={20} />
-              </div>
-              <div>
-                <p className="font-medium">Método de pago</p>
-                <p className="text-gray-600">{gymData.subscriptionData.paymentMethod || 'No especificado'}</p>
-              </div>
-            </div>
-            
-            <div className="flex items-start">
-              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
-                <Calendar size={20} />
-              </div>
-              <div>
-                <p className="font-medium">Último pago</p>
-                <p className="text-gray-600">{formatDate(gymData.subscriptionData.lastPayment)}</p>
-              </div>
+              )}
+              {gymData?.subscriptionData && (
+                <p className="text-sm mt-1">
+                  Plan actual: <strong>{gymData.subscriptionData.plan || 'No especificado'}</strong>
+                </p>
+              )}
             </div>
           </div>
-        )}
-        
-        {gymData?.status === 'trial' && (
-          <div className="space-y-2">
-            <div className="flex items-start">
-              <div className="w-6 h-6 text-blue-500 mr-2 mt-0.5">
-                <Clock size={20} />
-              </div>
-              <div>
-                <p className="font-medium">Período de Prueba</p>
-                <p className="text-gray-600">
-                  {formatDate(gymData.registrationDate)} - {formatDate(gymData.trialEndsAt)}
-                </p>
-              </div>
-            </div>
+        </div>
+
+        {needsRenewal && (
+          <div className="mt-4">
+            <button
+              onClick={() => setShowRenewalModal(true)}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center"
+            >
+              <CreditCard size={20} className="mr-2" />
+              Solicitar Renovación de Suscripción
+            </button>
             
-            {isTrialActive() && (
-              <div className="mt-4 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-                <p className="text-sm text-yellow-800">
-                  <AlertTriangle size={16} className="inline mr-2" />
-                  Tu período de prueba finalizará el {formatDate(gymData.trialEndsAt)}. Para continuar usando el sistema, deberás adquirir una suscripción.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {gymData?.status === 'suspended' && (
-          <div className="mt-4 bg-red-50 p-3 rounded-lg border border-red-200">
-            <p className="text-sm text-red-800">
-              <AlertTriangle size={16} className="inline mr-2" />
-              Tu suscripción ha vencido. Contacta con soporte para renovar tu plan y seguir utilizando el sistema.
+            <p className="text-sm text-gray-600 mt-3 text-center">
+              Sube tu comprobante de pago y nuestro equipo lo revisará para activar tu suscripción.
             </p>
           </div>
         )}
-      </div>
-      
-      {/* Información de contacto para renovación */}
-      <div className="mt-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
-        <h3 className="font-medium text-blue-800 mb-2">¿Necesitas ayuda con tu suscripción?</h3>
-        <p className="text-blue-700 text-sm">
-          Si deseas renovar tu suscripción o tienes consultas sobre los planes disponibles, 
-          por favor contacta a nuestro equipo de soporte:
-        </p>
-        <p className="text-blue-800 font-medium mt-2">
-          Email: info@multigym.com.ar
-          <br />
-          Teléfono: (260) 4515854
-        </p>
-      </div>
-    </div>
 
+        {!needsRenewal && daysLeft > 7 && (
+          <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <p className="text-sm text-gray-700 text-center">
+              Tu suscripción está activa. Puedes renovarla antes del vencimiento si lo deseas.
+            </p>
+            <button
+              onClick={() => setShowRenewalModal(true)}
+              className="w-full mt-2 bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-colors"
+            >
+              Renovar Anticipadamente
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
+  return (
+    <div className="p-6">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-800">Configuración del Negocio</h1>
+        <p className="text-gray-600 mt-1">Administra la información de tu gimnasio</p>
+      </div>
+
+      {/* Sección de Suscripción */}
+      {renderSubscriptionSection()}
+
+      {/* Mensajes de éxito/error */}
+      {success && (
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center">
+          <CheckCircle className="text-green-600 mr-3" size={20} />
+          <span className="text-green-800">Perfil actualizado correctamente</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center">
+          <AlertCircle className="text-red-600 mr-3" size={20} />
+          <span className="text-red-800">{error}</span>
+        </div>
+      )}
+
+      {/* Formulario de perfil */}
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-md p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Logo */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Logo del Gimnasio
+            </label>
+            
+            {logoPreview && (
+              <div className="mb-4">
+                <img 
+                  src={logoPreview} 
+                  alt="Logo preview" 
+                  className="h-32 w-32 object-contain border rounded-lg"
+                />
+              </div>
+            )}
+            
+            <div className="flex items-center">
+              <label className="flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+                <Upload size={20} className="mr-2 text-gray-600" />
+                <span className="text-sm text-gray-600">Seleccionar Logo</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoChange}
+                  className="hidden"
+                />
+              </label>
+              {logoFile && (
+                <span className="ml-3 text-sm text-gray-600">{logoFile.name}</span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 mt-1">PNG, JPG o JPEG - Máximo 5MB</p>
+          </div>
+
+          {/* Nombre */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Building2 size={16} className="inline mr-1" />
+              Nombre del Gimnasio *
+            </label>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={handleInputChange}
+              required
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Nombre del gimnasio"
+            />
+          </div>
+
+          {/* CUIT */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              CUIT
+            </label>
+            <input
+              type="text"
+              name="cuit"
+              value={formData.cuit}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="XX-XXXXXXXX-X"
+            />
+          </div>
+
+          {/* Dirección */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Dirección
+            </label>
+            <input
+              type="text"
+              name="address"
+              value={formData.address}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Calle, número, ciudad"
+            />
+          </div>
+
+          {/* Teléfono */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Phone size={16} className="inline mr-1" />
+              Teléfono
+            </label>
+            <input
+              type="tel"
+              name="phone"
+              value={formData.phone}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="+54 9 XXX XXX XXXX"
+            />
+          </div>
+
+          {/* Email */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Mail size={16} className="inline mr-1" />
+              Email
+            </label>
+            <input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="contacto@gimnasio.com"
+            />
+          </div>
+
+          {/* Sitio Web */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Globe size={16} className="inline mr-1" />
+              Sitio Web
+            </label>
+            <input
+              type="url"
+              name="website"
+              value={formData.website}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="https://www.gimnasio.com"
+            />
+          </div>
+
+          {/* Redes Sociales */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              <Instagram size={16} className="inline mr-1" />
+              Redes Sociales
+            </label>
+            <input
+              type="text"
+              name="socialMedia"
+              value={formData.socialMedia}
+              onChange={handleInputChange}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="@gimnasio"
+            />
+          </div>
+        </div>
+
+        {/* Botón de guardar */}
+        <div className="mt-6 flex justify-end">
+          <button
+            type="submit"
+            disabled={loading}
+            className="flex items-center px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Guardando...
+              </>
+            ) : (
+              <>
+                <Save size={20} className="mr-2" />
+                Guardar Cambios
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {/* Modal de renovación */}
+      <RenewalRequestModal
+        isOpen={showRenewalModal}
+        onClose={() => setShowRenewalModal(false)}
+        onSuccess={() => {
+          // Aquí podrías recargar los datos del gimnasio si es necesario
+          console.log('Renovación solicitada con éxito');
+        }}
+      />
     </div>
   );
 };

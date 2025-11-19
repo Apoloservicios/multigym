@@ -1,10 +1,9 @@
-
-// 📍 ARCHIVO: src/components/Layout/GymLayout.tsx
-// 🔧 VERSIÓN FINAL - SIN PADDING QUE CAUSE DESPLAZAMIENTO
+// src/components/Layout/GymLayout.tsx
+// VERSIÓN ACTUALIZADA CON CONTROL DE SUSCRIPCIÓN
 
 import React from 'react';
 import Sidebar from './Sidebar';
-
+import SubscriptionCheck from '../common/SubscriptionCheck';
 import { useAuth } from '../../contexts/AuthContext';
 import useMonthlyPaymentsAutomation from '../../hooks/useMonthlyPaymentsAutomation';
 
@@ -22,11 +21,13 @@ const GymLayout: React.FC<GymLayoutProps> = ({ children }) => {
     <div className="flex h-screen bg-gray-100">
       <Sidebar />
       
-      {/* ✅ CRÍTICO: Sin p-6, solo bg-gray-50 */}
       <div className="flex-1 md:ml-64 overflow-y-auto overflow-x-hidden">
-        <div className="bg-gray-50 min-h-full">
-          {children}
-        </div>
+        {/* ✅ ENVOLVER CON SubscriptionCheck */}
+        <SubscriptionCheck>
+          <div className="bg-gray-50 min-h-full">
+            {children}
+          </div>
+        </SubscriptionCheck>
       </div>
     </div>
   );

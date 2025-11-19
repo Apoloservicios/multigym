@@ -12,6 +12,8 @@ import GymLayout from './Layout/GymLayout';
 // Páginas de autenticación
 import Login from '../pages/auth/Login';
 import Register from '../pages/auth/Register';
+// Agregar al inicio con los demás imports
+import PendingPayments from '../pages/superadmin/PendingPayments';
 
 // Páginas del superadmin
 import SuperadminDashboard from '../pages/superadmin/Dashboard';
@@ -182,6 +184,7 @@ const AppContent: React.FC = () => {
               <Route path="revenue" element={<RevenueManager />} />
               <Route path="gym-account/:gymId" element={<GymAccountDetails />} />
               <Route path="exercises" element={<GlobalExercises />} />
+              <Route path="pending-payments" element={<PendingPayments />} />
               <Route path="" element={<Navigate to="dashboard" replace />} />
             </Routes>
           </SuperadminLayout>
